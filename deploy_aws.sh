@@ -121,9 +121,11 @@ if [ ! -f ".env" ]; then
     
     echo ""
     echo "Choose LLM provider:"
-    echo "1. Ollama (Local LLM - Recommended, no API key needed)"
-    echo "2. OpenAI (requires API key)"
-    echo "3. Mock mode (for testing)"
+    echo "1. Ollama (Local LLM - Free but slower, no API key needed)"
+    echo "2. OpenAI (Faster but costs money, requires API key)"
+    echo "3. Mock mode (for testing, no real AI)"
+    echo ""
+    echo "   Note: You can switch between Ollama and OpenAI later by editing .env"
     read -p "Enter choice (1-3, default: 1): " LLM_CHOICE
     LLM_CHOICE=${LLM_CHOICE:-1}
     
@@ -139,6 +141,8 @@ if [ ! -f ".env" ]; then
             read -p "Enter Ollama model name (default: llama3): " OLLAMA_MODEL_INPUT
             OLLAMA_MODEL=${OLLAMA_MODEL_INPUT:-llama3}
             echo "✅ Using Ollama with model: $OLLAMA_MODEL"
+            echo "   Note: Ollama may be slower on CPU-only instances"
+            echo "   To switch to OpenAI later: Edit .env (USE_OLLAMA=false, add OPENAI_API_KEY)"
             ;;
         2)
             read -p "Enter OpenAI API Key: " OPENAI_KEY
@@ -146,10 +150,12 @@ if [ ! -f ".env" ]; then
                 echo "❌ OpenAI API key is required"
                 exit 1
             fi
+            echo "✅ Using OpenAI (faster, but costs money per request)"
+            echo "   To switch to Ollama later: Edit .env (USE_OLLAMA=true)"
             ;;
         3)
             MOCK_MODE="true"
-            echo "✅ Using mock mode"
+            echo "✅ Using mock mode (for testing only)"
             ;;
     esac
     
@@ -255,3 +261,14 @@ echo "- Update CORS_ORIGINS in .env with your actual domain"
 echo "- Set up SSL/HTTPS for production"
 echo "- Configure firewall rules"
 echo "- Set up automated backups"
+echo ""
+if [ "$USE_OLLAMA" = "true" ]; then
+    echo "🔄 To switch to OpenAI (faster):"
+    echo "   1. Edit .env: Set USE_OLLAMA=false and add OPENAI_API_KEY=your-key"
+    echo "   2. Restart: docker compose restart backend"
+elif [ "$MOCK_MODE" = "false" ]; then
+    echo "🔄 To switch to Ollama (free but slower):"
+    echo "   1. Edit .env: Set USE_OLLAMA=true"
+    echo "   2. Restart: docker compose restart backend"
+    echo "   3. Pull model: docker compose exec ollama ollama pull llama3"
+fi
