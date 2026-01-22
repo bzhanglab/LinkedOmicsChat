@@ -66,11 +66,58 @@ fi
 if [ ! -f ".env" ]; then
     echo "📝 Creating .env file..."
     
-    # Get EC2 public IP (if available)
-    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "localhost")
+    # Try multiple methods to get public IP
+    PUBLIC_IP=""
     
-    read -p "Enter your domain name (or press Enter to use IP: $PUBLIC_IP): " DOMAIN
-    DOMAIN=${DOMAIN:-$PUBLIC_IP}
+    # Method 1: EC2 metadata service with IMDSv2 (token-based)
+    if [ -z "$PUBLIC_IP" ]; then
+        TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+        if [ ! -z "$TOKEN" ]; then
+            PUBLIC_IP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" \
+                http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
+        fi
+    fi
+    
+    # Method 2: EC2 metadata service IMDSv1 (fallback)
+    if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
+    fi
+    
+    # Method 3: AWS CLI (if available)
+    if [ -z "$PUBLIC_IP" ] && command -v aws &> /dev/null; then
+        TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+        if [ ! -z "$TOKEN" ]; then
+            INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" \
+                http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo "")
+        else
+            INSTANCE_ID=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo "")
+        fi
+        if [ ! -z "$INSTANCE_ID" ]; then
+            PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "")
+        fi
+    fi
+    
+    # Method 4: External service (as last resort)
+    if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || echo "")
+    fi
+    
+    # If still no IP, prompt user
+    if [ -z "$PUBLIC_IP" ]; then
+        echo "⚠️  Could not auto-detect public IP"
+        echo "   (Metadata service may be disabled or instance has no public IP)"
+        read -p "Enter your EC2 public IP address or domain name: " PUBLIC_IP
+        if [ -z "$PUBLIC_IP" ]; then
+            echo "❌ IP address or domain is required"
+            exit 1
+        fi
+    else
+        echo "✅ Detected IP: $PUBLIC_IP"
+        read -p "Enter your domain name (or press Enter to use IP: $PUBLIC_IP): " DOMAIN
+        DOMAIN=${DOMAIN:-$PUBLIC_IP}
+    fi
     
     echo ""
     echo "Choose LLM provider:"
