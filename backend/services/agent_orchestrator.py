@@ -341,7 +341,7 @@ class AgentOrchestrator:
             )
             
             # Update session history with the actual session ID
-            self._update_session(session["id"], query, final_response)
+            await self._update_session(session["id"], query, final_response)
             
             return final_response
             
