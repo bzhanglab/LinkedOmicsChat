@@ -2,8 +2,10 @@
 Configuration settings for cpgAgent backend
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+from pydantic import field_validator
+from typing import List, Union
 import os
+import json
 
 
 class Settings(BaseSettings):
@@ -37,10 +39,22 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-this-in-production"
     
     # CORS
-    CORS_ORIGINS: List[str] = [
+    CORS_ORIGINS: Union[List[str], str] = [
         "http://localhost:3000",
         "http://localhost:3001"
     ]
+    
+    @field_validator('CORS_ORIGINS', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS if it's a JSON string"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                # If parsing fails, treat as comma-separated string
+                return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
     
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
