@@ -7,27 +7,9 @@ conversational, and autonomous research assistant for cancer proteogenomics rese
 
 cpgAgent (Cancer Proteogenomics Agent) modernizes multi-omics analysis by introducing:
 - **Conversational AI Interface**: Natural language queries instead of complex UI navigation
-- **Autonomous Agents**: Specialized AI agents for data curation, analysis, visualization, and interpretation
-- **Intelligent Workflows**: Auto-generated analysis pipelines based on research questions
-- **Real-time Collaboration**: Multi-user support with live updates
-- **Publication-Ready Outputs**: Automated figure generation and analysis documentation
-
-## Architecture
-
-```
-cpgAgent/
-├── backend/              # FastAPI backend with agent orchestration
-│   ├── agents/          # Specialized AI agents
-│   ├── api/             # REST API endpoints
-│   ├── core/            # Core business logic
-│   └── services/        # External service integrations
-├── frontend/            # Next.js 14+ React application
-│   ├── app/            # App router pages
-│   ├── components/     # Reusable UI components
-│   └── lib/            # Utilities and hooks
-├── shared/             # Shared types and schemas
-└── docs/               # Documentation and architecture
-```
+- **Autonomous Agents**: Specialized AI agents for data curation, analysis, visualization, and literature mining
+- **Multi-omics Data Support**: TCGA and CPTAC datasets for cancer proteogenomics research
+- **Interactive Visualizations**: Publication-ready figures with Plotly and Recharts
 
 ## Tech Stack
 
@@ -41,25 +23,24 @@ cpgAgent/
 
 ### Backend
 - **FastAPI** for high-performance Python API
-- **LangGraph** for agent orchestration
-- **LangChain** for LLM integration
+- **LangChain** for LLM integration and agent orchestration
 - **Pydantic** for data validation
-- **SQLAlchemy** for database ORM
-- **Redis** for caching and pub/sub
-- **Celery** for background tasks
+- **SQLAlchemy** (async) with PostgreSQL for database
+- **Redis** for caching (optional)
+- **WebSockets** for real-time communication
 
 ### AI/ML
 - **OpenAI GPT-4** / **Anthropic Claude** for language understanding
-- **LlamaIndex** for RAG over scientific literature
-- **Vector Database** (Pinecone/Weaviate) for semantic search
-- **Instructor** for structured LLM outputs
+- **Ollama** for local LLM support (Llama 3, etc.)
+- **Mock LLM mode** for development without API keys
+- **Web search** integration for literature mining
 
 ## Features
 
 ### 1. Conversational Interface
 - Natural language queries: "Show me genes correlated with TP53 in breast cancer"
 - Multi-turn conversations with context awareness
-- Voice input support
+- Chat history and session management
 
 ### 2. Specialized Agents
 
@@ -80,40 +61,41 @@ cpgAgent/
 
 #### Literature Agent
 - Mines relevant papers for discovered patterns
-- Summarizes findings
+- Summarizes findings using web search
 - Suggests related research directions
 
-#### Interpretation Agent
-- Explains results in plain language
-- Provides biological context
-- Highlights significant findings
+#### Association Agent
+- Finds gene-gene correlations
+- Analyzes gene-clinical feature associations
+- Supports both TCGA and CPTAC datasets
 
-### 3. Workflow Management
-- Auto-generated analysis pipelines
-- Version control for analyses
-- Reproducible research with auto-documentation
-- Export to R/Python scripts or Jupyter notebooks
+#### Differential Expression Agent
+- Identifies differentially expressed genes between groups
+- Statistical analysis with p-values and FDR
+- Supports multiple comparison methods
 
-### 4. Collaboration
-- Real-time multi-user editing
-- Shared workspaces
-- Comments and annotations
-- Team dashboards
+### 3. Data Sources
+- **TCGA**: RNA-seq, clinical, and mutation data for multiple cancer types
+- **CPTAC**: Proteomics and phosphoproteomics data
+- Support for custom datasets via parquet files
 
-## 🚀 No API Key? No Problem!
+### 4. Deployment
+- **Local Development**: Simple setup scripts for macOS
+- **Docker**: Containerized deployment with Docker Compose
+- **AWS EC2**: Production deployment with automated setup scripts
 
-**Start immediately without any API key** using mock mode:
+## Development Without API Keys
+
+You can start the application in mock mode without any API keys:
 
 ```bash
 ./setup_local_macos.sh    # Sets up mock mode by default
 ./start_backend.sh         # Terminal 1
 ./start_frontend.sh        # Terminal 2
-# Open http://localhost:3000 - Everything works!
+# Open http://localhost:3000
 ```
 
-Mock mode simulates AI responses so you can develop the full UI and test the architecture without any costs.
-
-📖 **See**: [START_WITHOUT_API_KEY.md](START_WITHOUT_API_KEY.md) | [DEVELOPMENT_WITHOUT_OPENAI.md](docs/DEVELOPMENT_WITHOUT_OPENAI.md)
+Mock mode simulates AI responses for development and testing.
 
 ---
 
@@ -145,8 +127,6 @@ This script will:
 ```
 
 **That's it!** Open `http://localhost:3000` and start using cpgAgent.
-
-📖 **Detailed guide**: See [docs/LOCAL_DEVELOPMENT_MACOS.md](docs/LOCAL_DEVELOPMENT_MACOS.md)
 
 ---
 
@@ -204,6 +184,10 @@ Frontend runs at `http://localhost:3000`
 ```
 OPENAI_API_KEY=your_openai_key
 ANTHROPIC_API_KEY=your_anthropic_key
+USE_OLLAMA=false
+OLLAMA_MODEL=llama3
+OLLAMA_BASE_URL=http://localhost:11434
+MOCK_LLM=false
 DATABASE_URL=postgresql://user:pass@localhost/cpgagent
 REDIS_URL=redis://localhost:6379
 ENVIRONMENT=development
@@ -222,57 +206,63 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8000
 User: "Find genes correlated with TP53 expression in breast cancer"
 
 cpgAgent:
-1. DataAgent: Found 3 relevant breast cancer datasets (TCGA, METABRIC, GEO)
-2. AnalysisAgent: Computing Pearson correlations across 20,000 genes...
-3. VizAgent: Creating scatter plots and heatmap...
-4. InterpretationAgent: Top correlated genes include MDM2 (r=0.85),
-   involved in p53 pathway regulation...
+1. DataCurationAgent: Identified TCGA BRCA dataset
+2. AssociationAgent: Computing Pearson correlations across genes...
+3. VisualizationAgent: Creating scatter plots and heatmap...
+4. Results: Top correlated genes with statistical significance
 ```
 
-### Example 2: Survival Analysis
+### Example 2: Differential Expression Analysis
 ```
-User: "Perform survival analysis for top differentially expressed genes in lung cancer"
+User: "Find genes differentially expressed between stage I and stage IV in lung cancer"
 
 cpgAgent:
-1. DataAgent: Retrieved TCGA lung cancer cohort (n=1,016 patients)
-2. AnalysisAgent: Identified 156 DEGs (FDR < 0.05)
-3. AnalysisAgent: Running Cox regression for top 50 genes...
-4. VizAgent: Generated Kaplan-Meier plots and forest plot
-5. LiteratureAgent: Found 12 papers validating EGFR as prognostic marker
+1. DataCurationAgent: Retrieved TCGA LUAD dataset
+2. DifferentialExpressionAgent: Running statistical tests...
+3. VisualizationAgent: Generated volcano plot and heatmap
+4. LiteratureAgent: Searching for relevant publications
 ```
 
 ## Development
 
-### Running Tests
+### Local Development
 ```bash
-# Backend tests
-cd backend
-pytest
+# Start backend (Terminal 1)
+./start_backend.sh
 
-# Frontend tests
-cd frontend
-npm test
+# Start frontend (Terminal 2)
+./start_frontend.sh
 ```
 
 ### Code Quality
 ```bash
-# Backend linting
-cd backend
-ruff check .
-black .
-
 # Frontend linting
 cd frontend
 npm run lint
+npm run type-check
 ```
 
 ## Deployment
 
-See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for production deployment instructions.
+### Docker Deployment
+```bash
+# Build and start all services
+docker compose up -d --build
 
-## Contributing
+# View logs
+docker compose logs -f
 
-Contributions are welcome! Please read [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for details.
+# Stop services
+docker compose down
+```
+
+### AWS EC2 Deployment
+Use the automated deployment script:
+```bash
+./deploy_aws.sh
+```
+
+The script will guide you through the setup process, including Docker installation, environment configuration, and service startup.
 
 ## License
 
@@ -290,11 +280,13 @@ If you use cpgAgent in your research, please cite:
 }
 ```
 
-## Support
+## Documentation
 
-- Documentation: [https://cpgagent.readthedocs.io](https://cpgagent.readthedocs.io)
-- Issues: [GitHub Issues](https://github.com/zhanglab/cpgagent/issues)
-- Email: support@cpgagent.org
+The project includes setup scripts and configuration files for easy deployment:
+- `setup_local_macos.sh` - One-command local development setup
+- `deploy_aws.sh` - Automated AWS EC2 deployment
+- `docker-compose.yml` - Docker container orchestration
+- `start_backend.sh` / `start_frontend.sh` - Service startup scripts
 
 ## Acknowledgments
 
