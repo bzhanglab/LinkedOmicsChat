@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "change-this-in-production"
     
-    # CORS - stored as string, will be parsed
-    CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:3001"]'
+    # CORS - stored as string, will be parsed to list
+    CORS_ORIGINS: Union[List[str], str] = '["http://localhost:3000","http://localhost:3001"]'
     
     @model_validator(mode='after')
     def parse_cors_origins(self):
