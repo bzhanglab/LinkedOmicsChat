@@ -102,3 +102,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Debug: Log the final CORS_ORIGINS value
+import logging
+logger = logging.getLogger(__name__)
+logger.info(f"Settings initialized - CORS_ORIGINS final value: {settings.CORS_ORIGINS}, type: {type(settings.CORS_ORIGINS)}")
