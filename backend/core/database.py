@@ -31,9 +31,11 @@ if settings.DATABASE_URL.startswith("sqlite"):
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 else:
-    # PostgreSQL for production
+    # PostgreSQL for production (async)
+    # Convert postgresql:// to postgresql+asyncpg:// for async driver
+    async_db_url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
     engine = create_async_engine(
-        settings.DATABASE_URL,
+        async_db_url,
         echo=settings.DEBUG,
         future=True
     )

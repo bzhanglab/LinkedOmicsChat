@@ -38,7 +38,7 @@ kaleido>=0.2.1
 
 # Database
 sqlalchemy==2.0.25
-psycopg2-binary>=2.9.0  # PostgreSQL adapter
+asyncpg>=0.29.0  # Async PostgreSQL driver for SQLAlchemy async
 
 # HTTP & WebSocket
 httpx==0.26.0
