@@ -67,6 +67,7 @@ services:
             - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
             - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
             - MOCK_LLM=${MOCK_LLM:-false}
+            - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000"]}
             - ENVIRONMENT=production
             - DEBUG=False
         ports:
