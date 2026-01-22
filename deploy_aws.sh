@@ -178,8 +178,8 @@ ENVIRONMENT=production
 DEBUG=False
 SECRET_KEY=$SECRET_KEY
 
-# CORS
-CORS_ORIGINS=["https://$DOMAIN","http://$DOMAIN","http://$PUBLIC_IP"]
+# CORS (comma-separated format for easier parsing)
+CORS_ORIGINS=http://$DOMAIN:3000,http://$DOMAIN,http://$PUBLIC_IP:3000,http://$PUBLIC_IP
 
 # Database URL
 DATABASE_URL=postgresql://cpgagent:$DB_PASSWORD@postgres:5432/cpgagent
