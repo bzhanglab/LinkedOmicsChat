@@ -7,6 +7,8 @@ from langchain.schema import HumanMessage, SystemMessage
 import asyncio
 import logging
 import time
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents import (
     DataCurationAgent,
@@ -60,35 +62,57 @@ class AgentOrchestrator:
         self.sessions.clear()
         logger.info("Agent orchestrator cleaned up")
 
-    def _save_session_to_db(self, session: Dict[str, Any]):
+    async def _save_session_to_db(self, session: Dict[str, Any]):
         """Save or update session in database"""
         try:
-            db = SessionLocal()
-            try:
-                # Check if session exists
-                db_session = db.query(ChatSession).filter(ChatSession.id == session["id"]).first()
-                
-                if db_session:
-                    # Update existing session
-                    db_session.title = session.get("title", "New Chat")
-                    db_session.last_updated = session.get("last_updated", time.time())
-                    db_session.context = session.get("context", {})
-                else:
-                    # Create new session
-                    db_session = ChatSession(
-                        id=session["id"],
-                        user_id=session["user_id"],
-                        title=session.get("title", "New Chat"),
-                        created_at=session.get("created_at", time.time()),
-                        last_updated=session.get("last_updated", time.time()),
-                        context=session.get("context", {})
+            if settings.DATABASE_URL.startswith("sqlite"):
+                # SQLite uses sync session
+                db = SessionLocal()
+                try:
+                    db_session = db.query(ChatSession).filter(ChatSession.id == session["id"]).first()
+                    if db_session:
+                        db_session.title = session.get("title", "New Chat")
+                        db_session.last_updated = session.get("last_updated", time.time())
+                        db_session.context = session.get("context", {})
+                    else:
+                        db_session = ChatSession(
+                            id=session["id"],
+                            user_id=session["user_id"],
+                            title=session.get("title", "New Chat"),
+                            created_at=session.get("created_at", time.time()),
+                            last_updated=session.get("last_updated", time.time()),
+                            context=session.get("context", {})
+                        )
+                        db.add(db_session)
+                    db.commit()
+                    logger.info(f"Saved session {session['id']} to database")
+                finally:
+                    db.close()
+            else:
+                # PostgreSQL uses async session
+                async with SessionLocal() as db:
+                    result = await db.execute(
+                        select(ChatSession).filter(ChatSession.id == session["id"])
                     )
-                    db.add(db_session)
-                
-                db.commit()
-                logger.info(f"Saved session {session['id']} to database")
-            finally:
-                db.close()
+                    db_session = result.scalar_one_or_none()
+                    
+                    if db_session:
+                        db_session.title = session.get("title", "New Chat")
+                        db_session.last_updated = session.get("last_updated", time.time())
+                        db_session.context = session.get("context", {})
+                    else:
+                        db_session = ChatSession(
+                            id=session["id"],
+                            user_id=session["user_id"],
+                            title=session.get("title", "New Chat"),
+                            created_at=session.get("created_at", time.time()),
+                            last_updated=session.get("last_updated", time.time()),
+                            context=session.get("context", {})
+                        )
+                        db.add(db_session)
+                    
+                    await db.commit()
+                    logger.info(f"Saved session {session['id']} to database")
         except Exception as e:
             logger.error(f"Error saving session to database: {e}")
 
