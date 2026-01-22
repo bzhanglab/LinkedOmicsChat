@@ -85,32 +85,32 @@ services:
         networks:
             - cpgagent-network
 
-    # Celery Worker for Background Tasks
-    celery-worker:
-        build:
-            context: ./backend
-            dockerfile: Dockerfile
-        container_name: cpgagent-celery
-        environment:
-            - DATABASE_URL=postgresql://cpgagent:${DB_PASSWORD:-changeme}@postgres:5432/cpgagent
-            - REDIS_URL=redis://redis:6379/0
-            - CELERY_BROKER_URL=redis://redis:6379/0
-            - CELERY_RESULT_BACKEND=redis://redis:6379/0
-            - OPENAI_API_KEY=${OPENAI_API_KEY}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-            - USE_OLLAMA=${USE_OLLAMA:-false}
-            - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
-            - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
-            - MOCK_LLM=${MOCK_LLM:-false}
-        depends_on:
-            - redis
-            - postgres
-            - ollama
-        volumes:
-            - ./backend:/app
-        command: celery -A core.celery_app worker --loglevel=info
-        networks:
-            - cpgagent-network
+    # Celery Worker for Background Tasks (disabled - not currently used)
+    # celery-worker:
+    #     build:
+    #         context: ./backend
+    #         dockerfile: Dockerfile
+    #     container_name: cpgagent-celery
+    #     environment:
+    #         - DATABASE_URL=postgresql://cpgagent:${DB_PASSWORD:-changeme}@postgres:5432/cpgagent
+    #         - REDIS_URL=redis://redis:6379/0
+    #         - CELERY_BROKER_URL=redis://redis:6379/0
+    #         - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    #         - OPENAI_API_KEY=${OPENAI_API_KEY}
+    #         - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    #         - USE_OLLAMA=${USE_OLLAMA:-false}
+    #         - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+    #         - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+    #         - MOCK_LLM=${MOCK_LLM:-false}
+    #     depends_on:
+    #         - redis
+    #         - postgres
+    #         - ollama
+    #     volumes:
+    #         - ./backend:/app
+    #     command: celery -A core.celery_app worker --loglevel=info
+    #     networks:
+    #         - cpgagent-network
 
     # Next.js Frontend
     frontend:
