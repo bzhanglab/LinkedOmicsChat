@@ -58,6 +58,8 @@ services:
             context: ./backend
             dockerfile: Dockerfile
         container_name: cpgagent-backend
+        env_file:
+            - .env
         environment:
             - DATABASE_URL=postgresql://cpgagent:${DB_PASSWORD:-changeme}@postgres:5432/cpgagent
             - REDIS_URL=redis://redis:6379/0
