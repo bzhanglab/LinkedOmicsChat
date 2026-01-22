@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Ollama (Local LLM)
     USE_OLLAMA: bool = False
     OLLAMA_MODEL: str = "llama3"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
     
     # Database
     DATABASE_URL: str = "sqlite:///./cpgagent.db"

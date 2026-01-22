@@ -38,9 +38,10 @@ class BaseAgent(ABC):
         
         # Check for Ollama (local LLM)
         if settings.USE_OLLAMA:
-            logger.info(f"Using Ollama with model: {settings.OLLAMA_MODEL}")
+            logger.info(f"Using Ollama with model: {settings.OLLAMA_MODEL} at {settings.OLLAMA_BASE_URL}")
             return Ollama(
                 model=settings.OLLAMA_MODEL,
+                base_url=settings.OLLAMA_BASE_URL,
                 temperature=self.temperature
             )
             

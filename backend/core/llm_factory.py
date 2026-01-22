@@ -47,11 +47,13 @@ class LLMFactory:
         # Check for Ollama first
         if settings.USE_OLLAMA:
             ollama_model = kwargs.get("ollama_model") or settings.OLLAMA_MODEL
-            logger.info(f"Creating Ollama LLM: {ollama_model}")
+            base_url = kwargs.get("base_url") or settings.OLLAMA_BASE_URL
+            logger.info(f"Creating Ollama LLM: {ollama_model} at {base_url}")
             return ChatOllama(
                 model=ollama_model,
+                base_url=base_url,
                 temperature=temperature,
-                **{k: v for k, v in kwargs.items() if k != "ollama_model"}
+                **{k: v for k, v in kwargs.items() if k not in ["ollama_model", "base_url"]}
             )
         
         # Check for Anthropic/Claude

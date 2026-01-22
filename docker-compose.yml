@@ -37,6 +37,21 @@ services:
         networks:
             - cpgagent-network
 
+    # Ollama (Local LLM)
+    ollama:
+        image: ollama/ollama:latest
+        container_name: cpgagent-ollama
+        ports:
+            - "11434:11434"
+        volumes:
+            - ollama_data:/root/.ollama
+        environment:
+            - OLLAMA_HOST=0.0.0.0
+        networks:
+            - cpgagent-network
+        # Note: First run will download the model, which can take time
+        # Run: docker-compose exec ollama ollama pull llama3
+
     # FastAPI Backend
     backend:
         build:
@@ -48,6 +63,10 @@ services:
             - REDIS_URL=redis://redis:6379/0
             - OPENAI_API_KEY=${OPENAI_API_KEY}
             - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+            - USE_OLLAMA=${USE_OLLAMA:-false}
+            - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+            - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+            - MOCK_LLM=${MOCK_LLM:-false}
             - ENVIRONMENT=production
             - DEBUG=False
         ports:
@@ -57,6 +76,8 @@ services:
                 condition: service_healthy
             redis:
                 condition: service_healthy
+            ollama:
+                condition: service_started
         volumes:
             - ./backend:/app
             - backend_logs:/app/logs
@@ -77,9 +98,14 @@ services:
             - CELERY_RESULT_BACKEND=redis://redis:6379/0
             - OPENAI_API_KEY=${OPENAI_API_KEY}
             - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+            - USE_OLLAMA=${USE_OLLAMA:-false}
+            - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+            - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+            - MOCK_LLM=${MOCK_LLM:-false}
         depends_on:
             - redis
             - postgres
+            - ollama
         volumes:
             - ./backend:/app
         command: celery -A core.celery_app worker --loglevel=info
@@ -126,6 +152,7 @@ volumes:
     postgres_data:
     redis_data:
     backend_logs:
+    ollama_data:
 
 networks:
     cpgagent-network:
