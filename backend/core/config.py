@@ -38,13 +38,10 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "change-this-in-production"
     
-    # CORS
-    CORS_ORIGINS: Union[List[str], str] = [
-        "http://localhost:3000",
-        "http://localhost:3001"
-    ]
+    # CORS - stored as string, will be parsed
+    CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:3001"]'
     
-    @field_validator('CORS_ORIGINS', mode='before')
+    @field_validator('CORS_ORIGINS', mode='after')
     @classmethod
     def parse_cors_origins(cls, v):
         """Parse CORS_ORIGINS if it's a JSON string"""
@@ -54,15 +51,15 @@ class Settings(BaseSettings):
         
         if isinstance(v, str):
             # Remove surrounding quotes if present
-            v = v.strip().strip('"').strip("'")
+            v_clean = v.strip().strip('"').strip("'")
             try:
-                parsed = json.loads(v)
+                parsed = json.loads(v_clean)
                 logger.info(f"CORS_ORIGINS parsed from JSON: {parsed}")
                 return parsed
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Failed to parse CORS_ORIGINS as JSON: {e}, trying comma-separated")
                 # If parsing fails, treat as comma-separated string
-                parsed = [origin.strip() for origin in v.split(",") if origin.strip()]
+                parsed = [origin.strip() for origin in v_clean.split(",") if origin.strip()]
                 logger.info(f"CORS_ORIGINS parsed as comma-separated: {parsed}")
                 return parsed
         logger.info(f"CORS_ORIGINS already a list: {v}")
