@@ -965,7 +965,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             logger.error(f"Error generating title: {e}")
             return first_query[:50] + ("..." if len(first_query) > 50 else "")
     
-    def _update_session(
+    async def _update_session(
         self,
         session_id: Optional[str],
         query: str,
