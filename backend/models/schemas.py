@@ -1,0 +1,121 @@
+"""
+Pydantic schemas for API request/response validation
+"""
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+
+class AgentType(str, Enum):
+    """Types of agents in the system"""
+    DATA_CURATION = "data_curation"
+    STATISTICAL_ANALYSIS = "statistical_analysis"
+    VISUALIZATION = "visualization"
+    LITERATURE_MINING = "literature_mining"
+    INTERPRETATION = "interpretation"
+    ORCHESTRATOR = "orchestrator"
+
+
+class MessageRole(str, Enum):
+    """Message roles in conversation"""
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+    AGENT = "agent"
+
+
+class ChatMessage(BaseModel):
+    """Chat message schema"""
+    role: MessageRole
+    content: str
+    timestamp: datetime = Field(default_factory=datetime.now)
+    agent_type: Optional[AgentType] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ChatRequest(BaseModel):
+    """Request schema for chat endpoint"""
+    message: str
+    session_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class ChatResponse(BaseModel):
+    """Response schema for chat endpoint"""
+    message: str
+    session_id: str
+    agent_responses: List[Dict[str, Any]] = []
+    visualizations: List[Dict[str, Any]] = []
+    analyses: List[Dict[str, Any]] = []  # Analysis results (correlations, etc.)
+    suggestions: List[str] = []
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class DatasetInfo(BaseModel):
+    """Dataset information schema"""
+    id: str
+    name: str
+    description: str
+    cancer_type: Optional[str] = None
+    sample_count: int
+    feature_count: int
+    data_types: List[str]
+    publication: Optional[str] = None
+    source: str
+
+
+class AnalysisRequest(BaseModel):
+    """Request schema for analysis"""
+    analysis_type: str
+    dataset_ids: List[str]
+    parameters: Dict[str, Any]
+    target_genes: Optional[List[str]] = None
+
+
+class AnalysisResult(BaseModel):
+    """Result schema for analysis"""
+    id: str
+    analysis_type: str
+    status: str
+    results: Dict[str, Any]
+    visualizations: List[Dict[str, Any]]
+    statistics: Dict[str, Any]
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class WorkflowStep(BaseModel):
+    """Workflow step schema"""
+    step_id: str
+    agent_type: AgentType
+    action: str
+    parameters: Dict[str, Any]
+    dependencies: List[str] = []
+    status: str = "pending"
+
+
+class Workflow(BaseModel):
+    """Workflow schema"""
+    id: str
+    name: str
+    description: str
+    steps: List[WorkflowStep]
+    created_at: datetime
+    status: str
+
+
+class AgentStatus(BaseModel):
+    """Agent status schema"""
+    agent_type: AgentType
+    status: str
+    current_task: Optional[str] = None
+    queue_length: int = 0
+
+
+class SystemStatus(BaseModel):
+    """System status schema"""
+    status: str
+    agents: List[AgentStatus]
+    active_sessions: int
+    uptime: float

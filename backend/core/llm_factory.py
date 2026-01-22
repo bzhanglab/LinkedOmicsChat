@@ -1,0 +1,142 @@
+"""
+LLM Factory - Unified interface for different LLM providers
+Allows easy switching between OpenAI, Anthropic, Ollama, etc.
+"""
+from typing import Optional, List
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_community.chat_models import ChatOllama
+from langchain.schema import BaseMessage, HumanMessage, SystemMessage, AIMessage
+from core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class LLMFactory:
+    """Factory for creating LLM instances based on configuration"""
+    
+    @staticmethod
+    def create_llm(
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        **kwargs
+    ):
+        """
+        Create an LLM instance based on configuration
+        
+        Priority:
+        1. USE_OLLAMA -> ChatOllama
+        2. Model name contains "claude" -> ChatAnthropic
+        3. Default -> ChatOpenAI
+        
+        Args:
+            model: Model name (optional, uses DEFAULT_LLM_MODEL if not provided)
+            temperature: Temperature setting
+            **kwargs: Additional model-specific parameters
+            
+        Returns:
+            LLM instance (ChatOpenAI, ChatAnthropic, or ChatOllama)
+        """
+        if settings.MOCK_LLM:
+            return None
+        
+        # Use provided model or default
+        model_name = model or settings.DEFAULT_LLM_MODEL
+        
+        # Check for Ollama first
+        if settings.USE_OLLAMA:
+            ollama_model = kwargs.get("ollama_model") or settings.OLLAMA_MODEL
+            logger.info(f"Creating Ollama LLM: {ollama_model}")
+            return ChatOllama(
+                model=ollama_model,
+                temperature=temperature,
+                **{k: v for k, v in kwargs.items() if k != "ollama_model"}
+            )
+        
+        # Check for Anthropic/Claude
+        if "claude" in model_name.lower() or settings.ANTHROPIC_API_KEY:
+            logger.info(f"Creating Anthropic LLM: {model_name}")
+            return ChatAnthropic(
+                model=model_name,
+                temperature=temperature,
+                anthropic_api_key=settings.ANTHROPIC_API_KEY or kwargs.get("anthropic_api_key"),
+                **{k: v for k, v in kwargs.items() if k not in ["anthropic_api_key", "ollama_model"]}
+            )
+        
+        # Default to OpenAI
+        logger.info(f"Creating OpenAI LLM: {model_name}")
+        return ChatOpenAI(
+            model=model_name,
+            temperature=temperature,
+            openai_api_key=settings.OPENAI_API_KEY or kwargs.get("openai_api_key"),
+            **{k: v for k, v in kwargs.items() if k not in ["openai_api_key", "ollama_model"]}
+        )
+    
+    @staticmethod
+    async def invoke_async(
+        llm_instance,
+        messages: List[BaseMessage],
+        **kwargs
+    ) -> str:
+        """
+        Invoke LLM asynchronously and return text response
+        
+        Args:
+            llm_instance: LLM instance from create_llm()
+            messages: List of message objects
+            **kwargs: Additional invocation parameters
+            
+        Returns:
+            Text response from LLM
+        """
+        if llm_instance is None:
+            return "Mock response (MOCK_LLM=True)"
+        
+        try:
+            response = await llm_instance.ainvoke(messages, **kwargs)
+            
+            # Handle different response types
+            if hasattr(response, 'content'):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
+        except Exception as e:
+            logger.error(f"Error invoking LLM: {e}")
+            raise
+    
+    @staticmethod
+    def invoke_sync(
+        llm_instance,
+        messages: List[BaseMessage],
+        **kwargs
+    ) -> str:
+        """
+        Invoke LLM synchronously and return text response
+        
+        Args:
+            llm_instance: LLM instance from create_llm()
+            messages: List of message objects
+            **kwargs: Additional invocation parameters
+            
+        Returns:
+            Text response from LLM
+        """
+        if llm_instance is None:
+            return "Mock response (MOCK_LLM=True)"
+        
+        try:
+            response = llm_instance.invoke(messages, **kwargs)
+            
+            # Handle different response types
+            if hasattr(response, 'content'):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
+        except Exception as e:
+            logger.error(f"Error invoking LLM: {e}")
+            raise

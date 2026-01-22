@@ -1,0 +1,77 @@
+"""
+Configuration settings for cpgAgent backend
+"""
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List
+import os
+
+
+class Settings(BaseSettings):
+    """Application settings"""
+    
+    # API Keys
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    
+    # Mock Mode
+    MOCK_LLM: bool = True
+    
+    # Ollama (Local LLM)
+    USE_OLLAMA: bool = False
+    OLLAMA_MODEL: str = "llama3"
+    
+    # Database
+    DATABASE_URL: str = "sqlite:///./cpgagent.db"
+    
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+    
+    # Vector Database
+    PINECONE_API_KEY: str = ""
+    PINECONE_ENVIRONMENT: str = "gcp-starter"
+    
+    # Application
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = True
+    SECRET_KEY: str = "change-this-in-production"
+    
+    # CORS
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ]
+    
+    # Celery
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+    
+    # File Upload
+    MAX_UPLOAD_SIZE_MB: int = 100
+    
+    # LinkedOmics API
+    LINKEDOMICS_API_URL: str = "https://api.linkedomics.org"
+    LINKEDOMICS_API_KEY: str = ""
+    
+    # Agent Configuration
+    DEFAULT_LLM_MODEL: str = "gpt-4-turbo-preview"
+    DEFAULT_TEMPERATURE: float = 0.7
+    MAX_TOKENS: int = 4000
+    
+    # Timeouts
+    AGENT_TIMEOUT_SECONDS: int = 300
+    API_TIMEOUT_SECONDS: int = 30
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True
+    )
+
+
+settings = Settings()
