@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card, CardContent } from "@/components/ui/card"
 import { chatAPI, type ChatMessage, type Paper, type AnalysisResult, API_URL } from "@/lib/api"
+import axios from "axios"
 import { cn } from "@/lib/utils"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -207,9 +208,33 @@ export function ChatInterface({ sessionId, onSessionChange }: ChatInterfaceProps
             setMessages((prev) => [...prev, assistantMessage])
         } catch (error) {
             console.error("Error sending message:", error)
+            
+            // Determine the error message based on error type
+            let errorContent = "I apologize, but I encountered an error processing your request."
+            
+            if (axios.isAxiosError(error)) {
+                if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK' || !error.response) {
+                    errorContent = "Unable to connect to the backend server. Please make sure the backend is running on " + API_URL + ". You can start it by running `./start_backend.sh` or `python backend/main.py`."
+                } else if (error.response) {
+                    // Server responded with error status
+                    const status = error.response.status
+                    const detail = error.response.data?.detail || error.response.data?.error || error.message
+                    errorContent = `Server error (${status}): ${detail}. Please try again.`
+                } else if (error.request) {
+                    // Request was made but no response received
+                    errorContent = "The request was sent but no response was received. The backend may be taking too long to respond or may be unavailable."
+                } else {
+                    errorContent = `Request error: ${error.message}. Please try again.`
+                }
+            } else if (error instanceof Error) {
+                errorContent = `Error: ${error.message}. Please try again.`
+            } else {
+                errorContent = `An unexpected error occurred: ${String(error)}. Please try again.`
+            }
+            
             const errorMessage: ChatMessage = {
                 role: "assistant",
-                content: `I apologize, but I encountered an error processing your request: ${error instanceof Error ? error.message : String(error)}. Please try again.`,
+                content: errorContent,
                 timestamp: new Date(),
             }
             setMessages((prev) => [...prev, errorMessage])
