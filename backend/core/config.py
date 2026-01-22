@@ -48,12 +48,24 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, v):
         """Parse CORS_ORIGINS if it's a JSON string"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"CORS_ORIGINS raw value: {v}, type: {type(v)}")
+        
         if isinstance(v, str):
+            # Remove surrounding quotes if present
+            v = v.strip().strip('"').strip("'")
             try:
-                return json.loads(v)
-            except (json.JSONDecodeError, TypeError):
+                parsed = json.loads(v)
+                logger.info(f"CORS_ORIGINS parsed from JSON: {parsed}")
+                return parsed
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"Failed to parse CORS_ORIGINS as JSON: {e}, trying comma-separated")
                 # If parsing fails, treat as comma-separated string
-                return [origin.strip() for origin in v.split(",") if origin.strip()]
+                parsed = [origin.strip() for origin in v.split(",") if origin.strip()]
+                logger.info(f"CORS_ORIGINS parsed as comma-separated: {parsed}")
+                return parsed
+        logger.info(f"CORS_ORIGINS already a list: {v}")
         return v
     
     # Celery
