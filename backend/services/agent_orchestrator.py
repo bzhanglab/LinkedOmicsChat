@@ -116,93 +116,175 @@ class AgentOrchestrator:
         except Exception as e:
             logger.error(f"Error saving session to database: {e}")
 
-    def _save_message_to_db(self, session_id: str, query: str, response: Dict[str, Any], timestamp: float):
+    async def _save_message_to_db(self, session_id: str, query: str, response: Dict[str, Any], timestamp: float):
         """Save chat message to database"""
         try:
-            db = SessionLocal()
-            try:
-                message = DBChatMessage(
-                    session_id=session_id,
-                    query=query,
-                    response=response,
-                    timestamp=timestamp
-                )
-                db.add(message)
-                db.commit()
-                logger.info(f"Saved message to session {session_id}")
-            finally:
-                db.close()
+            if settings.DATABASE_URL.startswith("sqlite"):
+                # SQLite uses sync session
+                db = SessionLocal()
+                try:
+                    message = DBChatMessage(
+                        session_id=session_id,
+                        query=query,
+                        response=response,
+                        timestamp=timestamp
+                    )
+                    db.add(message)
+                    db.commit()
+                    logger.info(f"Saved message to session {session_id}")
+                finally:
+                    db.close()
+            else:
+                # PostgreSQL uses async session
+                async with SessionLocal() as db:
+                    message = DBChatMessage(
+                        session_id=session_id,
+                        query=query,
+                        response=response,
+                        timestamp=timestamp
+                    )
+                    db.add(message)
+                    await db.commit()
+                    logger.info(f"Saved message to session {session_id}")
         except Exception as e:
             logger.error(f"Error saving message to database: {e}")
 
-    def _load_session_from_db(self, session_id: str) -> Optional[Dict[str, Any]]:
+    async def _load_session_from_db(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Load session from database"""
         try:
-            db = SessionLocal()
-            try:
-                db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                if not db_session:
-                    return None
-                
-                # Load messages
-                messages = db.query(DBChatMessage).filter(
-                    DBChatMessage.session_id == session_id
-                ).order_by(DBChatMessage.timestamp).all()
-                
-                history = [
-                    {
-                        "query": msg.query,
-                        "response": msg.response,
-                        "timestamp": msg.timestamp
+            if settings.DATABASE_URL.startswith("sqlite"):
+                # SQLite uses sync session
+                db = SessionLocal()
+                try:
+                    db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                    if not db_session:
+                        return None
+                    
+                    messages = db.query(DBChatMessage).filter(
+                        DBChatMessage.session_id == session_id
+                    ).order_by(DBChatMessage.timestamp).all()
+                    
+                    history = [
+                        {
+                            "query": msg.query,
+                            "response": msg.response,
+                            "timestamp": msg.timestamp
+                        }
+                        for msg in messages
+                    ]
+                    
+                    session = {
+                        "id": db_session.id,
+                        "user_id": db_session.user_id,
+                        "title": db_session.title,
+                        "history": history,
+                        "context": db_session.context or {},
+                        "created_at": db_session.created_at,
+                        "last_updated": db_session.last_updated
                     }
-                    for msg in messages
-                ]
-                
-                session = {
-                    "id": db_session.id,
-                    "user_id": db_session.user_id,
-                    "title": db_session.title,
-                    "history": history,
-                    "context": db_session.context or {},
-                    "created_at": db_session.created_at,
-                    "last_updated": db_session.last_updated
-                }
-                
-                logger.info(f"Loaded session {session_id} from database with {len(history)} messages")
-                return session
-            finally:
-                db.close()
+                    
+                    logger.info(f"Loaded session {session_id} from database with {len(history)} messages")
+                    return session
+                finally:
+                    db.close()
+            else:
+                # PostgreSQL uses async session
+                async with SessionLocal() as db:
+                    result = await db.execute(
+                        select(ChatSession).filter(ChatSession.id == session_id)
+                    )
+                    db_session = result.scalar_one_or_none()
+                    if not db_session:
+                        return None
+                    
+                    # Load messages
+                    messages_result = await db.execute(
+                        select(DBChatMessage)
+                        .filter(DBChatMessage.session_id == session_id)
+                        .order_by(DBChatMessage.timestamp)
+                    )
+                    messages = messages_result.scalars().all()
+                    
+                    history = [
+                        {
+                            "query": msg.query,
+                            "response": msg.response,
+                            "timestamp": msg.timestamp
+                        }
+                        for msg in messages
+                    ]
+                    
+                    session = {
+                        "id": db_session.id,
+                        "user_id": db_session.user_id,
+                        "title": db_session.title,
+                        "history": history,
+                        "context": db_session.context or {},
+                        "created_at": db_session.created_at,
+                        "last_updated": db_session.last_updated
+                    }
+                    
+                    logger.info(f"Loaded session {session_id} from database with {len(history)} messages")
+                    return session
         except Exception as e:
             logger.error(f"Error loading session from database: {e}")
             return None
 
-    def _load_all_sessions_from_db(self) -> List[Dict[str, Any]]:
+    async def _load_all_sessions_from_db(self) -> List[Dict[str, Any]]:
         """Load all sessions from database"""
         try:
-            db = SessionLocal()
-            try:
-                db_sessions = db.query(ChatSession).all()
-                sessions_list = []
-                
-                for db_session in db_sessions:
-                    # Count messages for this session
-                    message_count = db.query(DBChatMessage).filter(
-                        DBChatMessage.session_id == db_session.id
-                    ).count()
+            if settings.DATABASE_URL.startswith("sqlite"):
+                # SQLite uses sync session
+                db = SessionLocal()
+                try:
+                    db_sessions = db.query(ChatSession).all()
+                    sessions_list = []
                     
-                    sessions_list.append({
-                        "id": db_session.id,
-                        "user_id": db_session.user_id,
-                        "title": db_session.title,
-                        "message_count": message_count,
-                        "created_at": db_session.created_at,
-                        "last_updated": db_session.last_updated
-                    })
-                
-                logger.info(f"Loaded {len(sessions_list)} sessions from database")
-                return sessions_list
-            finally:
-                db.close()
+                    for db_session in db_sessions:
+                        message_count = db.query(DBChatMessage).filter(
+                            DBChatMessage.session_id == db_session.id
+                        ).count()
+                        
+                        sessions_list.append({
+                            "id": db_session.id,
+                            "user_id": db_session.user_id,
+                            "title": db_session.title,
+                            "message_count": message_count,
+                            "created_at": db_session.created_at,
+                            "last_updated": db_session.last_updated
+                        })
+                    
+                    logger.info(f"Loaded {len(sessions_list)} sessions from database")
+                    return sessions_list
+                finally:
+                    db.close()
+            else:
+                # PostgreSQL uses async session
+                async with SessionLocal() as db:
+                    result = await db.execute(select(ChatSession))
+                    db_sessions = result.scalars().all()
+                    sessions_list = []
+                    
+                    for db_session in db_sessions:
+                        # Count messages for this session
+                        count_result = await db.execute(
+                            select(DBChatMessage).filter(
+                                DBChatMessage.session_id == db_session.id
+                            )
+                        )
+                        message_count = len(count_result.scalars().all())
+                        
+                        sessions_list.append({
+                            "id": db_session.id,
+                            "user_id": db_session.user_id,
+                            "title": db_session.title,
+                            "message_count": message_count,
+                            "created_at": db_session.created_at,
+                            "last_updated": db_session.last_updated
+                        })
+                    
+                    logger.info(f"Loaded {len(sessions_list)} sessions from database")
+                    return sessions_list
         except Exception as e:
             logger.error(f"Error loading sessions from database: {e}")
             return []
@@ -243,7 +325,7 @@ class AgentOrchestrator:
             logger.info(f"Processing query from user {user_id}: {query}")
             
             # Get or create session context
-            session = self._get_or_create_session(session_id, user_id)
+            session = await self._get_or_create_session(session_id, user_id)
             
             # Determine which agents to invoke
             agent_plan = await self._create_agent_plan(query, session)
@@ -284,7 +366,7 @@ class AgentOrchestrator:
         
         # Try to load from database
         if session_id:
-            db_session = self._load_session_from_db(session_id)
+            db_session = await self._load_session_from_db(session_id)
             if db_session:
                 self.sessions[session_id] = db_session
                 return db_session
@@ -306,7 +388,7 @@ class AgentOrchestrator:
         self.sessions[new_session_id] = session
         
         # Save to database
-        self._save_session_to_db(session)
+        await self._save_session_to_db(session)
         
         return session
     
@@ -903,10 +985,10 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             logger.info(f"Updated session {session_id}: now has {len(self.sessions[session_id]['history'])} history items")
             
             # Save message to database
-            self._save_message_to_db(session_id, query, response, now)
+            await self._save_message_to_db(session_id, query, response, now)
             
             # Update session in database
-            self._save_session_to_db(self.sessions[session_id])
+            await self._save_session_to_db(self.sessions[session_id])
             
             # Generate title after first message
             if len(self.sessions[session_id]["history"]) == 1 and self.sessions[session_id].get("title") == "New Chat":
@@ -924,7 +1006,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                 logger.info(f"✅ Generated title for session {session_id}: {title}")
                 
                 # Save updated title to database
-                self._save_session_to_db(self.sessions[session_id])
+                await self._save_session_to_db(self.sessions[session_id])
             else:
                 logger.warning(f"Session {session_id} not found when updating title")
         except Exception as e:
@@ -933,5 +1015,5 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             if session_id in self.sessions:
                 fallback_title = first_query[:50] + ("..." if len(first_query) > 50 else "")
                 self.sessions[session_id]["title"] = fallback_title
-                self._save_session_to_db(self.sessions[session_id])
+                await self._save_session_to_db(self.sessions[session_id])
                 logger.info(f"Using fallback title: {fallback_title}")

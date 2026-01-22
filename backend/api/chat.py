@@ -77,7 +77,7 @@ async def list_sessions():
         List of sessions with titles and timestamps
     """
     try:
-        sessions_list = orchestrator._load_all_sessions_from_db()
+        sessions_list = await orchestrator._load_all_sessions_from_db()
         
         # Sort by last updated (most recent first)
         sessions_list.sort(key=lambda x: x.get("last_updated", 0), reverse=True)
