@@ -230,14 +230,17 @@ class AgentOrchestrator:
             logger.error(f"Error loading session from database: {e}")
             return None
 
-    async def _load_all_sessions_from_db(self) -> List[Dict[str, Any]]:
-        """Load all sessions from database"""
+    async def _load_all_sessions_from_db(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Load all sessions from database, optionally filtered by user_id"""
         try:
             if settings.DATABASE_URL.startswith("sqlite"):
                 # SQLite uses sync session
                 db = SessionLocal()
                 try:
-                    db_sessions = db.query(ChatSession).all()
+                    query = db.query(ChatSession)
+                    if user_id:
+                        query = query.filter(ChatSession.user_id == user_id)
+                    db_sessions = query.all()
                     sessions_list = []
                     
                     for db_session in db_sessions:
@@ -254,14 +257,17 @@ class AgentOrchestrator:
                             "last_updated": db_session.last_updated
                         })
                     
-                    logger.info(f"Loaded {len(sessions_list)} sessions from database")
+                    logger.info(f"Loaded {len(sessions_list)} sessions from database" + (f" for user {user_id}" if user_id else ""))
                     return sessions_list
                 finally:
                     db.close()
             else:
                 # PostgreSQL uses async session
                 async with SessionLocal() as db:
-                    result = await db.execute(select(ChatSession))
+                    query = select(ChatSession)
+                    if user_id:
+                        query = query.filter(ChatSession.user_id == user_id)
+                    result = await db.execute(query)
                     db_sessions = result.scalars().all()
                     sessions_list = []
                     
@@ -283,7 +289,7 @@ class AgentOrchestrator:
                             "last_updated": db_session.last_updated
                         })
                     
-                    logger.info(f"Loaded {len(sessions_list)} sessions from database")
+                    logger.info(f"Loaded {len(sessions_list)} sessions from database" + (f" for user {user_id}" if user_id else ""))
                     return sessions_list
         except Exception as e:
             logger.error(f"Error loading sessions from database: {e}")

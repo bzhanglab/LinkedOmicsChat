@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "change-this-in-production"
     
+    # Authentication
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    
     # CORS - stored as string, will be parsed to list
     CORS_ORIGINS: Union[List[str], str] = '["http://localhost:3000","http://localhost:3001"]'
     

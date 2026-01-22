@@ -1,4 +1,5 @@
 import axios from "axios"
+import { getAuthToken } from "./auth"
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -9,6 +10,34 @@ const api = axios.create({
         "Content-Type": "application/json",
     },
 })
+
+// Add auth token to all requests
+api.interceptors.request.use(
+    (config) => {
+        const token = getAuthToken()
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`
+        }
+        return config
+    },
+    (error) => {
+        return Promise.reject(error)
+    }
+)
+
+// Handle 401 errors (unauthorized) - redirect to login
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            // Token expired or invalid, redirect to login
+            if (typeof window !== "undefined") {
+                window.location.href = "/login"
+            }
+        }
+        return Promise.reject(error)
+    }
+)
 
 export interface Paper {
     title: string
@@ -135,8 +164,24 @@ export const chatAPI = {
         return response.data
     },
 
+    async listSessions() {
+        const response = await api.get<{ sessions: Array<{
+            session_id: string
+            title: string
+            created_at: number
+            last_updated: number
+            message_count: number
+        }> }>("/api/v1/chat/sessions")
+        return response.data
+    },
+
     async getSession(sessionId: string) {
         const response = await api.get(`/api/v1/chat/sessions/${sessionId}`)
+        return response.data
+    },
+
+    async updateSessionTitle(sessionId: string, title: string) {
+        const response = await api.patch(`/api/v1/chat/sessions/${sessionId}/title`, { title })
         return response.data
     },
 

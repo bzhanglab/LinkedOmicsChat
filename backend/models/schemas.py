@@ -119,3 +119,44 @@ class SystemStatus(BaseModel):
     agents: List[AgentStatus]
     active_sessions: int
     uptime: float
+
+
+# Authentication schemas
+class UserRegister(BaseModel):
+    """User registration schema"""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
+    password: str = Field(..., min_length=8)
+
+
+class UserLogin(BaseModel):
+    """User login schema"""
+    username: str
+    password: str
+
+
+class Token(BaseModel):
+    """Token response schema"""
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+    """User response schema"""
+    id: str
+    username: str
+    email: str
+    is_active: bool
+    created_at: float
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Forgot password request schema"""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
+
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password request schema"""
+    token: str
+    new_password: str = Field(..., min_length=8)

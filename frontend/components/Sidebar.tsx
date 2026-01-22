@@ -12,8 +12,10 @@ import {
     BookOpen,
     ChevronLeft,
     ChevronRight,
+    LogOut,
 } from "lucide-react"
 import { ChatHistory } from "@/components/ChatHistory"
+import { useAuth } from "@/components/AuthContext"
 
 type View = "chat" | "datasets" | "visualizations" | "workflows"
 
@@ -34,6 +36,7 @@ const navItems: Array<{ id: View; label: string; icon: any }> = [
 
 export function Sidebar({ currentView, onViewChange, currentSessionId, onSessionChange, onSettingsOpen }: SidebarProps) {
     const [isCollapsed, setIsCollapsed] = useState(false)
+    const { user, logout } = useAuth()
 
     return (
         <div className={cn(
@@ -129,6 +132,12 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
 
             {/* Footer */}
             <div className={cn("p-4 border-t border-border space-y-2", isCollapsed && "p-2")}>
+                {!isCollapsed && user && (
+                    <div className="px-4 py-2 mb-2 text-sm">
+                        <p className="font-medium text-foreground">{user.username}</p>
+                        <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                    </div>
+                )}
                 <a
                     href="/docs"
                     className={cn(
@@ -152,6 +161,18 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                 >
                     <Settings className="h-5 w-5" />
                     {!isCollapsed && <span>Settings</span>}
+                </button>
+                <button
+                    onClick={logout}
+                    className={cn(
+                        "w-full flex items-center rounded-lg transition-all font-medium",
+                        isCollapsed ? "justify-center p-3" : "gap-3 px-4 py-3 text-left",
+                        "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    )}
+                    title={isCollapsed ? "Logout" : undefined}
+                >
+                    <LogOut className="h-5 w-5" />
+                    {!isCollapsed && <span>Logout</span>}
                 </button>
             </div>
         </div>

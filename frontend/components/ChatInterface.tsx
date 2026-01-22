@@ -84,10 +84,8 @@ export function ChatInterface({ sessionId, onSessionChange }: ChatInterfaceProps
 
     const loadSessionHistory = async (sid: string) => {
         try {
-            const response = await fetch(`${API_URL}/api/v1/chat/sessions/${sid}`)
-            if (response.ok) {
-                const data = await response.json()
-                const history = data.history || []
+            const data = await chatAPI.getSession(sid)
+            const history = data.history || []
                 const loadedMessages: ChatMessage[] = []
                 
                 for (const item of history) {
@@ -119,7 +117,6 @@ export function ChatInterface({ sessionId, onSessionChange }: ChatInterfaceProps
                         timestamp: new Date(),
                     },
                 ])
-            }
         } catch (error) {
             console.error("Failed to load session history:", error)
         }

@@ -1,10 +1,29 @@
 """
 SQLAlchemy database models
 """
-from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey, JSON
+from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import relationship
 from core.database import Base
 import uuid
+
+
+class User(Base):
+    """User model for authentication"""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, unique=True, nullable=False, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(Float, nullable=False)
+    
+    # Password reset fields
+    reset_token = Column(String, nullable=True, index=True)
+    reset_token_expires = Column(Float, nullable=True)
+    
+    # Relationship to sessions
+    sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
 
 
 class ChatSession(Base):
@@ -12,13 +31,14 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String, nullable=True)
     created_at = Column(Float, nullable=False)
     last_updated = Column(Float, nullable=False)
     context = Column(JSON, nullable=True)
 
-    # Relationship to messages
+    # Relationships
+    user = relationship("User", back_populates="sessions")
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
 
 

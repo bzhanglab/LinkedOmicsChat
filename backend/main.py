@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import logging
 from typing import AsyncGenerator
 
-from api import chat, agents, datasets, analyses, workflows
+from api import chat, agents, datasets, analyses, workflows, auth
 from core.config import settings
 from core.database import init_db
 from services.agent_orchestrator import AgentOrchestrator
@@ -122,6 +122,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
 
 # Include routers
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(datasets.router, prefix="/api/v1/datasets", tags=["Datasets"])

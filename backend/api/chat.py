@@ -8,8 +8,10 @@ import logging
 from sqlalchemy.orm import Session
 
 from models.schemas import ChatRequest, ChatResponse
+from models.database import User
 from services.agent_orchestrator import AgentOrchestrator
 from core.database import get_db
+from core.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +20,16 @@ orchestrator = AgentOrchestrator()
 
 
 @router.post("/query", response_model=ChatResponse)
-async def chat_query(request: ChatRequest):
+async def chat_query(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user)
+):
     """
     Process a chat query through the agent system
     
     Args:
         request: Chat request with message and optional session_id
+        current_user: Authenticated user (from JWT token)
         
     Returns:
         ChatResponse with agent results and visualizations
@@ -33,10 +39,10 @@ async def chat_query(request: ChatRequest):
         if not orchestrator.agents:
             await orchestrator.initialize()
         
-        # Process query
+        # Process query with authenticated user_id
         result = await orchestrator.process_query(
             query=request.message,
-            user_id="default_user",
+            user_id=current_user.id,
             session_id=request.session_id
         )
         
@@ -69,15 +75,20 @@ async def chat_query(request: ChatRequest):
 
 
 @router.get("/sessions")
-async def list_sessions():
+async def list_sessions(
+    current_user: User = Depends(get_current_user)
+):
     """
-    List all chat sessions with metadata from database
+    List all chat sessions for the authenticated user
+    
+    Args:
+        current_user: Authenticated user (from JWT token)
     
     Returns:
         List of sessions with titles and timestamps
     """
     try:
-        sessions_list = await orchestrator._load_all_sessions_from_db()
+        sessions_list = await orchestrator._load_all_sessions_from_db(user_id=current_user.id)
         
         # Sort by last updated (most recent first)
         sessions_list.sort(key=lambda x: x.get("last_updated", 0), reverse=True)
@@ -101,12 +112,16 @@ async def list_sessions():
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user)
+):
     """
     Get session history from database
     
     Args:
         session_id: Session identifier
+        current_user: Authenticated user (from JWT token)
         
     Returns:
         Session history and context
@@ -115,11 +130,17 @@ async def get_session(session_id: str):
         # Try memory cache first
         if session_id in orchestrator.sessions:
             session = orchestrator.sessions[session_id]
+            # Verify session belongs to user
+            if session.get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
         else:
             # Load from database
-            session = orchestrator._load_session_from_db(session_id)
+            session = await orchestrator._load_session_from_db(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
+            # Verify session belongs to user
+            if session.get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
             # Cache in memory
             orchestrator.sessions[session_id] = session
         
@@ -140,13 +161,18 @@ async def get_session(session_id: str):
 
 
 @router.patch("/sessions/{session_id}/title")
-async def update_session_title(session_id: str, request: dict):
+async def update_session_title(
+    session_id: str,
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
     """
     Update session title
     
     Args:
         session_id: Session identifier
         request: JSON with "title" field
+        current_user: Authenticated user (from JWT token)
         
     Returns:
         Updated session info
@@ -154,10 +180,17 @@ async def update_session_title(session_id: str, request: dict):
     try:
         # Load session if not in memory
         if session_id not in orchestrator.sessions:
-            session = orchestrator._load_session_from_db(session_id)
+            session = await orchestrator._load_session_from_db(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
+            # Verify session belongs to user
+            if session.get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
             orchestrator.sessions[session_id] = session
+        else:
+            # Verify session belongs to user
+            if orchestrator.sessions[session_id].get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
         
         new_title = request.get("title", "").strip()
         if not new_title:
@@ -182,23 +215,34 @@ async def update_session_title(session_id: str, request: dict):
 
 
 @router.delete("/sessions/{session_id}")
-async def clear_session(session_id: str):
+async def clear_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user)
+):
     """
     Clear a session from both memory and database
     
     Args:
         session_id: Session identifier
+        current_user: Authenticated user (from JWT token)
         
     Returns:
         Success message
     """
     try:
-        # Delete from memory
+        # Verify session belongs to user before deleting
         if session_id in orchestrator.sessions:
+            if orchestrator.sessions[session_id].get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
             del orchestrator.sessions[session_id]
+        else:
+            # Load from DB to verify ownership
+            session = await orchestrator._load_session_from_db(session_id)
+            if session and session.get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
         
         # Delete from database
-        orchestrator._delete_session_from_db(session_id)
+        await orchestrator._delete_session_from_db(session_id)
         
         return {"message": "Session cleared", "session_id": session_id}
         

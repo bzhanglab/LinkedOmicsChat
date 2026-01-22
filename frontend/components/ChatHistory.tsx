@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Trash2, MessageSquare, Plus, Pencil, Check, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { API_URL } from "@/lib/api"
+import { chatAPI } from "@/lib/api"
 
 interface ChatSession {
     session_id: string
@@ -53,13 +53,14 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
             if (showLoading) {
                 setIsLoading(true)
             }
-            const response = await fetch(`${API_URL}/api/v1/chat/sessions`)
-            if (response.ok) {
-                const data = await response.json()
-                setSessions(data.sessions || [])
-            }
+            const data = await chatAPI.listSessions()
+            setSessions(data.sessions || [])
         } catch (error) {
             console.error("Failed to load sessions:", error)
+            // If unauthorized, clear sessions (user logged out)
+            if (error instanceof Error && error.message.includes("401")) {
+                setSessions([])
+            }
         } finally {
             if (showLoading) {
                 setIsLoading(false)
@@ -75,16 +76,10 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
         }
 
         try {
-            const response = await fetch(
-                `${API_URL}/api/v1/chat/sessions/${sessionId}`,
-                { method: "DELETE" }
-            )
-            
-            if (response.ok) {
-                setSessions(sessions.filter(s => s.session_id !== sessionId))
-                if (currentSessionId === sessionId) {
-                    onSessionSelect(null)
-                }
+            await chatAPI.clearSession(sessionId)
+            setSessions(sessions.filter(s => s.session_id !== sessionId))
+            if (currentSessionId === sessionId) {
+                onSessionSelect(null)
             }
         } catch (error) {
             console.error("Failed to delete session:", error)
@@ -109,24 +104,14 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
         }
 
         try {
-            const response = await fetch(
-                `${API_URL}/api/v1/chat/sessions/${sessionId}/title`,
-                {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ title: editingTitle.trim() })
-                }
-            )
-            
-            if (response.ok) {
-                // Update local state
-                setSessions(sessions.map(s => 
-                    s.session_id === sessionId 
-                        ? { ...s, title: editingTitle.trim() }
-                        : s
-                ))
-                cancelEditing()
-            }
+            await chatAPI.updateSessionTitle(sessionId, editingTitle.trim())
+            // Update local state
+            setSessions(sessions.map(s => 
+                s.session_id === sessionId 
+                    ? { ...s, title: editingTitle.trim() }
+                    : s
+            ))
+            cancelEditing()
         } catch (error) {
             console.error("Failed to update title:", error)
         }
