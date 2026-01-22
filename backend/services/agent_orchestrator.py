@@ -353,7 +353,7 @@ class AgentOrchestrator:
                 "query": query
             }
     
-    def _get_or_create_session(
+    async def _get_or_create_session(
         self,
         session_id: Optional[str],
         user_id: str
