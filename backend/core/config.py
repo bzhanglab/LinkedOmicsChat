@@ -2,8 +2,8 @@
 Configuration settings for cpgAgent backend
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
-from typing import List, Union
+from pydantic import field_validator, model_validator
+from typing import List, Union, Any
 import os
 import json
 
@@ -41,29 +41,31 @@ class Settings(BaseSettings):
     # CORS - stored as string, will be parsed
     CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:3001"]'
     
-    @field_validator('CORS_ORIGINS', mode='after')
-    @classmethod
-    def parse_cors_origins(cls, v):
+    @model_validator(mode='after')
+    def parse_cors_origins(self):
         """Parse CORS_ORIGINS if it's a JSON string"""
         import logging
+        logging.basicConfig(level=logging.INFO)
         logger = logging.getLogger(__name__)
-        logger.info(f"CORS_ORIGINS raw value: {v}, type: {type(v)}")
+        logger.info(f"CORS_ORIGINS raw value: {self.CORS_ORIGINS}, type: {type(self.CORS_ORIGINS)}")
         
-        if isinstance(v, str):
+        if isinstance(self.CORS_ORIGINS, str):
             # Remove surrounding quotes if present
-            v_clean = v.strip().strip('"').strip("'")
+            v_clean = self.CORS_ORIGINS.strip().strip('"').strip("'")
             try:
                 parsed = json.loads(v_clean)
                 logger.info(f"CORS_ORIGINS parsed from JSON: {parsed}")
-                return parsed
+                self.CORS_ORIGINS = parsed
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Failed to parse CORS_ORIGINS as JSON: {e}, trying comma-separated")
                 # If parsing fails, treat as comma-separated string
                 parsed = [origin.strip() for origin in v_clean.split(",") if origin.strip()]
                 logger.info(f"CORS_ORIGINS parsed as comma-separated: {parsed}")
-                return parsed
-        logger.info(f"CORS_ORIGINS already a list: {v}")
-        return v
+                self.CORS_ORIGINS = parsed
+        else:
+            logger.info(f"CORS_ORIGINS already a list: {self.CORS_ORIGINS}")
+        
+        return self
     
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
