@@ -54,8 +54,6 @@ app = FastAPI(
 )
 
 # CORS middleware
-import logging
-logger = logging.getLogger(__name__)
 logger.info(f"CORS origins configured: {settings.CORS_ORIGINS}")
 
 app.add_middleware(
