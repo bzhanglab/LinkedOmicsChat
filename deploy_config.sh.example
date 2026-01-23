@@ -1,0 +1,15 @@
+#!/bin/bash
+# cpgAgent Deployment Configuration
+# Copy this file to deploy_config.sh and fill in your AWS details
+# Then source it: source deploy_config.sh
+
+# AWS EC2 Instance Details
+export CPGAGENT_AWS_HOST="ec2-user@your-instance-ip"        # e.g., ec2-user@1.2.3.4
+export CPGAGENT_AWS_KEY="~/.ssh/your-key.pem"                # Path to your SSH key
+export CPGAGENT_REMOTE_PATH="~/cpgAgent"                    # Path on remote server
+
+# Optional: Advanced settings
+# export CPGAGENT_SYNC_GIT="true"                           # Include .git/ folder
+# export CPGAGENT_DRY_RUN="true"                            # Preview mode (no changes)
+# export CPGAGENT_USE_DELETE="false"                        # Enable deletion mode (dangerous!)
+# export CPGAGENT_SERVER_FILES="file1,file2"                # Protect custom server files

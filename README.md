@@ -257,12 +257,101 @@ docker compose down
 ```
 
 ### AWS EC2 Deployment
+
+#### Initial Setup
 Use the automated deployment script:
 ```bash
 ./deploy_aws.sh
 ```
 
 The script will guide you through the setup process, including Docker installation, environment configuration, and service startup.
+
+#### Quick Updates (Rsync - Recommended)
+For deploying changes without committing to git (faster workflow):
+
+**Option 1: Export variables in your shell session**
+```bash
+# Set your AWS details
+export CPGAGENT_AWS_HOST="ec2-user@your-instance-ip"
+export CPGAGENT_AWS_KEY="~/.ssh/your-key.pem"
+export CPGAGENT_REMOTE_PATH="~/cpgAgent"
+
+# Deploy changes (syncs files and rebuilds containers)
+./deploy_rsync.sh
+```
+
+**Option 2: Use a config file (recommended)**
+```bash
+# 1. Copy the example config file
+cp deploy_config.sh.example deploy_config.sh
+
+# 2. Edit deploy_config.sh with your AWS details
+#    (fill in CPGAGENT_AWS_HOST, CPGAGENT_AWS_KEY, etc.)
+
+# 3. Source it before deploying
+source deploy_config.sh
+
+# 4. Deploy
+./deploy_rsync.sh
+```
+
+**Option 3: Add to your shell profile (persistent)**
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+export CPGAGENT_AWS_HOST="ec2-user@your-instance-ip"
+export CPGAGENT_AWS_KEY="~/.ssh/your-key.pem"
+export CPGAGENT_REMOTE_PATH="~/cpgAgent"
+
+# Then reload: source ~/.zshrc
+# Now you can run ./deploy_rsync.sh anytime
+```
+
+**Benefits of rsync deployment:**
+- Deploy uncommitted changes instantly
+- Faster than git pull (only syncs changed files)
+- Respects .gitignore (won't sync unnecessary files)
+- Automatically rebuilds Docker containers
+- No need to commit every small change
+
+**Safety features:**
+- **Safe by default**: Does NOT delete files on server
+- **Preserves server files**: `.env`, databases, logs are never overwritten
+- **Dry-run mode**: Preview changes before syncing
+  ```bash
+  CPGAGENT_DRY_RUN=true ./deploy_rsync.sh  # Preview only, no changes
+  ```
+- **Protected files** (server keeps its own):
+  - `.env` - Server configuration (never synced)
+  - `*.db`, `*.sqlite` - Database files (server has its own PostgreSQL)
+  - `node_modules/`, `.next/` - Rebuilt in Docker
+  - `logs/`, `*.log` - Server logs
+  - `data/` - Server data directory
+
+**Advanced options:**
+```bash
+# Preview changes without syncing
+CPGAGENT_DRY_RUN=true ./deploy_rsync.sh
+
+# Enable deletion mode (removes files on server not in local - use with caution!)
+CPGAGENT_USE_DELETE=true ./deploy_rsync.sh
+
+# Include .git/ folder (enables git pull on server)
+CPGAGENT_SYNC_GIT=true ./deploy_rsync.sh
+
+# Protect custom server-specific files from deletion
+CPGAGENT_SERVER_FILES="my-custom-config.json,server-scripts/" ./deploy_rsync.sh
+```
+
+**Important: Using --delete mode:**
+- Files on server that don't exist locally **WILL BE DELETED**
+- **Protected files** (excluded patterns) are **SAFE**:
+  - `.env`, `.env.production`, `.env.server`
+  - `server-config.*`, `production-config.*`
+  - `server-data/`, `production-data/`
+  - `*.db`, `*.sqlite` (databases)
+  - `logs/`, `*.log`
+- **Unprotected files** will be deleted if not in local repo
+- **Protect custom files** using `CPGAGENT_SERVER_FILES` environment variable
 
 ## License
 

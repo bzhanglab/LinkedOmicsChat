@@ -46,6 +46,10 @@ yarn-error.log*
 *.db
 *.sqlite
 *.sqlite3
+*.backup
+
+# Backup files
+*.bak
 
 # Generated data files (created on-demand)
 data/*
