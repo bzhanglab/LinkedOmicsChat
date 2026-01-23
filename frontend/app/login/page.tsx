@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import Image from "next/image"
 import { useAuth } from "@/components/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,7 +41,15 @@ export default function LoginPage() {
         <div className="min-h-screen flex items-center justify-center bg-background px-4">
             <div className="w-full max-w-md space-y-8">
                 <div className="text-center">
-                    <h1 className="text-3xl font-bold">cpgAgent</h1>
+                    <div className="flex justify-center mb-4">
+                        <Image
+                            src="/cpgagent.png"
+                            alt="cpgAgent Logo"
+                            width={200}
+                            height={200}
+                            className="h-auto w-auto max-w-[200px] max-h-[200px] object-contain"
+                        />
+                    </div>
                     <p className="mt-2 text-muted-foreground">Sign in to your account</p>
                 </div>
 
