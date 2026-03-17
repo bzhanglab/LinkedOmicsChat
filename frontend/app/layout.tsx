@@ -7,7 +7,7 @@ import { AuthProvider } from "@/components/AuthContext"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-    title: "cpgAgent - Modern Agentic Platform for Multi-Omics",
+    title: "LinkedOmicsChat - AI-Powered Multi-Omics Platform",
     description: "AI-powered platform for bioinformatics research and multi-omics analysis",
     keywords: ["bioinformatics", "AI", "omics", "genomics", "proteomics", "research"],
 }

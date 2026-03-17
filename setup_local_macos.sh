@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# cpgAgent Local Development Setup Script for macOS
+# LinkedOmicsChat Local Development Setup Script for macOS
 # Run this script to set up your local development environment
 
 set -e  # Exit on error
 
-echo "🚀 cpgAgent Local Setup for macOS"
+echo "🚀 LinkedOmicsChat Local Setup for macOS"
 echo "===================================="
 echo ""
 
@@ -94,7 +94,7 @@ MOCK_LLM=true
 # MOCK_LLM=false
 
 # Database
-DATABASE_URL=sqlite:///./cpgagent.db
+DATABASE_URL=sqlite:///./linkedomicsai.db
 REDIS_URL=redis://localhost:6379/0
 
 # Application

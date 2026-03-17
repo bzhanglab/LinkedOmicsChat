@@ -1,1 +1,1 @@
-"""Core module for cpgAgent backend"""
+"""Core module for LinkedOmicsChat backend."""

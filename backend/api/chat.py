@@ -2,48 +2,173 @@
 Chat API endpoints
 Handles conversational interactions with the agent system
 """
-from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi.responses import StreamingResponse
+from typing import Optional, Any, Dict, List
+from collections import defaultdict, deque
 import logging
+import time
 from sqlalchemy.orm import Session
+from sqlalchemy import select, or_, cast, Text as SAText
+
+# ── In-memory guest rate limiter (sliding window, per IP) ──────────────────
+# Stores a deque of request timestamps per IP address.
+# On each request we drop timestamps older than 1 hour, then check the count.
+_guest_request_log: Dict[str, deque] = defaultdict(deque)
+
+def _check_guest_rate_limit(ip: str) -> None:
+    """Raise HTTP 429 if the guest IP has exceeded GUEST_RATE_LIMIT_PER_HOUR.
+
+    Does nothing when GUEST_RATE_LIMIT_ENABLED=False (e.g. NAR review period).
+    """
+    from core.config import settings
+    if not settings.GUEST_RATE_LIMIT_ENABLED:
+        return
+
+    now = time.time()
+    window = 3600  # 1 hour in seconds
+    timestamps = _guest_request_log[ip]
+
+    # Evict timestamps outside the sliding window
+    while timestamps and now - timestamps[0] > window:
+        timestamps.popleft()
+
+    if len(timestamps) >= settings.GUEST_RATE_LIMIT_PER_HOUR:
+        oldest = timestamps[0]
+        retry_after = int(window - (now - oldest)) + 1
+        minutes = (retry_after + 59) // 60  # round up to nearest minute
+        wait_msg = f"in about {minutes} minute{'s' if minutes != 1 else ''}" if minutes > 1 else "shortly"
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"You've used all {settings.GUEST_RATE_LIMIT_PER_HOUR} free queries for this hour. "
+                f"You can try again {wait_msg}, or create a free account for unlimited access."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    timestamps.append(now)
 
 from models.schemas import ChatRequest, ChatResponse
-from models.database import User
-from services.agent_orchestrator import AgentOrchestrator
-from core.database import get_db
-from core.dependencies import get_current_user
+from models.database import User, ChatSession, ChatMessage as DBChatMessage
+from services.mcp_orchestrator import MCPOrchestrator
+from core.config import settings
+from core.database import get_db, SessionLocal
+from core.dependencies import get_current_user, get_current_user_optional
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-orchestrator = AgentOrchestrator()
+
+
+def _sanitize_response_for_history(resp: Any) -> Any:
+    """Minimize response payload for chat history rendering."""
+    try:
+        if not isinstance(resp, dict):
+            return resp
+
+        new_resp = dict(resp)
+        # Always drop heavy fields that UI doesn't need for rendering history.
+        new_resp.pop("raw_results", None)
+        new_resp.pop("visualizations", None)
+        # These can be extremely large and will freeze the UI when rendering history.
+        # They are fetched on-demand via /messages/{message_id}.
+        new_resp.pop("analyses", None)
+        new_resp.pop("papers", None)
+        new_resp.pop("datasets", None)
+        new_resp.pop("suggestions", None)
+        # Sometimes nested
+        meta = new_resp.get("metadata")
+        if isinstance(meta, dict):
+            meta = dict(meta)
+            meta.pop("papers", None)
+            meta.pop("datasets", None)
+            new_resp["metadata"] = meta
+
+        # Create a lightweight preview + flags (used for collapsed rendering)
+        # We must sanitize BOTH "message" and "summary" because sometimes the summary 
+        # contains the full plot (which can be 5MB+ of base64 data).
+        
+        has_images = False
+        was_sanitized = False
+        import re
+
+        for field in ["message", "summary"]:
+            val = new_resp.get(field)
+            if isinstance(val, str) and val:
+                # Detect inline images
+                if "data:image" in val:
+                    has_images = True
+                    was_sanitized = True
+                    # Replace large inline base64 images with placeholder
+                    # This dramaticly reduces payload size for history lists
+                    val = re.sub(
+                        r"!\[[^\]]*\]\(data:image/[^)]+\)",
+                        "_(Plot attached — load details to view.)_",
+                        val,
+                        flags=re.IGNORECASE,
+                    )
+                    new_resp[field] = val
+                # Other markdown images (standard URLs/paths)
+                elif "![" in val and "](" in val:
+                    has_images = True
+
+        new_resp["has_images"] = has_images
+        
+        # Determine if we should collapse the message for performance
+        msg = new_resp.get("message")
+        if isinstance(msg, str) and msg:
+            if len(msg) > 1200 or was_sanitized:
+                # Message is large or has heavy attachments, store a preview and mark as partial
+                new_resp["message_preview"] = (msg[:1200] + "\n…") if len(msg) > 1200 else msg
+                new_resp["has_full_content"] = False
+                # Omit the full message from history to keep payload small.
+                new_resp.pop("message", None)
+            else:
+                # Simple text message, keep as is
+                new_resp["has_full_content"] = True
+        else:
+            # If no message but has summary (rare for history), treat as full if small
+            new_resp["has_full_content"] = True
+        
+        return new_resp
+    except Exception:
+        return resp
+
+# Set by main.py during startup to the active MCPOrchestrator instance
+orchestrator: MCPOrchestrator = None  # type: ignore
 
 
 @router.post("/query", response_model=ChatResponse)
 async def chat_query(
     request: ChatRequest,
-    current_user: User = Depends(get_current_user)
+    http_request: Request,
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
-    Process a chat query through the agent system
-    
-    Args:
-        request: Chat request with message and optional session_id
-        current_user: Authenticated user (from JWT token)
-        
-    Returns:
-        ChatResponse with agent results and visualizations
+    Process a chat query through the agent system.
+    Accepts both authenticated users and unauthenticated guests (when GUEST_MODE_ENABLED=True).
+    Guest sessions are stored in memory only and are not persisted to the database.
     """
+    if not settings.GUEST_MODE_ENABLED and current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    user_id = current_user.id if current_user else "guest"
+    client_ip: Optional[str] = None
+
+    if user_id == "guest":
+        client_ip = http_request.headers.get("X-Forwarded-For", http_request.client.host).split(",")[0].strip()
+        _check_guest_rate_limit(client_ip)
+
     try:
-        # Initialize orchestrator if needed
-        if not orchestrator.agents:
-            await orchestrator.initialize()
-        
-        # Process query with authenticated user_id
-        result = await orchestrator.process_query(
+        # Get active orchestrator (MCP if enabled, otherwise legacy)
+        active_orchestrator = orchestrator
+
+        result = await active_orchestrator.process_query(
             query=request.message,
-            user_id=current_user.id,
-            session_id=request.session_id
+            user_id=user_id,
+            session_id=request.session_id,
+            client_ip=client_ip,
         )
         
         if not result.get("success"):
@@ -57,7 +182,10 @@ async def chat_query(
         agent_responses_list = [v for k, v in agent_results.items() if isinstance(v, dict)]
         
         return ChatResponse(
-            message=result.get("summary", ""),
+            # Full tool output / formatted response (can include markdown images)
+            message=result.get("message", "") or result.get("summary", ""),
+            # Short LLM summary shown above the full response
+            summary=result.get("summary", "") or None,
             session_id=result.get("session_id", ""),
             agent_responses=agent_responses_list,
             visualizations=result.get("visualizations", []),
@@ -69,14 +197,68 @@ async def chat_query(
             }
         )
         
+        
     except Exception as e:
         logger.error(f"Error processing chat query: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/stream")
+async def chat_stream(
+    request: ChatRequest,
+    http_request: Request,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """
+    Process a chat query and return a Server-Sent Events (SSE) stream.
+    Accepts both authenticated users and unauthenticated guests (when GUEST_MODE_ENABLED=True).
+    Guest sessions are stored in memory only and are not persisted to the database.
+    """
+    if not settings.GUEST_MODE_ENABLED and current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    user_id = current_user.id if current_user else "guest"
+    client_ip: Optional[str] = None
+
+    if user_id == "guest":
+        client_ip = http_request.headers.get("X-Forwarded-For", http_request.client.host).split(",")[0].strip()
+        _check_guest_rate_limit(client_ip)
+
+    try:
+        active_orchestrator = orchestrator
+
+        # If the orchestrator supports streaming (i.e. LangGraphOrchestrator)
+        if hasattr(active_orchestrator, "process_query_stream"):
+            return StreamingResponse(
+                active_orchestrator.process_query_stream(
+                    query=request.message,
+                    user_id=user_id,
+                    session_id=request.session_id,
+                    client_ip=client_ip,
+                ),
+                media_type="text/event-stream"
+            )
+        else:
+            # Fallback for legacy orchestrator that doesn't support streaming
+            async def fake_stream():
+                import json
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Processing query (Legacy mode)...'})}\n\n"
+                result = await active_orchestrator.process_query(
+                    query=request.message,
+                    user_id=user_id,
+                    session_id=request.session_id
+                )
+                yield f"data: {json.dumps({'type': 'final', 'content': result})}\n\n"
+
+            return StreamingResponse(fake_stream(), media_type="text/event-stream")
+            
+    except Exception as e:
+        logger.error(f"Error starting chat stream: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/sessions")
 async def list_sessions(
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     List all chat sessions for the authenticated user
@@ -88,7 +270,13 @@ async def list_sessions(
         List of sessions with titles and timestamps
     """
     try:
-        sessions_list = await orchestrator._load_all_sessions_from_db(user_id=current_user.id)
+        # Guests have no persistent sessions
+        if current_user is None:
+            return {"sessions": []}
+
+        # Use the active orchestrator (set by main.py)
+        active_orchestrator = orchestrator  # This is set by main.py to MCP or legacy
+        sessions_list = await active_orchestrator._load_all_sessions_from_db(user_id=current_user.id)
         
         # Sort by last updated (most recent first)
         sessions_list.sort(key=lambda x: x.get("last_updated", 0), reverse=True)
@@ -127,22 +315,24 @@ async def get_session(
         Session history and context
     """
     try:
+        # Use the active orchestrator (set by main.py)
+        active_orchestrator = orchestrator  # This is set by main.py to MCP or legacy
         # Try memory cache first
-        if session_id in orchestrator.sessions:
-            session = orchestrator.sessions[session_id]
+        if session_id in active_orchestrator.sessions:
+            session = active_orchestrator.sessions[session_id]
             # Verify session belongs to user
             if session.get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
         else:
             # Load from database
-            session = await orchestrator._load_session_from_db(session_id)
+            session = await active_orchestrator._load_session_from_db(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
             # Verify session belongs to user
             if session.get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
             # Cache in memory
-            orchestrator.sessions[session_id] = session
+            active_orchestrator.sessions[session_id] = session
         
         return {
             "session_id": session_id,
@@ -157,6 +347,252 @@ async def get_session(
         raise
     except Exception as e:
         logger.error(f"Error getting session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sessions/{session_id}/history")
+async def get_session_history_page(
+    session_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    before: Optional[float] = Query(None, description="Return messages with timestamp < before (unix seconds)."),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get a paginated slice of session history (for infinite scroll).
+
+    Returns the newest `limit` messages by default. If `before` is provided,
+    returns up to `limit` messages older than that timestamp.
+    """
+    try:
+        # Verify session belongs to user
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                db_session = (
+                    db.query(ChatSession)
+                    .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+                    .first()
+                )
+                if not db_session:
+                    raise HTTPException(status_code=404, detail="Session not found")
+
+                q = db.query(DBChatMessage).filter(DBChatMessage.session_id == session_id)
+                if before is not None:
+                    q = q.filter(DBChatMessage.timestamp < before)
+                # Fetch newest first, then reverse for chronological rendering
+                msgs = q.order_by(DBChatMessage.timestamp.desc()).limit(limit + 1).all()
+                has_more = len(msgs) > limit
+                msgs = msgs[:limit]
+                msgs.reverse()
+
+                history = [
+                    {
+                        "id": m.id,
+                        "query": m.query,
+                        "response": _sanitize_response_for_history(m.response),
+                        "timestamp": m.timestamp,
+                    }
+                    for m in msgs
+                ]
+                next_before = history[0]["timestamp"] if history else None
+                return {
+                    "session_id": session_id,
+                    "title": db_session.title or "New Chat",
+                    "history": history,
+                    "has_more": has_more,
+                    "next_before": next_before,
+                }
+            finally:
+                db.close()
+        else:
+            # PostgreSQL async
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(ChatSession).filter(
+                        ChatSession.id == session_id, ChatSession.user_id == current_user.id
+                    )
+                )
+                db_session = result.scalar_one_or_none()
+                if not db_session:
+                    raise HTTPException(status_code=404, detail="Session not found")
+
+                stmt = select(DBChatMessage).filter(DBChatMessage.session_id == session_id)
+                if before is not None:
+                    stmt = stmt.filter(DBChatMessage.timestamp < before)
+                stmt = stmt.order_by(DBChatMessage.timestamp.desc()).limit(limit + 1)
+                msgs_result = await db.execute(stmt)
+                msgs = list(msgs_result.scalars().all())
+                has_more = len(msgs) > limit
+                msgs = msgs[:limit]
+                msgs.reverse()
+
+                history = [
+                    {
+                        "id": m.id,
+                        "query": m.query,
+                        "response": _sanitize_response_for_history(m.response),
+                        "timestamp": m.timestamp,
+                    }
+                    for m in msgs
+                ]
+                next_before = history[0]["timestamp"] if history else None
+                return {
+                    "session_id": session_id,
+                    "title": db_session.title or "New Chat",
+                    "history": history,
+                    "has_more": has_more,
+                    "next_before": next_before,
+                }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting session history page: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/messages/{message_id}")
+async def get_chat_message(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetch a single chat_messages row (query + full response) after verifying ownership.
+    Used to lazy-load full tool outputs on demand.
+    """
+    try:
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                msg = db.query(DBChatMessage).filter(DBChatMessage.id == message_id).first()
+                if not msg:
+                    raise HTTPException(status_code=404, detail="Message not found")
+
+                # Verify ownership via session.user_id
+                sess = (
+                    db.query(ChatSession)
+                    .filter(ChatSession.id == msg.session_id, ChatSession.user_id == current_user.id)
+                    .first()
+                )
+                if not sess:
+                    raise HTTPException(status_code=403, detail="Access denied")
+
+                return {
+                    "id": msg.id,
+                    "session_id": msg.session_id,
+                    "query": msg.query,
+                    "response": msg.response,
+                    "timestamp": msg.timestamp,
+                }
+            finally:
+                db.close()
+        else:
+            async with SessionLocal() as db:
+                # Load msg
+                res = await db.execute(select(DBChatMessage).filter(DBChatMessage.id == message_id))
+                msg = res.scalar_one_or_none()
+                if not msg:
+                    raise HTTPException(status_code=404, detail="Message not found")
+
+                # Verify ownership
+                res2 = await db.execute(
+                    select(ChatSession).filter(
+                        ChatSession.id == msg.session_id, ChatSession.user_id == current_user.id
+                    )
+                )
+                sess = res2.scalar_one_or_none()
+                if not sess:
+                    raise HTTPException(status_code=403, detail="Access denied")
+
+                return {
+                    "id": msg.id,
+                    "session_id": msg.session_id,
+                    "query": msg.query,
+                    "response": msg.response,
+                    "timestamp": msg.timestamp,
+                }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting chat message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/search")
+async def search_messages(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(20, le=50),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Search across all chat sessions for a user.
+    Searches both user queries and assistant responses.
+    Returns up to `limit` results with session title, excerpt, and timestamp.
+    """
+    try:
+        term = f"%{q}%"
+        results = []
+
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                rows = (
+                    db.query(DBChatMessage, ChatSession)
+                    .join(ChatSession, DBChatMessage.session_id == ChatSession.id)
+                    .filter(
+                        ChatSession.user_id == current_user.id,
+                        or_(
+                            DBChatMessage.query.ilike(term),
+                            cast(DBChatMessage.response, SAText).ilike(term),
+                        )
+                    )
+                    .order_by(DBChatMessage.timestamp.desc())
+                    .limit(limit)
+                    .all()
+                )
+                for msg, sess in rows:
+                    resp = msg.response or {}
+                    excerpt = (resp.get("message") or msg.query or "")[:200]
+                    results.append({
+                        "message_id": msg.id,
+                        "session_id": sess.id,
+                        "session_title": sess.title or "Untitled",
+                        "query": msg.query,
+                        "excerpt": excerpt,
+                        "timestamp": msg.timestamp,
+                    })
+            finally:
+                db.close()
+        else:
+            async with SessionLocal() as db:
+                res = await db.execute(
+                    select(DBChatMessage, ChatSession)
+                    .join(ChatSession, DBChatMessage.session_id == ChatSession.id)
+                    .filter(
+                        ChatSession.user_id == current_user.id,
+                        or_(
+                            DBChatMessage.query.ilike(term),
+                            cast(DBChatMessage.response, SAText).ilike(term),
+                        )
+                    )
+                    .order_by(DBChatMessage.timestamp.desc())
+                    .limit(limit)
+                )
+                for msg, sess in res.all():
+                    resp = msg.response or {}
+                    excerpt = (resp.get("message") or msg.query or "")[:200]
+                    results.append({
+                        "message_id": msg.id,
+                        "session_id": sess.id,
+                        "session_title": sess.title or "Untitled",
+                        "query": msg.query,
+                        "excerpt": excerpt,
+                        "timestamp": msg.timestamp,
+                    })
+
+        return {"results": results, "query": q, "count": len(results)}
+
+    except Exception as e:
+        logger.error(f"Error searching messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -178,28 +614,30 @@ async def update_session_title(
         Updated session info
     """
     try:
+        # Use the active orchestrator (set by main.py)
+        active_orchestrator = orchestrator  # This is set by main.py to MCP or legacy
         # Load session if not in memory
-        if session_id not in orchestrator.sessions:
-            session = await orchestrator._load_session_from_db(session_id)
+        if session_id not in active_orchestrator.sessions:
+            session = await active_orchestrator._load_session_from_db(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
             # Verify session belongs to user
             if session.get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
-            orchestrator.sessions[session_id] = session
+            active_orchestrator.sessions[session_id] = session
         else:
             # Verify session belongs to user
-            if orchestrator.sessions[session_id].get("user_id") != current_user.id:
+            if active_orchestrator.sessions[session_id].get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
         
         new_title = request.get("title", "").strip()
         if not new_title:
             raise HTTPException(status_code=400, detail="Title cannot be empty")
         
-        orchestrator.sessions[session_id]["title"] = new_title
+        active_orchestrator.sessions[session_id]["title"] = new_title
         
         # Save to database
-        orchestrator._save_session_to_db(orchestrator.sessions[session_id])
+        active_orchestrator._save_session_to_db(active_orchestrator.sessions[session_id])
         
         return {
             "message": "Title updated",
@@ -230,19 +668,21 @@ async def clear_session(
         Success message
     """
     try:
+        # Use the active orchestrator (set by main.py)
+        active_orchestrator = orchestrator  # This is set by main.py to MCP or legacy
         # Verify session belongs to user before deleting
-        if session_id in orchestrator.sessions:
-            if orchestrator.sessions[session_id].get("user_id") != current_user.id:
+        if session_id in active_orchestrator.sessions:
+            if active_orchestrator.sessions[session_id].get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
-            del orchestrator.sessions[session_id]
+            del active_orchestrator.sessions[session_id]
         else:
             # Load from DB to verify ownership
-            session = await orchestrator._load_session_from_db(session_id)
+            session = await active_orchestrator._load_session_from_db(session_id)
             if session and session.get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
         
         # Delete from database
-        await orchestrator._delete_session_from_db(session_id)
+        await active_orchestrator._delete_session_from_db(session_id)
         
         return {"message": "Session cleared", "session_id": session_id}
         

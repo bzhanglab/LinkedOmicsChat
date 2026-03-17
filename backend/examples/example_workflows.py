@@ -1,6 +1,6 @@
 """
-Example workflow definitions for cpgAgent
-These can be imported or used as templates
+Example workflow definitions for LinkedOmicsChat.
+These can be imported or used as templates.
 """
 
 correlation_workflow = {

@@ -1,10 +1,21 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Trash2, MessageSquare, Plus, Pencil, Check, X } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Trash2, MessageSquare, Plus, Pencil, Check, X, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { chatAPI } from "@/lib/api"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
 interface ChatSession {
     session_id: string
@@ -24,15 +35,28 @@ export interface ChatHistoryRef {
     refresh: () => void
 }
 
+interface SearchResult {
+    message_id: number
+    session_id: string
+    session_title: string
+    query: string
+    excerpt: string
+    timestamp: number
+}
+
 export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryProps) {
     const [sessions, setSessions] = useState<ChatSession[]>([])
     const [isLoading, setIsLoading] = useState(true) // Initial load only
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editingTitle, setEditingTitle] = useState("")
+    const [searchQuery, setSearchQuery] = useState("")
+    const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
+    const [isSearching, setIsSearching] = useState(false)
+    const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
         loadSessions(true) // Initial load with loading state
-        
+
         // Refresh sessions more frequently to catch title updates (every 5 seconds)
         const interval = setInterval(() => loadSessions(false), 5000)
         return () => clearInterval(interval)
@@ -47,6 +71,27 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
             return () => clearTimeout(timeout)
         }
     }, [currentSessionId])
+
+    // Debounced cross-session search
+    useEffect(() => {
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+        if (!searchQuery.trim()) {
+            setSearchResults(null)
+            return
+        }
+        searchDebounceRef.current = setTimeout(async () => {
+            setIsSearching(true)
+            try {
+                const data = await chatAPI.searchMessages(searchQuery.trim())
+                setSearchResults(data.results)
+            } catch {
+                setSearchResults([])
+            } finally {
+                setIsSearching(false)
+            }
+        }, 300)
+        return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current) }
+    }, [searchQuery])
 
     const loadSessions = async (showLoading: boolean = false) => {
         try {
@@ -68,12 +113,8 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
         }
     }
 
-    const deleteSession = async (sessionId: string, e: React.MouseEvent) => {
-        e.stopPropagation()
-        
-        if (!confirm("Delete this chat? This cannot be undone.")) {
-            return
-        }
+    const deleteSession = async (sessionId: string, e?: React.MouseEvent) => {
+        if (e) e.stopPropagation()
 
         try {
             await chatAPI.clearSession(sessionId)
@@ -106,8 +147,8 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
         try {
             await chatAPI.updateSessionTitle(sessionId, editingTitle.trim())
             // Update local state
-            setSessions(sessions.map(s => 
-                s.session_id === sessionId 
+            setSessions(sessions.map(s =>
+                s.session_id === sessionId
                     ? { ...s, title: editingTitle.trim() }
                     : s
             ))
@@ -131,10 +172,10 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
 
     const formatDate = (timestamp: string | number) => {
         // Convert timestamp to Date (handle both Unix timestamps and ISO strings)
-        const date = typeof timestamp === 'number' 
+        const date = typeof timestamp === 'number'
             ? new Date(timestamp)  // Already in milliseconds from API
             : new Date(timestamp)
-        
+
         const now = new Date()
         const diffMs = now.getTime() - date.getTime()
         const diffMins = Math.floor(diffMs / 60000)
@@ -154,17 +195,55 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
             <div className="p-3 border-b border-border">
                 <Button
                     onClick={startNewChat}
-                    className="w-full gap-2"
-                    variant={currentSessionId ? "outline" : "default"}
+                    className="w-full gap-2 bg-primary text-primary-foreground shadow-sm hover:shadow-md transition-all duration-200"
                 >
                     <Plus className="h-4 w-4" />
                     New Chat
                 </Button>
             </div>
 
-            {/* Chat List */}
+            {/* Cross-session search */}
+            <div className="px-3 py-2 border-b border-border">
+                <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50 border border-border focus-within:border-primary/50 transition-colors">
+                    <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <input
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        placeholder="Search all chats…"
+                        className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                    />
+                    {searchQuery && (
+                        <button onClick={() => setSearchQuery("")} className="text-muted-foreground hover:text-foreground">
+                            <X className="w-3 h-3" />
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Chat List / Search Results */}
             <div className="flex-1 overflow-y-auto p-2">
-                {isLoading ? (
+                {searchQuery.trim() ? (
+                    // Search results view
+                    isSearching ? (
+                        <div className="text-center text-muted-foreground py-8 text-sm">Searching…</div>
+                    ) : searchResults && searchResults.length === 0 ? (
+                        <div className="text-center text-muted-foreground py-8 text-sm">No results for &ldquo;{searchQuery}&rdquo;</div>
+                    ) : searchResults ? (
+                        <div className="space-y-1">
+                            {searchResults.map(result => (
+                                <div
+                                    key={result.message_id}
+                                    onClick={() => { onSessionSelect(result.session_id); setSearchQuery("") }}
+                                    className="cursor-pointer p-3 rounded-lg hover:bg-accent transition-all border border-transparent hover:border-border"
+                                >
+                                    <p className="text-xs font-semibold text-primary truncate mb-1">{result.session_title}</p>
+                                    <p className="text-xs font-medium truncate">{result.query}</p>
+                                    <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{result.excerpt}</p>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null
+                ) : isLoading ? (
                     <div className="text-center text-muted-foreground py-8">
                         Loading chats...
                     </div>
@@ -180,8 +259,8 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
                                 onClick={() => editingId !== session.session_id && onSessionSelect(session.session_id)}
                                 className={cn(
                                     "group relative p-3 rounded-lg transition-all",
-                                    editingId === session.session_id 
-                                        ? "bg-accent border border-primary" 
+                                    editingId === session.session_id
+                                        ? "bg-accent border border-primary"
                                         : "cursor-pointer hover:bg-accent",
                                     currentSessionId === session.session_id && editingId !== session.session_id
                                         ? "bg-accent border border-primary"
@@ -242,13 +321,34 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
                                             >
                                                 <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                                             </button>
-                                            <button
-                                                onClick={(e) => deleteSession(session.session_id, e)}
-                                                className="p-1 hover:bg-destructive/10 rounded transition-all"
-                                                title="Delete chat"
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                            </button>
+                                            <AlertDialog>
+                                                <AlertDialogTrigger asChild>
+                                                    <button
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="p-1 hover:bg-destructive/10 rounded transition-all"
+                                                        title="Delete chat"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                                    </button>
+                                                </AlertDialogTrigger>
+                                                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                                    <AlertDialogHeader>
+                                                        <AlertDialogTitle>Delete Chat Session?</AlertDialogTitle>
+                                                        <AlertDialogDescription>
+                                                            Are you sure you want to delete "{session.title}"? This action cannot be undone.
+                                                        </AlertDialogDescription>
+                                                    </AlertDialogHeader>
+                                                    <AlertDialogFooter>
+                                                        <AlertDialogCancel onClick={(e) => e.stopPropagation()}>Cancel</AlertDialogCancel>
+                                                        <AlertDialogAction
+                                                            onClick={(e) => deleteSession(session.session_id, e)}
+                                                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                                        >
+                                                            Delete
+                                                        </AlertDialogAction>
+                                                    </AlertDialogFooter>
+                                                </AlertDialogContent>
+                                            </AlertDialog>
                                         </div>
                                     </div>
                                 )}
@@ -260,3 +360,4 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
         </div>
     )
 }
+

@@ -861,16 +861,40 @@ async def seed_example_workflows():
         from examples.example_workflows import EXAMPLE_WORKFLOWS
         
         created_workflows = []
+        skipped_workflows = []
+        
         for template_name in EXAMPLE_WORKFLOWS.keys():
             try:
+                # Check if a workflow with this name already exists
+                template_data = EXAMPLE_WORKFLOWS[template_name]
+                workflow_name = template_data.get("name", template_name)
+                
+                # Check if workflow already exists in the store
+                existing_workflow = None
+                for wf_id, wf in workflows_store.items():
+                    if wf.name == workflow_name:
+                        existing_workflow = wf
+                        break
+                
+                if existing_workflow:
+                    logger.info(f"Workflow '{workflow_name}' already exists, skipping")
+                    skipped_workflows.append(workflow_name)
+                    continue
+                
+                # Create new workflow if it doesn't exist
                 workflow = await create_workflow_from_template(template_name)
                 created_workflows.append(workflow)
             except Exception as e:
                 logger.warning(f"Failed to create workflow from template {template_name}: {e}")
         
+        message = f"Created {len(created_workflows)} new workflow(s)"
+        if skipped_workflows:
+            message += f", skipped {len(skipped_workflows)} existing workflow(s)"
+        
         return {
-            "message": f"Created {len(created_workflows)} example workflows",
-            "workflows": created_workflows
+            "message": message,
+            "workflows": created_workflows,
+            "skipped": skipped_workflows
         }
         
     except Exception as e:

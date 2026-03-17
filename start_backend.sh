@@ -4,6 +4,10 @@
 
 cd backend
 
+# Ignore unrelated shell DEBUG values (for example "release" from an IDE env)
+# so Pydantic reads the boolean DEBUG value from backend/.env.
+unset DEBUG
+
 # Check if virtual environment exists
 if [ ! -d "venv" ]; then
     echo "❌ Virtual environment not found. Please run ./setup_local_macos.sh first"
@@ -19,6 +23,15 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
+# Check MCP mode
+if grep -q "USE_MCP=true" .env; then
+    echo "🔌 MCP Architecture: ENABLED (Phase 1)"
+    if grep -q "MCP_DATA_SERVER_ENABLED=true" .env; then
+        echo "   ✓ Data Server enabled"
+    fi
+    echo ""
+fi
+
 # Check mode (mock or real API)
 if grep -q "MOCK_LLM=true" .env; then
     echo "🎭 Running in MOCK MODE (no API key needed)"
@@ -28,6 +41,11 @@ elif grep -q "USE_OLLAMA=true" .env; then
     echo "🦙 Running with Ollama (local LLM)"
     ollama_model=$(grep "OLLAMA_MODEL=" .env | cut -d'=' -f2)
     echo "   Model: ${ollama_model:-llama3}"
+    echo ""
+elif grep -q "DEFAULT_LLM_MODEL=gemini-" .env; then
+    echo "♊ Running with Google Gemini API"
+    gemini_model=$(grep "DEFAULT_LLM_MODEL=" .env | cut -d'=' -f2)
+    echo "   Model: ${gemini_model}"
     echo ""
 elif grep -q "OPENAI_API_KEY=sk-" .env; then
     echo "🤖 Running with OpenAI API"
@@ -47,7 +65,7 @@ else
     fi
 fi
 
-echo "🚀 Starting cpgAgent backend..."
+echo "🚀 Starting LinkedOmicsChat backend..."
 echo "📍 Backend will run at: http://localhost:8000"
 echo "📖 API docs at: http://localhost:8000/docs"
 echo ""

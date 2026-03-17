@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(python3 -c \":*)",
+      "Read(//Users/shiz/Documents/zhiaos/zhang_lab/projects/LinkedOmicsChat/backend/**)",
+      "Bash(node -e \"require\\(''''./node_modules/next/dist/server/require-hook''''\\)\")",
+      "Bash(node -e \"const {Download} = require\\(''lucide-react''\\); console.log\\(typeof Download\\)\")",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

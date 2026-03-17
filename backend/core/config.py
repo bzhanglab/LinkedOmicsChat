@@ -1,5 +1,5 @@
 """
-Configuration settings for cpgAgent backend
+Configuration settings for LinkedOmicsChat backend.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, model_validator
@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # API Keys
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
     
     # Mock Mode
     MOCK_LLM: bool = True
@@ -24,7 +25,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     
     # Database
-    DATABASE_URL: str = "sqlite:///./cpgagent.db"
+    DATABASE_URL: str = "sqlite:///./linkedomicsai.db"
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -96,6 +97,29 @@ class Settings(BaseSettings):
     # Timeouts
     AGENT_TIMEOUT_SECONDS: int = 300
     API_TIMEOUT_SECONDS: int = 30
+    
+    # NCBI / PubMed (E-utilities — free, email required by NCBI ToS)
+    NCBI_EMAIL: str = ""
+    NCBI_API_KEY: str = ""  # optional — raises rate limit from 3 to 10 req/s
+
+    # MCP Configuration (Phase 1 Migration)
+    USE_MCP: bool = False  # Feature flag to enable MCP architecture
+    MCP_LINKEDOMICS_SERVER_ENABLED: bool = False  # Optional external data MCP server
+    MCP_LITERATURE_SERVER_ENABLED: bool = True   # PubMed literature search
+    MCP_FILES_SERVER_ENABLED: bool = False  # Phase 3
+    MCP_COMPUTE_SERVER_ENABLED: bool = False  # Phase 3
+
+    # LangGraph Configuration (Phase 2: chained / parallel tool execution)
+    # When True AND USE_MCP=True, process_query is handled by LangGraphOrchestrator.
+    # Set to False to fall back to the legacy single-shot MCPOrchestrator planner.
+    USE_LANGGRAPH: bool = True
+
+    # Guest / Public Access
+    # When True, /query and /stream accept unauthenticated requests (guest sessions are in-memory only)
+    GUEST_MODE_ENABLED: bool = True
+    # Set GUEST_RATE_LIMIT_ENABLED=false in .env to disable during NAR review period
+    GUEST_RATE_LIMIT_ENABLED: bool = True
+    GUEST_RATE_LIMIT_PER_HOUR: int = 2
     
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# Rsync-based deployment script for cpgAgent
+# Rsync-based deployment script for LinkedOmicsChat
 # Syncs local changes (including uncommitted) to AWS EC2 instance
 # Faster than git pull - no need to commit everything
 #
 # SAFETY FEATURES:
 # - By default, does NOT delete files on server (safe mode)
 # - Preserves server-specific files (.env, databases, logs)
-# - Use CPGAGENT_DRY_RUN=true to preview changes before syncing
-# - Use CPGAGENT_USE_DELETE=true to enable deletion (use with caution!)
+# - Use LINKEDOMICSCHAT_DRY_RUN=true to preview changes before syncing
+# - Use LINKEDOMICSCHAT_USE_DELETE=true to enable deletion (use with caution!)
 #
 # PROTECTED FILES (never synced, server keeps its own):
 # - .env (server configuration)
@@ -20,11 +20,15 @@
 set -e
 
 # Configuration - UPDATE THESE
-# Use CPGAGENT_ prefix to avoid conflicts with other tools
-CPGAGENT_AWS_HOST="${CPGAGENT_AWS_HOST:-ec2-user@your-instance-ip}"  # e.g., ec2-user@1.2.3.4
-CPGAGENT_AWS_KEY="${CPGAGENT_AWS_KEY:-~/.ssh/your-key.pem}"           # Path to your SSH key
-CPGAGENT_REMOTE_PATH="${CPGAGENT_REMOTE_PATH:-~/cpgAgent}"            # Path on remote server
-CPGAGENT_SYNC_GIT="${CPGAGENT_SYNC_GIT:-false}"                       # Set to 'true' to sync .git/ folder
+# Prefer LINKEDOMICSCHAT_* variables. Legacy LINKEDOMICSAI_ / LINKEDOMICS_ /
+# CPGAGENT_ aliases are still supported for backward compatibility.
+LINKEDOMICSCHAT_AWS_HOST="${LINKEDOMICSCHAT_AWS_HOST:-${LINKEDOMICSAI_AWS_HOST:-${LINKEDOMICS_AWS_HOST:-${CPGAGENT_AWS_HOST:-ec2-user@your-instance-ip}}}}"  # e.g., ec2-user@1.2.3.4
+LINKEDOMICSCHAT_AWS_KEY="${LINKEDOMICSCHAT_AWS_KEY:-${LINKEDOMICSAI_AWS_KEY:-${LINKEDOMICS_AWS_KEY:-${CPGAGENT_AWS_KEY:-~/.ssh/your-key.pem}}}}"                 # Path to your SSH key
+LINKEDOMICSCHAT_REMOTE_PATH="${LINKEDOMICSCHAT_REMOTE_PATH:-${LINKEDOMICSAI_REMOTE_PATH:-${LINKEDOMICS_REMOTE_PATH:-${CPGAGENT_REMOTE_PATH:-~/LinkedOmicsChat}}}}"  # Path on remote server
+LINKEDOMICSCHAT_SYNC_GIT="${LINKEDOMICSCHAT_SYNC_GIT:-${LINKEDOMICSAI_SYNC_GIT:-${LINKEDOMICS_SYNC_GIT:-${CPGAGENT_SYNC_GIT:-false}}}}"
+LINKEDOMICSCHAT_DRY_RUN="${LINKEDOMICSCHAT_DRY_RUN:-${LINKEDOMICSAI_DRY_RUN:-${LINKEDOMICS_DRY_RUN:-${CPGAGENT_DRY_RUN:-false}}}}"
+LINKEDOMICSCHAT_USE_DELETE="${LINKEDOMICSCHAT_USE_DELETE:-${LINKEDOMICSAI_USE_DELETE:-${LINKEDOMICS_USE_DELETE:-${CPGAGENT_USE_DELETE:-false}}}}"
+LINKEDOMICSCHAT_SERVER_FILES="${LINKEDOMICSCHAT_SERVER_FILES:-${LINKEDOMICSAI_SERVER_FILES:-${LINKEDOMICS_SERVER_FILES:-${CPGAGENT_SERVER_FILES:-}}}}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -32,12 +36,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}🚀 cpgAgent Rsync Deployment${NC}"
+echo -e "${GREEN}🚀 LinkedOmicsChat Rsync Deployment${NC}"
 echo "=================================="
 echo ""
 
 # Show safety info based on mode
-if [[ "${CPGAGENT_USE_DELETE:-false}" == "true" ]]; then
+if [[ "${LINKEDOMICSCHAT_USE_DELETE}" == "true" ]]; then
     echo -e "${RED}⚠️  DELETE MODE ENABLED${NC}"
     echo "   - Files on server not in local WILL BE DELETED"
     echo "   - Server-specific files are protected (see below)"
@@ -53,56 +57,56 @@ echo "   - .env, .env.production, .env.server (server config)"
 echo "   - *.db, *.sqlite (databases)"
 echo "   - server-config.*, production-config.*"
 echo "   - server-data/, production-data/"
-echo "   - Custom files (set CPGAGENT_SERVER_FILES='file1,file2')"
+echo "   - Custom files (set LINKEDOMICSCHAT_SERVER_FILES='file1,file2')"
 echo ""
 echo "Options:"
-echo "   - CPGAGENT_DRY_RUN=true (preview changes)"
-echo "   - CPGAGENT_USE_DELETE=true (enable deletion - dangerous!)"
-echo "   - CPGAGENT_SERVER_FILES='file1,file2' (protect custom files)"
+echo "   - LINKEDOMICSCHAT_DRY_RUN=true (preview changes)"
+echo "   - LINKEDOMICSCHAT_USE_DELETE=true (enable deletion - dangerous!)"
+echo "   - LINKEDOMICSCHAT_SERVER_FILES='file1,file2' (protect custom files)"
 echo ""
 
-# Check if CPGAGENT_AWS_HOST is set
-if [[ "$CPGAGENT_AWS_HOST" == "ec2-user@your-instance-ip" ]]; then
-    echo -e "${YELLOW}⚠️  CPGAGENT_AWS_HOST not configured${NC}"
+# Check if LINKEDOMICSCHAT_AWS_HOST is set
+if [[ "$LINKEDOMICSCHAT_AWS_HOST" == "ec2-user@your-instance-ip" ]]; then
+    echo -e "${YELLOW}⚠️  LINKEDOMICSCHAT_AWS_HOST not configured${NC}"
     read -p "Enter AWS host (e.g., ec2-user@1.2.3.4): " HOST_INPUT
-    CPGAGENT_AWS_HOST="${HOST_INPUT:-$CPGAGENT_AWS_HOST}"
+    LINKEDOMICSCHAT_AWS_HOST="${HOST_INPUT:-$LINKEDOMICSCHAT_AWS_HOST}"
 fi
 
 # Expand ~ to $HOME in LOCAL paths only (bash doesn't expand ~ in variable assignments)
 # Note: For REMOTE paths, ~ should be left as-is (SSH will expand it on remote side)
-if [ ! -z "$CPGAGENT_AWS_KEY" ]; then
+if [ ! -z "$LINKEDOMICSCHAT_AWS_KEY" ]; then
     # Expand ~ for local SSH key path
-    CPGAGENT_AWS_KEY="${CPGAGENT_AWS_KEY/#\~/$HOME}"
+    LINKEDOMICSCHAT_AWS_KEY="${LINKEDOMICSCHAT_AWS_KEY/#\~/$HOME}"
 fi
-# Do NOT expand ~ in CPGAGENT_REMOTE_PATH - it's a remote path, SSH will expand it
+# Do NOT expand ~ in LINKEDOMICSCHAT_REMOTE_PATH - it's a remote path, SSH will expand it
 
 # Check if SSH key exists
-if [ ! -z "$CPGAGENT_AWS_KEY" ] && [ ! -f "$CPGAGENT_AWS_KEY" ]; then
-    echo -e "${YELLOW}⚠️  SSH key not found at: $CPGAGENT_AWS_KEY${NC}"
-    echo "   (Expanded path: ${CPGAGENT_AWS_KEY/#\~/$HOME})"
+if [ ! -z "$LINKEDOMICSCHAT_AWS_KEY" ] && [ ! -f "$LINKEDOMICSCHAT_AWS_KEY" ]; then
+    echo -e "${YELLOW}⚠️  SSH key not found at: $LINKEDOMICSCHAT_AWS_KEY${NC}"
+    echo "   (Expanded path: ${LINKEDOMICSCHAT_AWS_KEY/#\~/$HOME})"
     read -p "Enter path to SSH key (or press Enter to use default SSH key): " KEY_INPUT
     if [ ! -z "$KEY_INPUT" ]; then
-        CPGAGENT_AWS_KEY="${KEY_INPUT/#\~/$HOME}"  # Expand ~ in user input too
+        LINKEDOMICSCHAT_AWS_KEY="${KEY_INPUT/#\~/$HOME}"  # Expand ~ in user input too
     else
         # Try to use default SSH key
-        CPGAGENT_AWS_KEY=""
+        LINKEDOMICSCHAT_AWS_KEY=""
     fi
 fi
 
 # Build SSH command
 SSH_CMD="ssh"
-if [ ! -z "$CPGAGENT_AWS_KEY" ] && [ -f "$CPGAGENT_AWS_KEY" ]; then
-    SSH_CMD="ssh -i $CPGAGENT_AWS_KEY"
+if [ ! -z "$LINKEDOMICSCHAT_AWS_KEY" ] && [ -f "$LINKEDOMICSCHAT_AWS_KEY" ]; then
+    SSH_CMD="ssh -i $LINKEDOMICSCHAT_AWS_KEY"
 fi
 
 # Test SSH connection
 echo "🔌 Testing SSH connection..."
-if ! $SSH_CMD -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$CPGAGENT_AWS_HOST" "echo 'Connection successful'" > /dev/null 2>&1; then
-    echo -e "${RED}❌ Cannot connect to $CPGAGENT_AWS_HOST${NC}"
+if ! $SSH_CMD -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$LINKEDOMICSCHAT_AWS_HOST" "echo 'Connection successful'" > /dev/null 2>&1; then
+    echo -e "${RED}❌ Cannot connect to $LINKEDOMICSCHAT_AWS_HOST${NC}"
     echo "Please check:"
     echo "  1. Instance is running"
     echo "  2. Security group allows SSH (port 22)"
-    echo "  3. SSH key path is correct: $CPGAGENT_AWS_KEY"
+    echo "  3. SSH key path is correct: $LINKEDOMICSCHAT_AWS_KEY"
     exit 1
 fi
 echo -e "${GREEN}✅ SSH connection successful${NC}"
@@ -116,10 +120,10 @@ cat > "$EXCLUDE_FILE" << 'EOF'
 # To include .git/ folder, set SYNC_GIT=true before running this script
 EOF
 
-# Conditionally exclude .git folder (can be overridden with CPGAGENT_SYNC_GIT=true)
-if [[ "$CPGAGENT_SYNC_GIT" != "true" ]]; then
+# Conditionally exclude .git folder (can be overridden with LINKEDOMICSCHAT_SYNC_GIT=true)
+if [[ "$LINKEDOMICSCHAT_SYNC_GIT" != "true" ]]; then
     echo ".git/" >> "$EXCLUDE_FILE"
-    echo "# Note: .git/ excluded. Set CPGAGENT_SYNC_GIT=true to include it (enables 'git pull' on server)" >> "$EXCLUDE_FILE"
+    echo "# Note: .git/ excluded. Set LINKEDOMICSCHAT_SYNC_GIT=true to include it (enables 'git pull' on server)" >> "$EXCLUDE_FILE"
 else
     echo "# .git/ folder will be synced (allows git pull on server)" >> "$EXCLUDE_FILE"
 fi
@@ -224,10 +228,10 @@ custom-logs/
 EOF
 
 # Allow user to add custom server-specific files via environment variable
-if [ ! -z "$CPGAGENT_SERVER_FILES" ]; then
+if [ ! -z "$LINKEDOMICSCHAT_SERVER_FILES" ]; then
     echo "" >> "$EXCLUDE_FILE"
-    echo "# Custom server-specific files (from CPGAGENT_SERVER_FILES)" >> "$EXCLUDE_FILE"
-    IFS=',' read -ra FILES <<< "$CPGAGENT_SERVER_FILES"
+    echo "# Custom server-specific files (from LINKEDOMICSCHAT_SERVER_FILES)" >> "$EXCLUDE_FILE"
+    IFS=',' read -ra FILES <<< "$LINKEDOMICSCHAT_SERVER_FILES"
     for file in "${FILES[@]}"; do
         echo "$file" >> "$EXCLUDE_FILE"
     done
@@ -235,7 +239,7 @@ fi
 
 echo "📦 Syncing files to server..."
 echo "   From: $(pwd)"
-echo "   To: $CPGAGENT_AWS_HOST:$CPGAGENT_REMOTE_PATH"
+echo "   To: $LINKEDOMICSCHAT_AWS_HOST:$LINKEDOMICSCHAT_REMOTE_PATH"
 echo ""
 echo -e "${YELLOW}ℹ️  Note: Remote path '~' will be expanded by SSH on the remote server${NC}"
 echo ""
@@ -250,7 +254,7 @@ echo ""
 # This is safer - server-specific files are preserved
 
 # Check for dry-run mode
-DRY_RUN="${CPGAGENT_DRY_RUN:-false}"
+DRY_RUN="${LINKEDOMICSCHAT_DRY_RUN}"
 RSYNC_OPTS="-avz --progress --exclude-from=$EXCLUDE_FILE"
 if [[ "$DRY_RUN" == "true" ]]; then
     RSYNC_OPTS="$RSYNC_OPTS --dry-run"
@@ -260,7 +264,7 @@ fi
 
 # Optional: Use --delete to remove files on server that don't exist locally
 # WARNING: This will delete server-specific files! Use with caution.
-USE_DELETE="${CPGAGENT_USE_DELETE:-false}"
+USE_DELETE="${LINKEDOMICSCHAT_USE_DELETE}"
 if [[ "$USE_DELETE" == "true" ]]; then
     RSYNC_OPTS="$RSYNC_OPTS --delete"
     echo -e "${RED}⚠️  WARNING: --delete enabled!${NC}"
@@ -272,7 +276,7 @@ if [[ "$USE_DELETE" == "true" ]]; then
     echo "  - *.db, *.sqlite (databases)"
     echo "  - server-config.*, production-config.*"
     echo "  - server-data/, production-data/"
-    echo "  - Custom files (set CPGAGENT_SERVER_FILES to add more)"
+    echo "  - Custom files (set LINKEDOMICSCHAT_SERVER_FILES to add more)"
     echo ""
     read -p "Continue with delete mode? (y/n) " -n 1 -r
     echo ""
@@ -284,10 +288,10 @@ if [[ "$USE_DELETE" == "true" ]]; then
 fi
 
 # Perform sync
-if [ ! -z "$CPGAGENT_AWS_KEY" ] && [ -f "$CPGAGENT_AWS_KEY" ]; then
+if [ ! -z "$LINKEDOMICSCHAT_AWS_KEY" ] && [ -f "$LINKEDOMICSCHAT_AWS_KEY" ]; then
     # Use SSH key
     rsync $RSYNC_OPTS \
-        -e "ssh -i $CPGAGENT_AWS_KEY -o StrictHostKeyChecking=no" \
+        -e "ssh -i $LINKEDOMICSCHAT_AWS_KEY -o StrictHostKeyChecking=no" \
         --exclude='.git/' \
         --exclude='.env' \
         --exclude='node_modules/' \
@@ -296,7 +300,7 @@ if [ ! -z "$CPGAGENT_AWS_KEY" ] && [ -f "$CPGAGENT_AWS_KEY" ]; then
         --exclude='*.db' \
         --exclude='*.backup' \
         --exclude='*.bak' \
-        ./ "$CPGAGENT_AWS_HOST:$CPGAGENT_REMOTE_PATH/"
+        ./ "$LINKEDOMICSCHAT_AWS_HOST:$LINKEDOMICSCHAT_REMOTE_PATH/"
 else
     # Use default SSH
     rsync $RSYNC_OPTS \
@@ -308,7 +312,7 @@ else
         --exclude='*.db' \
         --exclude='*.backup' \
         --exclude='*.bak' \
-        ./ "$CPGAGENT_AWS_HOST:$CPGAGENT_REMOTE_PATH/"
+        ./ "$LINKEDOMICSCHAT_AWS_HOST:$LINKEDOMICSCHAT_REMOTE_PATH/"
 fi
 
 # Clean up exclude file
@@ -323,18 +327,18 @@ read -p "Rebuild and restart Docker containers? (y/n) " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "🔨 Rebuilding containers on server..."
-    $SSH_CMD "$CPGAGENT_AWS_HOST" "cd $CPGAGENT_REMOTE_PATH && docker compose down && docker compose up -d --build"
+    $SSH_CMD "$LINKEDOMICSCHAT_AWS_HOST" "cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose down && docker compose up -d --build"
     echo ""
     echo -e "${GREEN}✅ Deployment complete!${NC}"
     echo ""
     echo "📝 Next steps:"
-    echo "   Check logs: ssh $CPGAGENT_AWS_HOST 'cd $CPGAGENT_REMOTE_PATH && docker compose logs -f'"
-    echo "   View services: ssh $CPGAGENT_AWS_HOST 'cd $CPGAGENT_REMOTE_PATH && docker compose ps'"
+    echo "   Check logs: ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose logs -f'"
+    echo "   View services: ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose ps'"
 else
     echo ""
     echo "ℹ️  Files synced. Containers not rebuilt."
     echo "   To rebuild manually:"
-    echo "   ssh $CPGAGENT_AWS_HOST 'cd $CPGAGENT_REMOTE_PATH && docker compose up -d --build'"
+    echo "   ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose up -d --build'"
 fi
 
 echo ""

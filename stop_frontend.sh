@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Stop cpgAgent Frontend Server
+# Stop LinkedOmicsChat Frontend Server
 # This script stops the Next.js development server
 
 set -e
 
-echo "🛑 Stopping cpgAgent Frontend..."
+echo "🛑 Stopping LinkedOmicsChat Frontend..."
 echo "=================================="
 
 # Find and kill the frontend process

@@ -4,27 +4,27 @@ services:
     # PostgreSQL Database
     postgres:
         image: postgres:16
-        container_name: cpgagent-postgres
+        container_name: linkedomicsai-postgres
         environment:
-            POSTGRES_DB: cpgagent
-            POSTGRES_USER: cpgagent
+            POSTGRES_DB: linkedomicsai
+            POSTGRES_USER: linkedomicsai
             POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
         ports:
             - "5432:5432"
         volumes:
             - postgres_data:/var/lib/postgresql/data
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U cpgagent"]
+            test: ["CMD-SHELL", "pg_isready -U linkedomicsai"]
             interval: 10s
             timeout: 5s
             retries: 5
         networks:
-            - cpgagent-network
+            - linkedomicsai-network
 
     # Redis Cache
     redis:
         image: redis:7-alpine
-        container_name: cpgagent-redis
+        container_name: linkedomicsai-redis
         ports:
             - "6379:6379"
         volumes:
@@ -35,12 +35,12 @@ services:
             timeout: 3s
             retries: 5
         networks:
-            - cpgagent-network
+            - linkedomicsai-network
 
     # Ollama (Local LLM)
     ollama:
         image: ollama/ollama:latest
-        container_name: cpgagent-ollama
+        container_name: linkedomicsai-ollama
         ports:
             - "11434:11434"
         volumes:
@@ -48,7 +48,7 @@ services:
         environment:
             - OLLAMA_HOST=0.0.0.0
         networks:
-            - cpgagent-network
+            - linkedomicsai-network
         # Note: First run will download the model, which can take time
         # Run: docker-compose exec ollama ollama pull llama3
 
@@ -57,11 +57,11 @@ services:
         build:
             context: ./backend
             dockerfile: Dockerfile
-        container_name: cpgagent-backend
+        container_name: linkedomicsai-backend
         env_file:
             - .env
         environment:
-            - DATABASE_URL=postgresql://cpgagent:${DB_PASSWORD:-changeme}@postgres:5432/cpgagent
+            - DATABASE_URL=postgresql://linkedomicsai:${DB_PASSWORD:-changeme}@postgres:5432/linkedomicsai
             - REDIS_URL=redis://redis:6379/0
             - OPENAI_API_KEY=${OPENAI_API_KEY}
             - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -86,16 +86,16 @@ services:
             - backend_logs:/app/logs
         command: uvicorn main:app --host 0.0.0.0 --port 8000
         networks:
-            - cpgagent-network
+            - linkedomicsai-network
 
     # Celery Worker for Background Tasks (disabled - not currently used)
     # celery-worker:
     #     build:
     #         context: ./backend
     #         dockerfile: Dockerfile
-    #     container_name: cpgagent-celery
+    #     container_name: linkedomicsai-celery
     #     environment:
-    #         - DATABASE_URL=postgresql://cpgagent:${DB_PASSWORD:-changeme}@postgres:5432/cpgagent
+    #         - DATABASE_URL=postgresql://linkedomicsai:${DB_PASSWORD:-changeme}@postgres:5432/linkedomicsai
     #         - REDIS_URL=redis://redis:6379/0
     #         - CELERY_BROKER_URL=redis://redis:6379/0
     #         - CELERY_RESULT_BACKEND=redis://redis:6379/0
@@ -113,7 +113,7 @@ services:
     #         - ./backend:/app
     #     command: celery -A core.celery_app worker --loglevel=info
     #     networks:
-    #         - cpgagent-network
+    #         - linkedomicsai-network
 
     # Next.js Frontend
     frontend:
@@ -123,7 +123,7 @@ services:
             args:
                 - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
                 - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
-        container_name: cpgagent-frontend
+        container_name: linkedomicsai-frontend
         environment:
             - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
             - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
@@ -136,12 +136,12 @@ services:
             - /app/node_modules
             - /app/.next
         networks:
-            - cpgagent-network
+            - linkedomicsai-network
 
     # Nginx Reverse Proxy (Production) - Disabled (Apache using port 443)
     # nginx:
     #     image: nginx:alpine
-    #     container_name: cpgagent-nginx
+    #     container_name: linkedomicsai-nginx
     #     ports:
     #         - "80:80"
     #         - "443:443"
@@ -152,7 +152,7 @@ services:
     #         - frontend
     #         - backend
     #     networks:
-    #         - cpgagent-network
+    #         - linkedomicsai-network
 
 volumes:
     postgres_data:
@@ -161,5 +161,5 @@ volumes:
     ollama_data:
 
 networks:
-    cpgagent-network:
+    linkedomicsai-network:
         driver: bridge

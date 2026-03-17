@@ -18,7 +18,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         setMounted(true)
         // Load theme from localStorage
-        const savedSettings = localStorage.getItem("cpgagent-settings")
+        const savedSettings = localStorage.getItem("linkedomicsai-settings")
         if (savedSettings) {
             try {
                 const settings = JSON.parse(savedSettings)

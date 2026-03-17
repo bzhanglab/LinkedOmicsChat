@@ -1,29 +1,38 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import { ChevronLeft, ChevronRight, X, Menu } from "lucide-react"
 import { Sidebar } from "@/components/Sidebar"
 import { ChatInterface } from "@/components/ChatInterface"
 import { DatasetsPanel } from "@/components/DatasetsPanel"
 import { VisualizationsPanel } from "@/components/VisualizationsPanel"
-import { WorkflowsPanel } from "@/components/WorkflowsPanel"
-import { SettingsPanel } from "@/components/SettingsPanel"
+import { UseCasesPanel } from "@/components/UseCasesPanel"
+import ToolExplorer from "@/components/ToolExplorer"
+import { RightPanel, type RightPanelContext } from "@/components/RightPanel"
 import { useAuth } from "@/components/AuthContext"
-import { API_URL } from "@/lib/api"
+import { chatAPI } from "@/lib/api"
 
-type View = "chat" | "datasets" | "visualizations" | "workflows"
+type View = "chat" | "datasets" | "visualizations" | "tools" | "usecases"
+const CURRENT_SESSION_KEY = "linkedomicsai-current-session"
 
 export default function Home() {
-    const { isAuthenticated, loading } = useAuth()
+    const { isAuthenticated, isGuest, loading } = useAuth()
     const router = useRouter()
-    
+
     // All hooks must be declared before any conditional returns
     const [currentView, setCurrentView] = useState<View>("chat")
-    const [settingsOpen, setSettingsOpen] = useState(false)
+    const [prefilledQuery, setPrefilledQuery] = useState<string | null>(null)
+    const [refreshKey, setRefreshKey] = useState(0)
+    const [rightPanelContext, setRightPanelContext] = useState<RightPanelContext | null>(null)
+    const [rightPanelOpen, setRightPanelOpen] = useState(false)
+    const [guestBannerDismissed, setGuestBannerDismissed] = useState(false)
+    const [mobileNavOpen, setMobileNavOpen] = useState(false)
     // Initialize sessionId from localStorage synchronously to prevent flash
     const [sessionId, setSessionId] = useState<string | null>(() => {
         if (typeof window !== "undefined") {
-            return localStorage.getItem("cpgagent-current-session")
+            const guestMode = sessionStorage.getItem("linkedomicsai-guest-mode") === "true"
+            return guestMode ? null : localStorage.getItem(CURRENT_SESSION_KEY)
         }
         return null
     })
@@ -31,44 +40,69 @@ export default function Home() {
     // Redirect to login if not authenticated
     useEffect(() => {
         if (!loading && !isAuthenticated) {
-            router.push("/login")
+            router.push("/welcome")
         }
     }, [isAuthenticated, loading, router])
 
+    // Pick up prefill query set by the welcome page chip click
+    useEffect(() => {
+        if (!isAuthenticated) return
+        const prefill = sessionStorage.getItem("linkedomicsai-prefill-query")
+        if (prefill) {
+            sessionStorage.removeItem("linkedomicsai-prefill-query")
+            setPrefilledQuery(prefill)
+        }
+    }, [isAuthenticated])
+
     // Verify session exists after mount (only on initial load)
     useEffect(() => {
-        if (!isAuthenticated) return // Don't verify if not authenticated
-        
-        const savedSessionId = localStorage.getItem("cpgagent-current-session")
+        if (!isAuthenticated || isGuest) return // Guests do not have persistent history
+
+        const savedSessionId = localStorage.getItem(CURRENT_SESSION_KEY)
         if (savedSessionId && savedSessionId === sessionId) {
-            // Only verify if this is the session we loaded from localStorage
-            fetch(`${API_URL}/api/v1/chat/sessions/${savedSessionId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        // Session doesn't exist, clear it
+            // Only verify if this is the session we loaded from localStorage.
+            // IMPORTANT: don't load the full history here (can be huge). Just fetch a tiny page.
+            chatAPI
+                .getSessionHistory(savedSessionId, { limit: 1 })
+                .catch((err) => {
+                    // Only clear if it's truly missing; otherwise ignore transient errors.
+                    const status = (err as any)?.response?.status
+                    if (status === 404) {
                         setSessionId(null)
-                        localStorage.removeItem("cpgagent-current-session")
+                        localStorage.removeItem(CURRENT_SESSION_KEY)
                     }
-                })
-                .catch(() => {
-                    // On error, clear invalid session
-                    setSessionId(null)
-                    localStorage.removeItem("cpgagent-current-session")
                 })
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []) // Only run on mount
+    }, [isAuthenticated, isGuest, sessionId]) // Session restore is only relevant for signed-in users
 
     // Save sessionId to localStorage whenever it changes
     useEffect(() => {
         if (!isAuthenticated) return // Don't save if not authenticated
-        
-        if (sessionId) {
-            localStorage.setItem("cpgagent-current-session", sessionId)
-        } else {
-            localStorage.removeItem("cpgagent-current-session")
+
+        if (isGuest) {
+            localStorage.removeItem(CURRENT_SESSION_KEY)
+            return
         }
-    }, [sessionId, isAuthenticated])
+
+        if (sessionId) {
+            localStorage.setItem(CURRENT_SESSION_KEY, sessionId)
+        } else {
+            localStorage.removeItem(CURRENT_SESSION_KEY)
+        }
+    }, [sessionId, isAuthenticated, isGuest])
+
+    const toggleRightPanel = useCallback(() => {
+        setRightPanelOpen((v) => !v)
+    }, [])
+
+    const handleViewChange = (view: View) => {
+        if (view === "tools" && currentView === "tools") {
+            // Force reset of ToolExplorer
+            setRefreshKey(prev => prev + 1)
+        }
+        setCurrentView(view)
+    }
 
     // NOW we can do conditional returns after all hooks
     // Show loading state while checking auth
@@ -90,34 +124,170 @@ export default function Home() {
 
     const renderView = () => {
         switch (currentView) {
-            case "chat":
-                return <ChatInterface sessionId={sessionId} onSessionChange={setSessionId} />
-            case "datasets":
-                return <DatasetsPanel />
-            case "visualizations":
-                return <VisualizationsPanel />
-            case "workflows":
-                return <WorkflowsPanel />
-            default:
-                return <ChatInterface sessionId={sessionId} onSessionChange={setSessionId} />
+            case "datasets":    return <DatasetsPanel />
+            case "visualizations": return <VisualizationsPanel />
+            case "usecases":    return (
+                <UseCasesPanel
+                    onStartChat={(query) => {
+                        setPrefilledQuery(query)
+                        setCurrentView("chat")
+                    }}
+                />
+            )
+            case "tools":       return <ToolExplorer key={refreshKey} className="w-full h-full" />
+            default:            return null
         }
     }
 
     return (
-        <div className="flex h-screen bg-background">
-            <Sidebar 
-                currentView={currentView} 
-                onViewChange={setCurrentView}
+        <div className="flex flex-col h-screen bg-gradient-to-br from-background via-background to-muted/30">
+            {/* Guest mode banner */}
+            {isGuest && !guestBannerDismissed && (
+                <div className="flex items-center justify-center gap-3 px-4 py-2 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300 shrink-0">
+                    <span>You are in guest mode — sessions are not saved.</span>
+                    <a href="/register" className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">
+                        Sign up for free
+                    </a>
+                    <span className="text-amber-600 dark:text-amber-500">to save your history.</span>
+                    <button
+                        onClick={() => setGuestBannerDismissed(true)}
+                        className="ml-2 text-amber-500 hover:text-amber-700 dark:hover:text-amber-200"
+                        aria-label="Dismiss"
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            )}
+            {/* Mobile top bar */}
+            <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
+                <button
+                    onClick={() => setMobileNavOpen(true)}
+                    className="p-1.5 rounded-md text-muted-foreground hover:bg-accent"
+                    aria-label="Open menu"
+                >
+                    <Menu className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-1.5">
+                    <img src="/logo.png" alt="LinkedOmicsChat" className="h-6 w-auto" />
+                    <span className="font-semibold text-sm text-slate-900 dark:text-white">
+                        LinkedOmics<span className="text-teal-600 dark:text-teal-400">Chat</span>
+                    </span>
+                </div>
+                {currentView === "chat" && (
+                    <button
+                        onClick={toggleRightPanel}
+                        className="p-1.5 rounded-md text-muted-foreground hover:bg-accent"
+                        aria-label="Toggle right panel"
+                    >
+                        <ChevronLeft className="w-5 h-5" />
+                    </button>
+                )}
+                {currentView !== "chat" && <div className="w-8" />}
+            </div>
+
+            <div className="flex flex-1 overflow-hidden">
+            <Sidebar
+                currentView={currentView}
+                onViewChange={handleViewChange}
                 currentSessionId={sessionId}
                 onSessionChange={setSessionId}
-                onSettingsOpen={() => setSettingsOpen(true)}
+                mobileOpen={mobileNavOpen}
+                onMobileClose={() => setMobileNavOpen(false)}
             />
-            <main className="flex-1 overflow-hidden">
-                {renderView()}
+            <main className="flex-1 overflow-hidden relative">
+                {/* ChatInterface is always mounted so guest/auth state is preserved across view switches.
+                    Only a full page reload clears it — which is the expected behaviour. */}
+                <div className={currentView === "chat" ? "w-full h-full" : "hidden"}>
+                    <ChatInterface
+                        sessionId={sessionId}
+                        onSessionChange={setSessionId}
+                        onContextUpdate={setRightPanelContext}
+                        initialQuery={prefilledQuery}
+                        onInitialQueryConsumed={() => setPrefilledQuery(null)}
+                    />
+                </div>
+                {currentView !== "chat" && renderView()}
             </main>
-            {settingsOpen && (
-                <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+            {/* Docked right panel (desktop/tablet) */}
+            {currentView === "chat" && (
+                <>
+                    {/* Desktop/tablet toggle: fully visible when closed; edge-attached when open */}
+                    <button
+                        onClick={toggleRightPanel}
+                        className={[
+                            "hidden md:flex fixed top-4 z-50 w-6 h-6 rounded-full bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all duration-300 items-center justify-center",
+                            // When closed: keep fully visible.
+                            !rightPanelOpen ? "right-4" : "",
+                            // When open: attach to the panel edge (half overlap), like the left sidebar toggle.
+                            rightPanelOpen ? "right-96 -mr-3" : "",
+                        ].join(" ")}
+                        title={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
+                        aria-label={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
+                    >
+                        {rightPanelOpen ? (
+                            <ChevronRight className="w-4 h-4" />
+                        ) : (
+                            <ChevronLeft className="w-4 h-4" />
+                        )}
+                    </button>
+
+                    {/* Desktop/tablet right panel: slide in/out (kept mounted for animation) */}
+                    <div
+                        className={[
+                            "hidden md:flex fixed top-0 right-0 z-40 h-full w-96",
+                            "border-l border-border bg-card",
+                            "transform transition-transform duration-300",
+                            rightPanelOpen ? "translate-x-0" : "translate-x-full",
+                        ].join(" ")}
+                        aria-hidden={!rightPanelOpen}
+                    >
+                        <RightPanel
+                            className="w-full h-full border-l-0"
+                            sessionId={sessionId}
+                            context={rightPanelContext}
+                        />
+                    </div>
+                </>
             )}
+
+            {/* Drawer right panel (mobile): slides over the chat */}
+            {currentView === "chat" && (
+                <div
+                    className={[
+                        "fixed inset-0 z-40 md:hidden",
+                        rightPanelOpen ? "pointer-events-auto" : "pointer-events-none",
+                    ].join(" ")}
+                    aria-hidden={!rightPanelOpen}
+                >
+                    {/* Backdrop */}
+                    <div
+                        className={[
+                            "absolute inset-0 bg-black/40 transition-opacity duration-200",
+                            rightPanelOpen ? "opacity-100" : "opacity-0",
+                        ].join(" ")}
+                        onClick={() => setRightPanelOpen(false)}
+                    />
+
+                    {/* Slide-over panel */}
+                    <div
+                        className={[
+                            "absolute right-0 top-0 h-full w-[90vw] max-w-sm bg-card border-l border-border",
+                            "transition-transform duration-200",
+                            rightPanelOpen ? "translate-x-0" : "translate-x-full",
+                        ].join(" ")}
+                    >
+                        <RightPanel
+                            className="w-full h-full border-l-0"
+                            sessionId={sessionId}
+                            context={rightPanelContext}
+                            onClose={() => setRightPanelOpen(false)}
+                        />
+                    </div>
+                </div>
+            )}
+
+            </div>
         </div>
     )
 }

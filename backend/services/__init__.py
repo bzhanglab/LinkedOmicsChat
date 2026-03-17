@@ -1,1 +1,1 @@
-"""Services module for cpgAgent backend"""
+"""Services module for LinkedOmicsChat backend."""

@@ -1,7 +1,73 @@
 import axios from "axios"
 import { getAuthToken } from "./auth"
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+// Dynamically derive the API URL from the current browser hostname.
+// This makes the app work correctly regardless of whether it's accessed via
+// localhost, a LAN IP address, or a domain name — no env var restart needed.
+function resolveApiUrl(): string {
+    if (typeof window !== "undefined") {
+        const hostname = window.location.hostname
+        if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+            return `http://${hostname}:8000`
+        }
+    }
+    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+}
+
+export const API_URL = resolveApiUrl()
+
+// Map raw backend status strings to user-friendly messages.
+// Handles both "Running <tool>..." patterns and fixed phrases.
+const TOOL_STATUS_LABELS: Record<string, string> = {
+    // LinkedOmics / expression tools
+    "cancer_gene_expression":         "Querying expression data...",
+    "get_cis_correlations":           "Fetching cis-correlations...",
+    "get_trans_correlations":         "Fetching trans-correlations...",
+    "overall_survival_per_cancer":    "Running survival analysis...",
+    "clinical_trial_information":     "Looking up clinical trials...",
+    // FunMap / network
+    "funmap_neighborhood":            "Exploring functional network...",
+    "get_target":                     "Checking drug targets...",
+    // Enrichment / pathways
+    "webgestalt":                     "Running pathway enrichment...",
+    // Literature
+    "search_literature":              "Searching literature...",
+    "pubmed_search":                  "Searching PubMed...",
+    // CPTAC
+    "get_cptac_proteomics":           "Fetching proteomics data...",
+    "get_cptac_transcriptomics":      "Fetching transcriptomics data...",
+    "get_cptac_phosphoproteomics":    "Fetching phosphoproteomics data...",
+    "get_cptac_clinical":             "Fetching clinical data...",
+    "list_cptac_datasets":            "Loading CPTAC datasets...",
+}
+
+const FIXED_STATUS_LABELS: Record<string, string> = {
+    "Initializing session...":        "Starting up...",
+    "Analyzing query requirements...":"Understanding your question...",
+    "Analyzing tool results...":      "Interpreting results...",
+    "Drafting final analysis...":     "Writing response...",
+    "Formatting response...":         "Finalizing...",
+}
+
+export function friendlyStatus(raw: string): string {
+    // Fixed phrase mapping
+    if (FIXED_STATUS_LABELS[raw]) return FIXED_STATUS_LABELS[raw]
+
+    // "Running <server>::<tool>..." or "Running <server>__<tool>..." or "Running <tool>..."
+    const runMatch = raw.match(/^Running\s+(.+?)\.{0,3}$/i)
+    if (runMatch) {
+        const fullName = runMatch[1].trim()
+        // Strip namespace prefix — tools arrive as "linkedomics__tool" or "linkedomics::tool"
+        const bareName = fullName.includes("::") ? fullName.split("::").pop()!
+                       : fullName.includes("__") ? fullName.split("__").pop()!
+                       : fullName
+        if (TOOL_STATUS_LABELS[bareName]) return TOOL_STATUS_LABELS[bareName]
+        if (TOOL_STATUS_LABELS[fullName]) return TOOL_STATUS_LABELS[fullName]
+        return "Retrieving data..."
+    }
+
+    return raw
+}
 
 const api = axios.create({
     baseURL: API_URL,
@@ -30,8 +96,13 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
-            // Token expired or invalid, redirect to login
-            if (typeof window !== "undefined") {
+            const token = getAuthToken()
+            const isGuest =
+                typeof window !== "undefined" &&
+                sessionStorage.getItem("linkedomicsai-guest-mode") === "true"
+
+            // Only force-login users with an actual auth token.
+            if (typeof window !== "undefined" && token && !isGuest) {
                 window.location.href = "/login"
             }
         }
@@ -125,9 +196,79 @@ export interface AnalysisResult {
 export interface ChatMessage {
     role: "user" | "assistant" | "system"
     content: string
+    summary?: string
+    sourceMessageId?: number
+    hasFullContent?: boolean
+    hasImages?: boolean
+    noCollapse?: boolean  // when true, never show "Show details" button
+    isGeneralKnowledge?: boolean  // true when LLM answered from training knowledge, not LinkedOmics data
     timestamp?: Date
     papers?: Paper[]
     analyses?: AnalysisResult[]
+    suggestions?: string[]
+    clarificationOptions?: string[]
+    toolSources?: Record<string, string>
+    toolsUsed?: string[]
+}
+
+/** Map a tool name to its human-readable data source with a URL. */
+export interface DataSource {
+    label: string
+    url: string
+}
+
+export const TOOL_DATA_SOURCES: Record<string, DataSource> = {
+    cancer_gene_expression:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    get_cis_correlations:          { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    get_trans_correlations:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    overall_survival_per_cancer:   { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    clinical_trial_information:    { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
+    funmap_neighborhood:           { label: "FunMap",              url: "https://funmap.linkedomics.org" },
+    get_target:                    { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
+    webgestalt:                    { label: "WebGestalt",          url: "https://www.webgestalt.org" },
+    search_literature:             { label: "PubMed",              url: "https://pubmed.ncbi.nlm.nih.gov" },
+    pubmed_search:                 { label: "PubMed",              url: "https://pubmed.ncbi.nlm.nih.gov" },
+    get_cptac_proteomics:          { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
+    get_cptac_transcriptomics:     { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
+    get_cptac_phosphoproteomics:   { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
+    get_cptac_clinical:            { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
+    list_cptac_datasets:           { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
+}
+
+/** Short keys used in inline markdown citations → DataSource. */
+export const INLINE_SOURCE_MAP: Record<string, DataSource> = {
+    linkedomics: { label: "LinkedOmics", url: "https://www.linkedomics.org" },
+    pubmed:      { label: "PubMed",      url: "https://pubmed.ncbi.nlm.nih.gov" },
+    funmap:      { label: "FunMap",      url: "https://funmap.linkedomics.org" },
+    webgestalt:  { label: "WebGestalt", url: "https://www.webgestalt.org" },
+    cptac:       { label: "CPTAC",      url: "https://proteomics.cancer.gov/programs/cptac" },
+    targets:     { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
+    trials:      { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
+}
+
+/** Deduplicate tools_used into a list of unique DataSource entries. */
+export function resolveDataSources(toolsUsed: string[]): DataSource[] {
+    const seen = new Set<string>()
+    const result: DataSource[] = []
+    for (const tool of toolsUsed) {
+        // Tools may arrive as:
+        //   "linkedomics::cancer_gene_expression"
+        //   "linkedomics__cancer_gene_expression"
+        //   "linkedomics__cancer_gene_expression#0"  ← _generate_response passes raw dict keys
+        // Strip the instance suffix (#N), then strip the namespace prefix.
+        const withoutIndex = tool.replace(/#\d+$/, "")
+        const bareName = withoutIndex.includes("::")
+            ? withoutIndex.split("::").pop()!
+            : withoutIndex.includes("__")
+            ? withoutIndex.split("__").pop()!
+            : withoutIndex
+        const src = TOOL_DATA_SOURCES[withoutIndex] ?? TOOL_DATA_SOURCES[bareName]
+        if (src && !seen.has(src.label)) {
+            seen.add(src.label)
+            result.push(src)
+        }
+    }
+    return result
 }
 
 export interface ChatRequest {
@@ -138,11 +279,17 @@ export interface ChatRequest {
 
 export interface ChatResponse {
     message: string
+    summary?: string
     session_id: string
     agent_responses: Array<Record<string, unknown>>
     visualizations: Array<Record<string, unknown>>
     analyses: Array<Record<string, unknown>>  // Analysis results (correlations, etc.)
     suggestions: string[]
+    clarification_options?: string[]
+    tool_sources?: Record<string, string>
+    tools_used?: string[]
+    no_collapse?: boolean
+    is_general_knowledge?: boolean
     metadata?: Record<string, unknown>
 }
 
@@ -164,20 +311,113 @@ export const chatAPI = {
         return response.data
     },
 
+    async streamMessage(
+        request: ChatRequest,
+        onStatus: (status: string) => void
+    ): Promise<ChatResponse> {
+        const token = getAuthToken()
+        const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(request),
+        })
+
+        if (!response.ok || !response.body) {
+            let detail = response.statusText
+            try {
+                const errBody = await response.json()
+                if (errBody?.detail) detail = errBody.detail
+            } catch {}
+            throw new Error(detail)
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ""
+        let finalResponse: ChatResponse | null = null
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+
+                // Process complete SSE messages (separated by \n\n)
+                let msgEnd = buffer.indexOf("\n\n")
+                while (msgEnd !== -1) {
+                    const chunk = buffer.slice(0, msgEnd).trim()
+                    buffer = buffer.slice(msgEnd + 2)
+                    msgEnd = buffer.indexOf("\n\n")
+
+                    if (chunk.startsWith("data: ")) {
+                        try {
+                            const data = JSON.parse(chunk.slice(6))
+                            if (data.type === "status") {
+                                onStatus(friendlyStatus(data.content))
+                            } else if (data.type === "final") {
+                                finalResponse = data.content as ChatResponse
+                            }
+                        } catch (e) {
+                            console.warn("Failed to parse SSE chunk:", chunk)
+                        }
+                    }
+                }
+            }
+        } finally {
+            reader.releaseLock()
+        }
+
+        if (!finalResponse) {
+            throw new Error("Stream closed without returning a final response.")
+        }
+
+        return finalResponse
+    },
+
     async listSessions() {
-        const response = await api.get<{ sessions: Array<{
-            session_id: string
-            title: string
-            created_at: number
-            last_updated: number
-            message_count: number
-        }> }>("/api/v1/chat/sessions")
+        const response = await api.get<{
+            sessions: Array<{
+                session_id: string
+                title: string
+                created_at: number
+                last_updated: number
+                message_count: number
+            }>
+        }>("/api/v1/chat/sessions")
         return response.data
     },
 
     async getSession(sessionId: string) {
         const response = await api.get(`/api/v1/chat/sessions/${sessionId}`)
         return response.data
+    },
+
+    async getSessionHistory(sessionId: string, params?: { limit?: number; before?: number }) {
+        const response = await api.get(`/api/v1/chat/sessions/${sessionId}/history`, {
+            params,
+        })
+        return response.data as {
+            session_id: string
+            title: string
+            history: Array<{ id: number; query: string; response: any; timestamp: number }>
+            has_more: boolean
+            next_before: number | null
+        }
+    },
+
+    async getChatMessage(messageId: number) {
+        const response = await api.get(`/api/v1/chat/messages/${messageId}`)
+        return response.data as {
+            id: number
+            session_id: string
+            query: string
+            response: any
+            timestamp: number
+        }
     },
 
     async updateSessionTitle(sessionId: string, title: string) {
@@ -187,6 +427,22 @@ export const chatAPI = {
 
     async clearSession(sessionId: string) {
         const response = await api.delete(`/api/v1/chat/sessions/${sessionId}`)
+        return response.data
+    },
+
+    async searchMessages(q: string, limit = 20) {
+        const response = await api.get<{
+            results: Array<{
+                message_id: number
+                session_id: string
+                session_title: string
+                query: string
+                excerpt: string
+                timestamp: number
+            }>
+            query: string
+            count: number
+        }>("/api/v1/chat/search", { params: { q, limit } })
         return response.data
     },
 }
@@ -287,6 +543,22 @@ export const workflowsAPI = {
         const response = await api.post("/api/v1/workflows/seed-examples")
         return response.data
     },
+}
+
+export const toolsAPI = {
+    async list() {
+        // Returns { tools: { toolName: meta... } }
+        const response = await api.get<{ tools: Record<string, any> }>("/api/v1/tools/")
+        return response.data
+    },
+
+    async execute(toolId: string, args: Record<string, any>) {
+        const response = await api.post("/api/v1/tools/execute", {
+            tool_id: toolId,
+            arguments: args
+        })
+        return response.data
+    }
 }
 
 export default api

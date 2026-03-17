@@ -1,11 +1,11 @@
-# cpgAgent: Cancer Proteogenomics Agent
+# LinkedOmicsChat: Cancer Proteogenomics Agent
 
-**cpgAgent** (Cancer Proteogenomics Agent) is a modern agentic platform that transforms traditional web-based omics analysis into an intelligent,
+**LinkedOmicsChat** (Cancer Proteogenomics Agent) is a modern agentic platform that transforms traditional web-based omics analysis into an intelligent,
 conversational, and autonomous research assistant for cancer proteogenomics research.
 
 ## Overview
 
-cpgAgent (Cancer Proteogenomics Agent) modernizes multi-omics analysis by introducing:
+LinkedOmicsChat (Cancer Proteogenomics Agent) modernizes multi-omics analysis by introducing:
 - **Conversational AI Interface**: Natural language queries instead of complex UI navigation
 - **Autonomous Agents**: Specialized AI agents for data curation, analysis, visualization, and literature mining
 - **Multi-omics Data Support**: TCGA and CPTAC datasets for cancer proteogenomics research
@@ -126,7 +126,7 @@ This script will:
 ./start_frontend.sh
 ```
 
-**That's it!** Open `http://localhost:3000` and start using cpgAgent.
+**That's it!** Open `http://localhost:3000` and start using LinkedOmicsChat.
 
 ---
 
@@ -149,7 +149,7 @@ pip install -r requirements.txt
 # Create .env file
 cat > .env << EOF
 OPENAI_API_KEY=your-key-here
-DATABASE_URL=sqlite:///./cpgagent.db
+DATABASE_URL=sqlite:///./linkedomicsai.db
 ENVIRONMENT=development
 DEBUG=True
 EOF
@@ -188,7 +188,7 @@ USE_OLLAMA=false
 OLLAMA_MODEL=llama3
 OLLAMA_BASE_URL=http://localhost:11434
 MOCK_LLM=false
-DATABASE_URL=postgresql://user:pass@localhost/cpgagent
+DATABASE_URL=postgresql://user:pass@localhost/linkedomicsai
 REDIS_URL=redis://localhost:6379
 ENVIRONMENT=development
 ```
@@ -205,7 +205,7 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8000
 ```
 User: "Find genes correlated with TP53 expression in breast cancer"
 
-cpgAgent:
+LinkedOmicsChat:
 1. DataCurationAgent: Identified TCGA BRCA dataset
 2. AssociationAgent: Computing Pearson correlations across genes...
 3. VisualizationAgent: Creating scatter plots and heatmap...
@@ -216,7 +216,7 @@ cpgAgent:
 ```
 User: "Find genes differentially expressed between stage I and stage IV in lung cancer"
 
-cpgAgent:
+LinkedOmicsChat:
 1. DataCurationAgent: Retrieved TCGA LUAD dataset
 2. DifferentialExpressionAgent: Running statistical tests...
 3. VisualizationAgent: Generated volcano plot and heatmap
@@ -272,9 +272,9 @@ For deploying changes without committing to git (faster workflow):
 **Option 1: Export variables in your shell session**
 ```bash
 # Set your AWS details
-export CPGAGENT_AWS_HOST="ec2-user@your-instance-ip"
-export CPGAGENT_AWS_KEY="~/.ssh/your-key.pem"
-export CPGAGENT_REMOTE_PATH="~/cpgAgent"
+export LINKEDOMICSCHAT_AWS_HOST="ec2-user@your-instance-ip"
+export LINKEDOMICSCHAT_AWS_KEY="~/.ssh/your-key.pem"
+export LINKEDOMICSCHAT_REMOTE_PATH="~/LinkedOmicsChat"
 
 # Deploy changes (syncs files and rebuilds containers)
 ./deploy_rsync.sh
@@ -286,7 +286,7 @@ export CPGAGENT_REMOTE_PATH="~/cpgAgent"
 cp deploy_config.sh.example deploy_config.sh
 
 # 2. Edit deploy_config.sh with your AWS details
-#    (fill in CPGAGENT_AWS_HOST, CPGAGENT_AWS_KEY, etc.)
+#    (fill in LINKEDOMICSCHAT_AWS_HOST, LINKEDOMICSCHAT_AWS_KEY, etc.)
 
 # 3. Source it before deploying
 source deploy_config.sh
@@ -298,9 +298,9 @@ source deploy_config.sh
 **Option 3: Add to your shell profile (persistent)**
 ```bash
 # Add to ~/.zshrc or ~/.bashrc
-export CPGAGENT_AWS_HOST="ec2-user@your-instance-ip"
-export CPGAGENT_AWS_KEY="~/.ssh/your-key.pem"
-export CPGAGENT_REMOTE_PATH="~/cpgAgent"
+export LINKEDOMICSCHAT_AWS_HOST="ec2-user@your-instance-ip"
+export LINKEDOMICSCHAT_AWS_KEY="~/.ssh/your-key.pem"
+export LINKEDOMICSCHAT_REMOTE_PATH="~/LinkedOmicsChat"
 
 # Then reload: source ~/.zshrc
 # Now you can run ./deploy_rsync.sh anytime
@@ -318,7 +318,7 @@ export CPGAGENT_REMOTE_PATH="~/cpgAgent"
 - **Preserves server files**: `.env`, databases, logs are never overwritten
 - **Dry-run mode**: Preview changes before syncing
   ```bash
-  CPGAGENT_DRY_RUN=true ./deploy_rsync.sh  # Preview only, no changes
+  LINKEDOMICSCHAT_DRY_RUN=true ./deploy_rsync.sh  # Preview only, no changes
   ```
 - **Protected files** (server keeps its own):
   - `.env` - Server configuration (never synced)
@@ -330,16 +330,16 @@ export CPGAGENT_REMOTE_PATH="~/cpgAgent"
 **Advanced options:**
 ```bash
 # Preview changes without syncing
-CPGAGENT_DRY_RUN=true ./deploy_rsync.sh
+LINKEDOMICSCHAT_DRY_RUN=true ./deploy_rsync.sh
 
 # Enable deletion mode (removes files on server not in local - use with caution!)
-CPGAGENT_USE_DELETE=true ./deploy_rsync.sh
+LINKEDOMICSCHAT_USE_DELETE=true ./deploy_rsync.sh
 
 # Include .git/ folder (enables git pull on server)
-CPGAGENT_SYNC_GIT=true ./deploy_rsync.sh
+LINKEDOMICSCHAT_SYNC_GIT=true ./deploy_rsync.sh
 
 # Protect custom server-specific files from deletion
-CPGAGENT_SERVER_FILES="my-custom-config.json,server-scripts/" ./deploy_rsync.sh
+LINKEDOMICSCHAT_SERVER_FILES="my-custom-config.json,server-scripts/" ./deploy_rsync.sh
 ```
 
 **Important: Using --delete mode:**
@@ -351,7 +351,14 @@ CPGAGENT_SERVER_FILES="my-custom-config.json,server-scripts/" ./deploy_rsync.sh
   - `*.db`, `*.sqlite` (databases)
   - `logs/`, `*.log`
 - **Unprotected files** will be deleted if not in local repo
-- **Protect custom files** using `CPGAGENT_SERVER_FILES` environment variable
+- **Protect custom files** using `LINKEDOMICSCHAT_SERVER_FILES` environment variable
+
+Note: `deploy_rsync.sh` still accepts legacy `LINKEDOMICSAI_*`, `LINKEDOMICS_*`, and `CPGAGENT_*` environment variables while you transition.
+
+If you previously ran Docker under the old `cpgAgent` folder name, Docker Compose may have created a separate set of project-scoped volumes. If data seems missing after the rename, inspect:
+```bash
+docker volume ls | grep -E 'cpgagent|linkedomicschat'
+```
 
 ## License
 
@@ -359,13 +366,13 @@ MIT License - see [LICENSE](./LICENSE) for details.
 
 ## Citation
 
-If you use cpgAgent in your research, please cite:
+If you use LinkedOmicsChat in your research, please cite:
 ```bibtex
-@software{cpgagent2026,
-  title={cpgAgent: Cancer Proteogenomics Agent - Modern Agentic Platform for Multi-Omics Analysis},
+@software{linkedomicschat2026,
+  title={LinkedOmicsChat: Cancer Proteogenomics Agent - Modern Agentic Platform for Multi-Omics Analysis},
   author={Zhang Lab},
   year={2026},
-  url={https://github.com/zhanglab/cpgagent}
+  url={https://github.com/zhanglab/linkedomicschat}
 }
 ```
 
@@ -379,4 +386,4 @@ The project includes setup scripts and configuration files for easy deployment:
 
 ## Acknowledgments
 
-cpgAgent (Cancer Proteogenomics Agent) brings modern AI capabilities to cancer proteogenomics and multi-omics research, enabling researchers to analyze complex biological data through natural language interactions.
+LinkedOmicsChat (Cancer Proteogenomics Agent) brings modern AI capabilities to cancer proteogenomics and multi-omics research, enabling researchers to analyze complex biological data through natural language interactions.

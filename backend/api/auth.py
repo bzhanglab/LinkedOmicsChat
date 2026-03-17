@@ -15,6 +15,7 @@ from models.schemas import (
     UserResponse,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    PublicRuntimeConfig,
 )
 from core.database import get_db
 from core.auth import (
@@ -30,12 +31,25 @@ from core.auth import (
 )
 from core.config import settings
 from core.dependencies import get_current_user
-from models.database import User
+from core.database import SessionLocal
+from models.database import User, TokenUsage
+import time
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 security = HTTPBearer()
+
+
+def _infer_llm_provider(model_name: str) -> str:
+    """Infer the active provider from server settings."""
+    if settings.USE_OLLAMA:
+        return "Ollama"
+    if "gemini" in model_name.lower() or settings.GOOGLE_API_KEY:
+        return "Google Gemini"
+    if "claude" in model_name.lower() or settings.ANTHROPIC_API_KEY:
+        return "Anthropic"
+    return "OpenAI"
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -107,6 +121,7 @@ async def login(
     Returns:
         JWT access token
     """
+    logger.info(f"Attempting login for user: '{user_data.username}'")
     # Get user by username
     user = await get_user_by_username(db, user_data.username)
     if not user:
@@ -123,6 +138,23 @@ async def login(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Check if user is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive"
+        )
+    
+    # Create access token
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.id}, expires_delta=access_token_expires
+    )
+    
+    logger.info(f"User logged in: {user.username}")
+    
+    return Token(access_token=access_token, token_type="bearer")
     
     # Check if user is active
     if not user.is_active:
@@ -159,6 +191,59 @@ async def get_current_user_info(
         is_active=current_user.is_active,
         created_at=current_user.created_at
     )
+
+
+@router.get("/public-config", response_model=PublicRuntimeConfig)
+async def get_public_runtime_config():
+    """Expose safe runtime configuration needed by the frontend settings UI."""
+    model_name = settings.OLLAMA_MODEL if settings.USE_OLLAMA else settings.DEFAULT_LLM_MODEL
+    return PublicRuntimeConfig(
+        llm_provider=_infer_llm_provider(model_name),
+        llm_model=model_name,
+        temperature=settings.DEFAULT_TEMPERATURE,
+        max_tokens=settings.MAX_TOKENS,
+        architecture="MCP-based agents",
+        orchestration="LangGraph" if settings.USE_LANGGRAPH else "Legacy orchestrator",
+    )
+
+
+@router.get("/me/usage")
+async def get_usage(current_user: User = Depends(get_current_user)):
+    """Token usage summary for the authenticated user."""
+    db = SessionLocal()
+    try:
+        rows = db.query(TokenUsage).filter(TokenUsage.user_id == current_user.id).all()
+
+        total_input = sum(r.input_tokens for r in rows)
+        total_output = sum(r.output_tokens for r in rows)
+        total_queries = len(rows)
+
+        # Per-day breakdown (last 30 days)
+        now = time.time()
+        cutoff = now - 30 * 86400
+        from collections import defaultdict
+        import datetime
+        daily: dict = defaultdict(lambda: {"input_tokens": 0, "output_tokens": 0, "queries": 0})
+        for r in rows:
+            if r.timestamp >= cutoff:
+                day = datetime.datetime.utcfromtimestamp(r.timestamp).strftime("%Y-%m-%d")
+                daily[day]["input_tokens"] += r.input_tokens
+                daily[day]["output_tokens"] += r.output_tokens
+                daily[day]["queries"] += 1
+
+        return {
+            "user_id": current_user.id,
+            "username": current_user.username,
+            "total_queries": total_queries,
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "total_tokens": total_input + total_output,
+            "last_30_days": [
+                {"date": d, **v} for d, v in sorted(daily.items())
+            ],
+        }
+    finally:
+        db.close()
 
 
 @router.post("/forgot-password")

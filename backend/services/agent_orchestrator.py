@@ -3,7 +3,7 @@ Agent Orchestrator
 Coordinates multiple agents to handle complex queries
 """
 from typing import Dict, Any, Optional, List
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 import asyncio
 import logging
 import time
@@ -39,26 +39,48 @@ class AgentOrchestrator:
             temperature=0.3
         )
         self.sessions = {}
+        self.mcp_aggregator = None  # Will be initialized in initialize()
     
     async def initialize(self):
-        """Initialize all agents"""
+        """Initialize all agents with MCP support"""
         try:
-            logger.info("Initializing agents...")
+            logger.info("Initializing agents with MCP support...")
+            
+            # Initialize MCP Aggregator if enabled
+            if settings.USE_MCP:
+                try:
+                    from services.mcp_aggregator import MCPAggregator
+                    self.mcp_aggregator = MCPAggregator()
+                    await self.mcp_aggregator.initialize()
+                    logger.info(f"MCP Aggregator initialized with {len(self.mcp_aggregator.tools)} tools")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize MCP Aggregator: {e}. Agents will run without MCP.")
+                    self.mcp_aggregator = None
+            
+            # Initialize agents with MCP support
             self.agents = {
-                "data": DataCurationAgent(),
-                "analysis": StatisticalAnalysisAgent(),
-                "visualization": VisualizationAgent(),
-                "literature": LiteratureMiningAgent(),
-                "association": AssociationAgent(),
-                "differential_expression": DifferentialExpressionAgent()
+                "data": DataCurationAgent(mcp_aggregator=self.mcp_aggregator),
+                "analysis": StatisticalAnalysisAgent(mcp_aggregator=self.mcp_aggregator),
+                "visualization": VisualizationAgent(mcp_aggregator=self.mcp_aggregator),
+                "literature": LiteratureMiningAgent(mcp_aggregator=self.mcp_aggregator),
+                "association": AssociationAgent(mcp_aggregator=self.mcp_aggregator),
+                "differential_expression": DifferentialExpressionAgent(mcp_aggregator=self.mcp_aggregator)
             }
-            logger.info("All agents initialized successfully")
+            logger.info(f"All agents initialized successfully with MCP: {self.mcp_aggregator is not None}")
         except Exception as e:
             logger.error(f"Error initializing agents: {e}")
             raise
     
     async def cleanup(self):
         """Cleanup resources"""
+        # Cleanup MCP aggregator if initialized
+        if self.mcp_aggregator:
+            try:
+                await self.mcp_aggregator.cleanup()
+                logger.info("MCP Aggregator cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up MCP Aggregator: {e}")
+        
         self.sessions.clear()
         logger.info("Agent orchestrator cleaned up")
 
@@ -733,7 +755,7 @@ Return ONLY valid JSON, no other text."""
             messages = []
             
             # Add system message
-            messages.append(SystemMessage(content="""You are cpgAgent, an expert bioinformatics research assistant. You have deep knowledge of:
+            messages.append(SystemMessage(content="""You are LinkedOmicsChat, an expert bioinformatics research assistant. You have deep knowledge of:
 - Molecular biology, genetics, and genomics
 - Gene functions, pathways, and interactions
 - Cancer biology and disease mechanisms

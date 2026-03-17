@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# AWS Deployment Script for cpgAgent
+# AWS Deployment Script for LinkedOmicsChat
 # This script helps set up the application on an AWS EC2 instance
 
 set -e
 
-echo "🚀 cpgAgent AWS Deployment Script"
+echo "🚀 LinkedOmicsChat AWS Deployment Script"
 echo "=================================="
 echo ""
 
@@ -188,7 +188,7 @@ SECRET_KEY=$SECRET_KEY
 CORS_ORIGINS=http://$DOMAIN:3000,http://$DOMAIN,http://$PUBLIC_IP:3000,http://$PUBLIC_IP
 
 # Database URL
-DATABASE_URL=postgresql://cpgagent:$DB_PASSWORD@postgres:5432/cpgagent
+DATABASE_URL=postgresql://linkedomicsai:$DB_PASSWORD@postgres:5432/linkedomicsai
 REDIS_URL=redis://redis:6379/0
 
 # Frontend URLs

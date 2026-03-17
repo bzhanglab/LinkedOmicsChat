@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Stop cpgAgent Backend Server
+# Stop LinkedOmicsChat Backend Server
 # This script stops the FastAPI backend server
 
 set -e
 
-echo "🛑 Stopping cpgAgent Backend..."
+echo "🛑 Stopping LinkedOmicsChat Backend..."
 echo "=================================="
 
 # Find and kill the backend process

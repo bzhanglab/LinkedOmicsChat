@@ -2,7 +2,9 @@
  * Authentication API and utilities
  */
 import axios from "axios"
-import { API_URL } from "./api"
+
+// Define API_URL locally to avoid circular dependency with api.ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
 export interface User {
     id: string
@@ -49,17 +51,33 @@ export interface ResetPasswordResponse {
     message: string
 }
 
-const AUTH_TOKEN_KEY = "cpgagent-auth-token"
+export interface PublicRuntimeConfig {
+    llm_provider: string
+    llm_model: string
+    temperature: number
+    max_tokens: number
+    architecture: string
+    orchestration: string
+}
+
+const AUTH_TOKEN_KEY = "linkedomicsai-auth-token"
+
+// Auth calls should never hang the whole UI.
+// Use a short timeout so the app can recover (and force re-login if needed).
+const authHttp = axios.create({
+    baseURL: API_URL,
+    timeout: 15000, // 15s
+    headers: {
+        "Content-Type": "application/json",
+    },
+})
 
 export const authAPI = {
     /**
      * Register a new user
      */
     async register(data: RegisterRequest): Promise<User> {
-        const response = await axios.post<User>(
-            `${API_URL}/api/v1/auth/register`,
-            data
-        )
+        const response = await authHttp.post<User>(`/api/v1/auth/register`, data)
         return response.data
     },
 
@@ -67,10 +85,7 @@ export const authAPI = {
      * Login and get access token
      */
     async login(data: LoginRequest): Promise<TokenResponse> {
-        const response = await axios.post<TokenResponse>(
-            `${API_URL}/api/v1/auth/login`,
-            data
-        )
+        const response = await authHttp.post<TokenResponse>(`/api/v1/auth/login`, data)
         return response.data
     },
 
@@ -83,14 +98,22 @@ export const authAPI = {
             throw new Error("No authentication token")
         }
 
-        const response = await axios.get<User>(
-            `${API_URL}/api/v1/auth/me`,
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
-            }
-        )
+        const response = await authHttp.get<User>(`/api/v1/auth/me`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+            timeout: 3000, // tight — this blocks the initial page render
+        })
+        return response.data
+    },
+
+    /**
+     * Get safe server runtime configuration for read-only UI.
+     */
+    async getPublicRuntimeConfig(): Promise<PublicRuntimeConfig> {
+        const response = await authHttp.get<PublicRuntimeConfig>(`/api/v1/auth/public-config`, {
+            timeout: 5000,
+        })
         return response.data
     },
 
@@ -98,10 +121,7 @@ export const authAPI = {
      * Request password reset
      */
     async forgotPassword(data: ForgotPasswordRequest): Promise<ForgotPasswordResponse> {
-        const response = await axios.post<ForgotPasswordResponse>(
-            `${API_URL}/api/v1/auth/forgot-password`,
-            data
-        )
+        const response = await authHttp.post<ForgotPasswordResponse>(`/api/v1/auth/forgot-password`, data)
         return response.data
     },
 
@@ -109,10 +129,7 @@ export const authAPI = {
      * Reset password with token
      */
     async resetPassword(data: ResetPasswordRequest): Promise<ResetPasswordResponse> {
-        const response = await axios.post<ResetPasswordResponse>(
-            `${API_URL}/api/v1/auth/reset-password`,
-            data
-        )
+        const response = await authHttp.post<ResetPasswordResponse>(`/api/v1/auth/reset-password`, data)
         return response.data
     },
 }

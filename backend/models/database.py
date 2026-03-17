@@ -1,7 +1,7 @@
 """
 SQLAlchemy database models
 """
-from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey, JSON, Boolean
+from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey, JSON, Boolean, Index
 from sqlalchemy.orm import relationship
 from core.database import Base
 import uuid
@@ -54,19 +54,33 @@ class ChatMessage(Base):
 
     # Relationship to session
     session = relationship("ChatSession", back_populates="messages")
+    
+    # Composite index for efficient pagination queries
+    __table_args__ = (
+        Index('idx_session_timestamp', 'session_id', 'timestamp'),
+    )
 
 
-class WorkflowExecution(Base):
-    """Workflow execution record - stores each run of a workflow"""
-    __tablename__ = "workflow_executions"
+class TokenUsage(Base):
+    """Per-query token usage record for registered users"""
+    __tablename__ = "token_usage"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    workflow_id = Column(String, nullable=False, index=True)  # Reference to workflow definition
-    workflow_name = Column(String, nullable=False)
-    status = Column(String, nullable=False)  # running, completed, failed, partially_completed
-    parameters = Column(JSON, nullable=True)  # User-provided parameters
-    step_results = Column(JSON, nullable=True)  # Results from each step
-    summary = Column(Text, nullable=True)  # Execution summary
-    started_at = Column(Float, nullable=False)
-    completed_at = Column(Float, nullable=True)
-    error_message = Column(Text, nullable=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    model = Column(String, nullable=True)
+    timestamp = Column(Float, nullable=False)
+
+
+class GuestTokenUsage(Base):
+    """Per-query token usage record for guest (unauthenticated) users, keyed by IP"""
+    __tablename__ = "guest_token_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ip_address = Column(String, nullable=False, index=True)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    model = Column(String, nullable=True)
+    timestamp = Column(Float, nullable=False)

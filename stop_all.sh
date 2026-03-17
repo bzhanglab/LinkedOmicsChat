@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Stop All cpgAgent Services
+# Stop All LinkedOmicsChat Services
 # This script stops both backend and frontend servers
 
 set -e
 
-echo "🛑 Stopping All cpgAgent Services..."
+echo "🛑 Stopping All LinkedOmicsChat Services..."
 echo "======================================"
 echo ""
 

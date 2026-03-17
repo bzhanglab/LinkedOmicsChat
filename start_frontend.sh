@@ -16,15 +16,21 @@ if [ ! -f ".env.local" ]; then
     exit 1
 fi
 
-echo "🚀 Starting cpgAgent frontend..."
+echo "🚀 Starting LinkedOmicsChat frontend..."
 echo "📍 Frontend will run at: http://localhost:3000"
 echo ""
+
+# Bind to all interfaces when NEXT_HOSTNAME is set (allows LAN access)
+HOSTNAME_FLAG=""
+if [ -n "$NEXT_HOSTNAME" ]; then
+    HOSTNAME_FLAG="--hostname $NEXT_HOSTNAME"
+fi
 
 # Check if BACKGROUND env var is set
 if [ "$BACKGROUND" = "true" ]; then
     echo "▶️  Starting in background mode..."
     # Use nohup to ensure process survives terminal closure
-    nohup npm run dev > ../logs/frontend.log 2>&1 &
+    nohup npx next dev $HOSTNAME_FLAG --port 3000 > ../logs/frontend.log 2>&1 &
     FRONTEND_PID=$!
     echo "✅ Frontend started with PID: $FRONTEND_PID"
     echo "📄 Logs: logs/frontend.log"
@@ -33,5 +39,5 @@ else
     echo "Press Ctrl+C to stop"
     echo ""
     # Start the frontend
-    npm run dev
+    npx next dev $HOSTNAME_FLAG --port 3000
 fi

@@ -44,11 +44,14 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Response schema for chat endpoint"""
     message: str
+    summary: Optional[str] = None
     session_id: str
     agent_responses: List[Dict[str, Any]] = []
     visualizations: List[Dict[str, Any]] = []
     analyses: List[Dict[str, Any]] = []  # Analysis results (correlations, etc.)
     suggestions: List[str] = []
+    clarification_options: List[str] = []
+    tool_sources: Dict[str, str] = {}
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -160,3 +163,13 @@ class ResetPasswordRequest(BaseModel):
     """Reset password request schema"""
     token: str
     new_password: str = Field(..., min_length=8)
+
+
+class PublicRuntimeConfig(BaseModel):
+    """Safe server runtime configuration exposed to the frontend."""
+    llm_provider: str
+    llm_model: str
+    temperature: float
+    max_tokens: int
+    architecture: str
+    orchestration: str

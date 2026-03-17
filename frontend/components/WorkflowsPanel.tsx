@@ -52,8 +52,33 @@ export function WorkflowsPanel() {
     const pollingIntervals = useRef<Record<string, NodeJS.Timeout>>({})
 
     useEffect(() => {
-        loadWorkflows()
+        loadWorkflowsAndAutoSeed()
     }, [])
+
+    const loadWorkflowsAndAutoSeed = async () => {
+        try {
+            setIsLoading(true)
+            const data = await workflowsAPI.list()
+
+            // Auto-load examples if no workflows exist
+            if (!data || data.length === 0) {
+                console.log("📋 No workflows found, auto-loading examples...")
+                await handleSeedExamples()
+                return
+            }
+
+            setWorkflows(data)
+
+            // Load results for any completed workflows
+            if (data && data.length > 0) {
+                await loadResultsForCompletedWorkflows(data)
+            }
+        } catch (error) {
+            console.error("Error loading workflows:", error)
+        } finally {
+            setIsLoading(false)
+        }
+    }
 
     const loadWorkflows = async (silent = false) => {
         try {
@@ -62,12 +87,12 @@ export function WorkflowsPanel() {
             }
             const data = await workflowsAPI.list()
             setWorkflows(data || [])
-            
+
             // Load results for any completed workflows
             if (data && data.length > 0) {
                 await loadResultsForCompletedWorkflows(data)
             }
-            
+
             return data || []  // Return the data so it can be used immediately
         } catch (error) {
             console.error("Error loading workflows:", error)
@@ -78,15 +103,15 @@ export function WorkflowsPanel() {
             }
         }
     }
-    
+
     const loadResultsForCompletedWorkflows = async (workflows: Workflow[]) => {
         // Fetch results for workflows that are completed, failed, or partially_completed
-        const completedWorkflows = workflows.filter(w => 
-            w.status === "completed" || 
-            w.status === "failed" || 
+        const completedWorkflows = workflows.filter(w =>
+            w.status === "completed" ||
+            w.status === "failed" ||
             w.status === "partially_completed"
         )
-        
+
         // Fetch results for each completed workflow
         const resultsPromises = completedWorkflows.map(async (workflow) => {
             try {
@@ -97,9 +122,9 @@ export function WorkflowsPanel() {
                 return null
             }
         })
-        
+
         const resultsArray = await Promise.all(resultsPromises)
-        
+
         // Update workflowResults state with all fetched results
         const newResults: Record<string, WorkflowResults> = {}
         resultsArray.forEach(item => {
@@ -107,18 +132,18 @@ export function WorkflowsPanel() {
                 newResults[item.workflowId] = item.results
             }
         })
-        
+
         if (Object.keys(newResults).length > 0) {
             setWorkflowResults(prev => ({ ...prev, ...newResults }))
         }
     }
-    
+
     // Update a single workflow's status without reloading all workflows
     const updateWorkflowStatus = (workflowId: string, status: any) => {
-        setWorkflows(prev => prev.map(wf => 
-            wf.id === workflowId 
-                ? { 
-                    ...wf, 
+        setWorkflows(prev => prev.map(wf =>
+            wf.id === workflowId
+                ? {
+                    ...wf,
                     status: status.status,
                     steps: status.steps?.map((s: any) => ({
                         step_id: s.step_id,
@@ -152,11 +177,11 @@ export function WorkflowsPanel() {
             alert("Error: No workflow selected. Please try again.")
             return
         }
-        
+
         // Always reload workflows from backend first (they're in-memory and may be cleared on restart)
         console.log("🔄 Reloading workflows from backend...")
         const reloadedWorkflows = await loadWorkflows(false)
-        
+
         // Check if workflow exists in backend
         const workflow = reloadedWorkflows.find((w: Workflow) => w.id === workflowId)
         if (!workflow) {
@@ -166,33 +191,33 @@ export function WorkflowsPanel() {
             return
         }
         console.log("✅ Found workflow:", workflow.name)
-        
+
         try {
             setShowParamDialog(null) // Close dialog
-            
+
             // Log what we're sending
             const paramsToSend = parameters || {}
             console.log("🚀 Executing workflow:", workflowId)
             console.log("📋 Parameters being sent:", paramsToSend)
-            
+
             if (Object.keys(paramsToSend).length === 0) {
                 console.warn("⚠️ No parameters provided - workflow will use default/placeholder values")
             }
-            
+
             setExecutingWorkflows(prev => new Set(prev).add(workflowId))
-            
+
             // Execute workflow with user parameters
             console.log("📡 Calling workflowsAPI.execute...")
             const response = await workflowsAPI.execute(workflowId, paramsToSend)
             console.log("✅ Workflow execution response:", response)
-            
+
             // Poll for status updates (without flickering)
             const pollInterval = setInterval(async () => {
                 try {
                     const status = await workflowsAPI.getStatus(workflowId)
                     // Update status in place instead of reloading all workflows
                     updateWorkflowStatus(workflowId, status)
-                    
+
                     // Stop polling if workflow is done
                     if (["completed", "failed", "partially_completed"].includes(status.status)) {
                         clearInterval(pollInterval)
@@ -202,7 +227,7 @@ export function WorkflowsPanel() {
                             newSet.delete(workflowId)
                             return newSet
                         })
-                        
+
                         // Fetch results when workflow completes
                         try {
                             const results = await workflowsAPI.getResults(workflowId)
@@ -225,9 +250,9 @@ export function WorkflowsPanel() {
                     })
                 }
             }, 3000) // Poll every 3 seconds (reduced frequency to reduce flicker)
-            
+
             pollingIntervals.current[workflowId] = pollInterval
-            
+
             // Stop polling after 5 minutes max
             setTimeout(() => {
                 if (pollingIntervals.current[workflowId]) {
@@ -240,7 +265,7 @@ export function WorkflowsPanel() {
                     return newSet
                 })
             }, 300000)
-            
+
         } catch (error: any) {
             console.error("❌ Error executing workflow:", error)
             console.error("Error details:", error instanceof Error ? error.message : String(error))
@@ -256,7 +281,7 @@ export function WorkflowsPanel() {
                 clearInterval(pollingIntervals.current[workflowId])
                 delete pollingIntervals.current[workflowId]
             }
-            
+
             // Better error message
             let errorMessage = "Failed to execute workflow"
             if (error?.response?.status === 404) {
@@ -266,19 +291,19 @@ export function WorkflowsPanel() {
             } else if (error?.message) {
                 errorMessage = `Failed to execute workflow: ${error.message}`
             }
-            
+
             // Show error to user
             alert(errorMessage)
         }
     }
-    
+
     // Cleanup polling intervals on unmount
     useEffect(() => {
         return () => {
             Object.values(pollingIntervals.current).forEach(interval => clearInterval(interval))
         }
     }, [])
-    
+
     const toggleResults = (workflowId: string) => {
         setExpandedResults(prev => {
             const newSet = new Set(prev)
@@ -296,7 +321,7 @@ export function WorkflowsPanel() {
             case "completed":
                 return "bg-green-500/10 text-green-500"
             case "running":
-                return "bg-blue-500/10 text-blue-500"
+                return "bg-teal-500/10 text-teal-500"
             case "failed":
                 return "bg-red-500/10 text-red-500"
             case "partially_completed":
@@ -310,37 +335,9 @@ export function WorkflowsPanel() {
         <div className="h-full flex flex-col bg-background">
             {/* Header */}
             <div className="border-b border-border p-6 flex items-center justify-between">
-                <div>
-                    <h2 className="text-2xl font-semibold">Workflows</h2>
-                    <p className="text-sm text-muted-foreground mt-1">
-                        Create and manage automated analysis workflows
-                    </p>
-                </div>
-                <div className="flex gap-2">
-                    <Button
-                        variant="outline"
-                        onClick={handleSeedExamples}
-                        disabled={isSeeding}
-                    >
-                        {isSeeding ? (
-                            <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Seeding...
-                            </>
-                        ) : (
-                            <>
-                                <RefreshCw className="h-4 w-4 mr-2" />
-                                Load Examples
-                            </>
-                        )}
-                    </Button>
-                    <Button onClick={() => loadWorkflows(false)} variant="outline" size="sm">
-                        <RefreshCw className="h-4 w-4" />
-                    </Button>
-                    <Button>
-                        <Plus className="h-4 w-4 mr-2" />
-                        New Workflow
-                    </Button>
+                <div className="flex items-center gap-2">
+                    <WorkflowIcon className="h-5 w-5" />
+                    <h2 className="text-lg font-semibold">Workflows</h2>
                 </div>
             </div>
 
@@ -376,7 +373,7 @@ export function WorkflowsPanel() {
                         workflows.map((workflow) => {
                             const isExecuting = executingWorkflows.has(workflow.id)
                             const isRunning = workflow.status === "running" || isExecuting
-                            
+
                             return (
                                 <Card key={workflow.id} className="hover:shadow-lg transition-shadow">
                                     <CardHeader>
@@ -434,12 +431,11 @@ export function WorkflowsPanel() {
                                                 <div className="space-y-1">
                                                     {workflow.steps.map((step, idx) => (
                                                         <div key={idx} className="flex items-center gap-2 text-xs">
-                                                            <span className={`w-2 h-2 rounded-full ${
-                                                                step.status === "completed" ? "bg-green-500" :
-                                                                step.status === "running" ? "bg-blue-500 animate-pulse" :
-                                                                step.status === "failed" ? "bg-red-500" :
-                                                                "bg-gray-300"
-                                                            }`} />
+                                                            <span className={`w-2 h-2 rounded-full ${step.status === "completed" ? "bg-green-500" :
+                                                                step.status === "running" ? "bg-teal-500 animate-pulse" :
+                                                                    step.status === "failed" ? "bg-red-500" :
+                                                                        "bg-gray-300"
+                                                                }`} />
                                                             <span className="text-muted-foreground">
                                                                 {step.step_id}: {step.action}
                                                             </span>
@@ -453,7 +449,7 @@ export function WorkflowsPanel() {
                                                 </div>
                                             </div>
                                         )}
-                                        
+
                                         {/* Results Section */}
                                         {workflowResults[workflow.id] && (
                                             <div className="mt-4 pt-4 border-t border-border">
@@ -476,7 +472,7 @@ export function WorkflowsPanel() {
                                                         <ChevronDown className="h-4 w-4" />
                                                     )}
                                                 </button>
-                                                
+
                                                 {expandedResults.has(workflow.id) && (
                                                     <div className="mt-3 space-y-3">
                                                         {/* Summary */}
@@ -485,14 +481,14 @@ export function WorkflowsPanel() {
                                                                 {workflowResults[workflow.id].summary}
                                                             </p>
                                                         </div>
-                                                        
+
                                                         {/* Step Results */}
                                                         <div className="space-y-2">
                                                             {workflowResults[workflow.id].steps.map((step, idx) => {
                                                                 const result = step.result || {}
                                                                 const data = result.data || {}
                                                                 const isMock = data.is_mock || result.is_mock || false
-                                                                
+
                                                                 return (
                                                                     <details key={idx} className="border rounded-md p-2">
                                                                         <summary className="cursor-pointer text-sm font-medium flex items-center justify-between">
@@ -506,11 +502,10 @@ export function WorkflowsPanel() {
                                                                                     </span>
                                                                                 )}
                                                                             </div>
-                                                                            <span className={`text-xs px-2 py-0.5 rounded ${
-                                                                                step.status === "completed" ? "bg-green-500/10 text-green-500" :
+                                                                            <span className={`text-xs px-2 py-0.5 rounded ${step.status === "completed" ? "bg-green-500/10 text-green-500" :
                                                                                 step.status === "failed" ? "bg-red-500/10 text-red-500" :
-                                                                                "bg-gray-500/10 text-gray-500"
-                                                                            }`}>
+                                                                                    "bg-gray-500/10 text-gray-500"
+                                                                                }`}>
                                                                                 {step.status}
                                                                             </span>
                                                                         </summary>
@@ -523,9 +518,9 @@ export function WorkflowsPanel() {
                                                                                             return (
                                                                                                 <div key={vizIdx} className="border rounded-lg p-3 bg-background">
                                                                                                     <h5 className="text-sm font-semibold mb-2">{viz.plot_image.title || viz.title || "Visualization"}</h5>
-                                                                                                    <img 
-                                                                                                        src={viz.plot_image.data} 
-                                                                                                        alt={viz.plot_image.title || "Plot"} 
+                                                                                                    <img
+                                                                                                        src={viz.plot_image.data}
+                                                                                                        alt={viz.plot_image.title || "Plot"}
                                                                                                         className="w-full rounded border"
                                                                                                     />
                                                                                                 </div>
@@ -535,7 +530,7 @@ export function WorkflowsPanel() {
                                                                                     })}
                                                                                 </div>
                                                                             )}
-                                                                            
+
                                                                             {/* Format results based on agent type */}
                                                                             {step.agent_type === "statistical_analysis" && data.results && (
                                                                                 <div className="p-3 bg-muted rounded text-sm">
@@ -574,7 +569,7 @@ export function WorkflowsPanel() {
                                                                                     </div>
                                                                                 </div>
                                                                             )}
-                                                                            
+
                                                                             {step.agent_type === "data_curation" && data.datasets && (
                                                                                 <div className="p-3 bg-muted rounded text-sm">
                                                                                     <h6 className="font-semibold mb-2">Datasets Found</h6>
@@ -591,7 +586,7 @@ export function WorkflowsPanel() {
                                                                                     )}
                                                                                 </div>
                                                                             )}
-                                                                            
+
                                                                             {step.agent_type === "literature_mining" && data.papers && (
                                                                                 <div className="p-3 bg-muted rounded text-sm">
                                                                                     <h6 className="font-semibold mb-2">Papers Found ({data.papers.length})</h6>
@@ -600,7 +595,7 @@ export function WorkflowsPanel() {
                                                                                             <div key={i} className="p-2 bg-background rounded text-xs">
                                                                                                 <p className="font-medium">{paper.title}</p>
                                                                                                 {paper.link && (
-                                                                                                    <a href={paper.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                                                                                                    <a href={paper.link} target="_blank" rel="noopener noreferrer" className="text-teal-500 hover:underline">
                                                                                                         View Paper →
                                                                                                     </a>
                                                                                                 )}
@@ -609,7 +604,7 @@ export function WorkflowsPanel() {
                                                                                     </div>
                                                                                 </div>
                                                                             )}
-                                                                            
+
                                                                             {/* Fallback to JSON for unknown formats */}
                                                                             {!data.visualizations && !data.results && !data.datasets && !data.papers && (
                                                                                 <div className="p-2 bg-muted rounded text-xs">
@@ -694,11 +689,11 @@ export function WorkflowsPanel() {
                                             console.error("❌ No workflow ID in dialog state")
                                             return
                                         }
-                                        
+
                                         const params: Record<string, any> = {}
                                         const geneName = (workflowParams.gene_name || workflowParams.target_gene || "").trim()
                                         const cancerType = (workflowParams.cancer_type || "").trim()
-                                        
+
                                         if (geneName) {
                                             params.gene_name = geneName
                                             params.target_gene = geneName
@@ -706,11 +701,11 @@ export function WorkflowsPanel() {
                                         if (cancerType) {
                                             params.cancer_type = cancerType
                                         }
-                                        
+
                                         // Log what parameters are being sent
                                         console.log("🔘 Button clicked - Executing workflow with parameters:", params)
                                         console.log("🔘 Workflow ID:", showParamDialog)
-                                        
+
                                         await handleExecute(showParamDialog, params)
                                     }}
                                 >

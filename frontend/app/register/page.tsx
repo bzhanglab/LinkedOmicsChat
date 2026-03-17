@@ -1,12 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import Image from "next/image"
 import { useAuth } from "@/components/AuthContext"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 
 export default function RegisterPage() {
     const [username, setUsername] = useState("")
@@ -15,20 +12,19 @@ export default function RegisterPage() {
     const [confirmPassword, setConfirmPassword] = useState("")
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
-    const { register, isAuthenticated } = useAuth()
+    const { register, user, loading: authLoading } = useAuth()
     const router = useRouter()
 
-    // Redirect if already authenticated
-    if (isAuthenticated) {
-        router.push("/")
-        return null
-    }
+    useEffect(() => {
+        if (!authLoading && user) {
+            router.push("/")
+        }
+    }, [authLoading, user, router])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setError("")
 
-        // Validation
         if (password.length < 8) {
             setError("Password must be at least 8 characters long")
             return
@@ -52,34 +48,34 @@ export default function RegisterPage() {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-background px-4">
-            <div className="w-full max-w-md space-y-8">
-                <div className="text-center">
-                    <div className="flex justify-center mb-4">
-                        <Image
-                            src="/cpgagent.png"
-                            alt="cpgAgent Logo"
-                            width={200}
-                            height={200}
-                            className="h-auto w-auto max-w-[200px] max-h-[200px] object-contain"
-                        />
-                    </div>
-                    <p className="mt-2 text-muted-foreground">Create a new account</p>
+        <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden bg-slate-50">
+
+            <div className="relative z-10 w-full max-w-md px-4 py-12 flex flex-col gap-8">
+
+                {/* Brand */}
+                <div className="text-center space-y-1">
+                    <Link href="/welcome" className="inline-flex flex-col items-center gap-2 hover:opacity-80 transition-opacity">
+                        <img src="/logo.png" alt="LinkedOmicsChat" className="h-12 w-auto" />
+                        <span className="text-slate-800 text-4xl font-bold tracking-tight">LinkedOmics<span className="text-teal-600">Chat</span></span>
+                    </Link>
+                    <p className="text-slate-500 text-sm">Create your account</p>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Glass card */}
+                <div className="glass-card-light rounded-3xl px-6 py-7 space-y-5">
+
                     {error && (
-                        <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">
                             {error}
                         </div>
                     )}
 
-                    <div className="space-y-4">
+                    <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
-                            <label htmlFor="username" className="block text-sm font-medium mb-2">
+                            <label htmlFor="username" className="block text-sm font-medium text-slate-700 mb-1.5">
                                 Username
                             </label>
-                            <Input
+                            <input
                                 id="username"
                                 type="text"
                                 value={username}
@@ -89,14 +85,15 @@ export default function RegisterPage() {
                                 maxLength={50}
                                 placeholder="Choose a username (3-50 characters)"
                                 autoComplete="username"
+                                className="glass-input-light w-full px-3.5 py-2.5 rounded-xl text-sm transition-all"
                             />
                         </div>
 
                         <div>
-                            <label htmlFor="email" className="block text-sm font-medium mb-2">
+                            <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
                                 Email
                             </label>
-                            <Input
+                            <input
                                 id="email"
                                 type="email"
                                 value={email}
@@ -104,14 +101,15 @@ export default function RegisterPage() {
                                 required
                                 placeholder="Enter your email"
                                 autoComplete="email"
+                                className="glass-input-light w-full px-3.5 py-2.5 rounded-xl text-sm transition-all"
                             />
                         </div>
 
                         <div>
-                            <label htmlFor="password" className="block text-sm font-medium mb-2">
+                            <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1.5">
                                 Password
                             </label>
-                            <Input
+                            <input
                                 id="password"
                                 type="password"
                                 value={password}
@@ -120,14 +118,15 @@ export default function RegisterPage() {
                                 minLength={8}
                                 placeholder="Enter password (min 8 characters)"
                                 autoComplete="new-password"
+                                className="glass-input-light w-full px-3.5 py-2.5 rounded-xl text-sm transition-all"
                             />
                         </div>
 
                         <div>
-                            <label htmlFor="confirmPassword" className="block text-sm font-medium mb-2">
+                            <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 mb-1.5">
                                 Confirm Password
                             </label>
-                            <Input
+                            <input
                                 id="confirmPassword"
                                 type="password"
                                 value={confirmPassword}
@@ -135,25 +134,30 @@ export default function RegisterPage() {
                                 required
                                 placeholder="Confirm your password"
                                 autoComplete="new-password"
+                                className="glass-input-light w-full px-3.5 py-2.5 rounded-xl text-sm transition-all"
                             />
                         </div>
-                    </div>
 
-                    <Button
-                        type="submit"
-                        className="w-full"
-                        disabled={loading}
-                    >
-                        {loading ? "Creating account..." : "Sign up"}
-                    </Button>
-                </form>
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-sm shadow-teal-200"
+                        >
+                            {loading ? "Creating account..." : "Sign up"}
+                        </button>
+                    </form>
 
-                <div className="text-center text-sm">
-                    <span className="text-muted-foreground">Already have an account? </span>
-                    <Link href="/login" className="text-primary hover:underline">
-                        Sign in
-                    </Link>
+                    <p className="text-center text-sm text-slate-500">
+                        Already have an account?{" "}
+                        <Link href="/login" className="text-teal-600 hover:text-teal-700 hover:underline font-medium">
+                            Sign in
+                        </Link>
+                    </p>
                 </div>
+
+                <p className="text-center text-xs text-slate-400">
+                    &copy; 2026 Zhang Lab · CPTAC · LinkedOmics · NCBI PubMed
+                </p>
             </div>
         </div>
     )
