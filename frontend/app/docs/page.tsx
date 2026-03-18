@@ -198,7 +198,7 @@ export default function DocsPage() {
                         href="/register"
                         className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
                     >
-                        Get started free
+                        Get started
                     </Link>
                 </div>
             </nav>

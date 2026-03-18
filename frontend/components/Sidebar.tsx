@@ -164,7 +164,7 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                     <div className="p-4 text-xs text-muted-foreground space-y-2">
                         <p>Chat history is not saved in guest mode.</p>
                         <a href="/register" className="text-primary hover:underline block">
-                            Sign up free →
+                            Sign up →
                         </a>
                     </div>
                 )}

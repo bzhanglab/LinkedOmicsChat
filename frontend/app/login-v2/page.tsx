@@ -149,7 +149,7 @@ export default function LoginPageV2() {
                     <p className="text-center text-sm text-gray-500 dark:text-gray-400">
                         No account?{" "}
                         <Link href="/register" className="text-teal-600 dark:text-teal-400 hover:underline font-medium">
-                            Sign up free
+                            Sign up
                         </Link>
                     </p>
 
