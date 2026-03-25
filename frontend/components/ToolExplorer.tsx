@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useContext, createContext } from "react"
 import { toolsAPI } from "@/lib/api"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -19,14 +19,22 @@ import {
     BookOpen,
     Zap,
     Package,
-    FileText
+    FileText,
+    Dna,
+    BarChart2,
+    HeartPulse,
+    Pill,
+    Network,
+    FlaskConical,
+    Library,
 } from "lucide-react"
 
 interface ToolParameter {
-    type: string
+    type?: string
     description?: string
     default?: any
     enum?: any[]
+    anyOf?: Array<{ type?: string; enum?: any[] }>
 }
 
 interface ToolSchema {
@@ -79,12 +87,12 @@ interface ParsedDoc {
     args: { name: string; type: string; desc: string }[]
     returns: { name: string; type: string; desc: string }[]
     returnsIntro: string
-    extra: string[]
+    notes: string[]
 }
 
 function parseDocstring(raw: string): ParsedDoc {
     const lines = raw.split('\n')
-    const result: ParsedDoc = { summary: '', whenToUse: [], useCases: [], args: [], returns: [], returnsIntro: '', extra: [] }
+    const result: ParsedDoc = { summary: '', whenToUse: [], useCases: [], args: [], returns: [], returnsIntro: '', notes: [] }
 
     let section = 'summary'
     const summaryLines: string[] = []
@@ -96,13 +104,12 @@ function parseDocstring(raw: string): ParsedDoc {
 
         // Detect section headers
         if (/^use this tool when/i.test(trimmed) || /^use when/i.test(trimmed)) { section = 'when'; continue }
-        if (/^use cases?:/i.test(trimmed)) { section = 'cases'; continue }
-        if (/^args?:/i.test(trimmed)) { section = 'args'; continue }
+        if (/^use cases?:/i.test(trimmed) || /^triggers?:/i.test(trimmed) || /^this tool answers/i.test(trimmed)) { section = 'cases'; continue }
+        if (/^args?:/i.test(trimmed) || /^parameters?[:\s-]+$/i.test(trimmed)) { section = 'args'; continue }
         if (/^returns?:/i.test(trimmed)) { section = 'returns'; continue }
-        if (/^available (omic|cancer)/i.test(trimmed)) { section = 'extra'; }
-        if (/^interpretation tips/i.test(trimmed)) { section = 'extra'; }
-        if (/^example usage/i.test(trimmed)) { section = 'extra'; }
-        if (/^best used after/i.test(trimmed)) { section = 'extra'; }
+        if (/^notes?:/i.test(trimmed) || /^available (omic|cancer|cohort)/i.test(trimmed) || /^cancer cohorts?:/i.test(trimmed) || /^interpretation/i.test(trimmed) || /^best used/i.test(trimmed) || /^example usage/i.test(trimmed) || /^supported query modes/i.test(trimmed)) { section = 'notes'; continue }
+        // Skip NumPy-style underline separators (e.g., "----------")
+        if (/^[-=]{4,}$/.test(trimmed)) continue
 
         if (!trimmed) continue
 
@@ -112,9 +119,10 @@ function parseDocstring(raw: string): ParsedDoc {
             const bullet = trimmed.replace(/^[-*]\s*/, '')
             if (bullet) result.whenToUse.push(bullet)
         } else if (section === 'cases') {
-            const bullet = trimmed.replace(/^[-*]\s*/, '')
+            const bullet = trimmed.replace(/^[-*"']\s*/, '').replace(/["']$/, '')
             if (bullet) result.useCases.push(bullet)
         } else if (section === 'args') {
+            // Standard: `param (type): desc`  or NumPy: `param` on its own line then desc indented
             const argMatch = trimmed.match(/^(\w+)\s*\(([^)]+)\):\s*(.*)/)
             if (argMatch) {
                 if (currentArg) result.args.push(currentArg)
@@ -123,22 +131,20 @@ function parseDocstring(raw: string): ParsedDoc {
                 currentArg.desc += ' ' + trimmed
             }
         } else if (section === 'returns') {
-            // Match: `"key" (type): desc`  or  `- "key" (type): desc`  or  `key (type): desc`
             const retMatch = trimmed.match(/^[-*]?\s*["']?(\w+)["']?\s*\(([^)]+)\):\s*(.*)/)
             if (retMatch) {
                 if (currentReturn) result.returns.push(currentReturn)
                 currentReturn = { name: retMatch[1], type: retMatch[2], desc: retMatch[3] }
             } else if (currentReturn && trimmed.startsWith('-')) {
-                // nested bullet under a return field — append to desc
                 currentReturn.desc += ' ' + trimmed.replace(/^-\s*/, '')
             } else if (currentReturn && trimmed) {
                 currentReturn.desc += ' ' + trimmed
             } else if (!currentReturn && trimmed) {
-                // intro line like "dict with keys:"
                 result.returnsIntro = trimmed
             }
-        } else if (section === 'extra') {
-            result.extra.push(trimmed)
+        } else if (section === 'notes') {
+            const bullet = trimmed.replace(/^[-*]\s*/, '')
+            if (bullet) result.notes.push(bullet)
         }
     }
 
@@ -266,6 +272,26 @@ const ToolDocumentation = ({ description }: { description: string }) => {
                             ))}
                         </div>
                     ) : null}
+                </div>
+            )}
+
+            {/* Notes */}
+            {doc.notes.length > 0 && (
+                <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                        <div className="h-6 w-6 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                            <FileText className="h-3.5 w-3.5 text-gray-500 dark:text-gray-400" />
+                        </div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Notes</h4>
+                    </div>
+                    <ul className="space-y-1.5">
+                        {doc.notes.map((note, i) => (
+                            <li key={i} className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                <span className="mt-1.5 h-1 w-1 rounded-full bg-gray-400 dark:bg-gray-500 flex-shrink-0" />
+                                <InlineText text={note} />
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             )}
         </div>
@@ -413,6 +439,132 @@ export const EnrichmentRenderer = ({ data }: { data: any[] }) => {
     )
 }
 
+// ── Interactive JSON tree viewer ─────────────────────────────────────────────
+// Context carries a "generation" counter + forced expansion state so that
+// "Expand all" / "Collapse all" buttons can override every node at once.
+const JsonExpandCtx = createContext<{ gen: number; forced: boolean | null }>({ gen: 0, forced: null })
+
+const JsonNode = ({ value, depth = 0, defaultExpanded = true }: {
+    value: unknown
+    depth?: number
+    defaultExpanded?: boolean
+}) => {
+    const { gen, forced } = useContext(JsonExpandCtx)
+    const [expanded, setExpanded] = useState(defaultExpanded)
+
+    // Sync with forced expand/collapse from parent
+    useEffect(() => {
+        if (forced !== null) setExpanded(forced)
+    }, [gen]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (value === null) return <span className="text-gray-400">null</span>
+    if (typeof value === "boolean") return <span className="text-purple-500 dark:text-purple-400">{String(value)}</span>
+    if (typeof value === "number") return <span className="text-blue-600 dark:text-blue-400">{value}</span>
+    if (typeof value === "string") {
+        const MAX = 120
+        const short = value.length > MAX
+        const [showFull, setShowFull] = useState(false)
+        const display = short && !showFull ? value.slice(0, MAX) + "…" : value
+        return (
+            <span className="text-green-700 dark:text-green-400">
+                &quot;{display}&quot;
+                {short && (
+                    <button
+                        className="ml-1 text-xs text-teal-500 hover:underline"
+                        onClick={(e) => { e.stopPropagation(); setShowFull(v => !v) }}
+                    >
+                        {showFull ? "less" : "more"}
+                    </button>
+                )}
+            </span>
+        )
+    }
+
+    const isArray = Array.isArray(value)
+    const entries = isArray
+        ? (value as unknown[]).map((v, i) => [String(i), v] as [string, unknown])
+        : Object.entries(value as Record<string, unknown>)
+    const count = entries.length
+    const bracket = isArray ? ["[", "]"] : ["{", "}"]
+
+    if (count === 0) return <span className="text-gray-500">{bracket[0]}{bracket[1]}</span>
+
+    return (
+        <span>
+            <button
+                className="inline-flex items-center gap-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-0.5"
+                onClick={() => setExpanded(e => !e)}
+            >
+                {expanded
+                    ? <ChevronDown className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                    : <ChevronRight className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                }
+                <span className="text-gray-500">{bracket[0]}</span>
+                {!expanded && (
+                    <span className="text-xs text-gray-400 mx-1">
+                        {isArray ? `${count} items` : `${count} keys`}
+                    </span>
+                )}
+                {!expanded && <span className="text-gray-500">{bracket[1]}</span>}
+            </button>
+            {expanded && (
+                <span>
+                    <br />
+                    {entries.map(([k, v]) => (
+                        <span key={k} style={{ display: "block", paddingLeft: `${(depth + 1) * 14}px` }}>
+                            {!isArray && (
+                                <span className="text-teal-700 dark:text-teal-400 font-medium">&quot;{k}&quot;</span>
+                            )}
+                            {!isArray && <span className="text-gray-500">: </span>}
+                            <JsonNode value={v} depth={depth + 1} defaultExpanded={depth < 1} />
+                            <span className="text-gray-400">,</span>
+                        </span>
+                    ))}
+                    <span style={{ display: "block", paddingLeft: `${depth * 14}px` }} className="text-gray-500">
+                        {bracket[1]}
+                    </span>
+                </span>
+            )}
+        </span>
+    )
+}
+
+const JsonTreeViewer = ({ data }: { data: unknown }) => {
+    const parsed = typeof data === "string" ? (() => {
+        try { return JSON.parse(data) } catch { return data }
+    })() : data
+
+    const [expandCtx, setExpandCtx] = useState<{ gen: number; forced: boolean | null }>({ gen: 0, forced: null })
+
+    const expandAll  = () => setExpandCtx(c => ({ gen: c.gen + 1, forced: true }))
+    const collapseAll = () => setExpandCtx(c => ({ gen: c.gen + 1, forced: false }))
+
+    return (
+        <div className="bg-gray-50 dark:bg-gray-900 border border-border rounded-lg overflow-hidden text-xs font-mono">
+            <div className="flex items-center justify-end gap-1 px-3 py-1.5 border-b border-border bg-muted/40">
+                <button
+                    onClick={expandAll}
+                    className="px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >
+                    Expand all
+                </button>
+                <span className="text-border">|</span>
+                <button
+                    onClick={collapseAll}
+                    className="px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >
+                    Collapse all
+                </button>
+            </div>
+            <div className="p-4 overflow-x-auto leading-relaxed">
+                <JsonExpandCtx.Provider value={expandCtx}>
+                    <JsonNode value={parsed} depth={0} defaultExpanded={true} />
+                </JsonExpandCtx.Provider>
+            </div>
+        </div>
+    )
+}
+
 const ResultRenderer = ({ result }: { result: any }) => {
     const [viewMode, setViewMode] = useState<'table' | 'json' | 'image' | 'enrichment'>('table')
 
@@ -450,15 +602,7 @@ const ResultRenderer = ({ result }: { result: any }) => {
 
 
     if (!hasData) {
-        // Fallback to markdown/json for non-tabular data
-        const content = typeof result === 'string' ? result :
-            "```json\n" + JSON.stringify(result, null, 2) + "\n```"
-
-        return (
-            <div className="prose dark:prose-invert max-w-none text-sm">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-            </div>
-        )
+        return <JsonTreeViewer data={result} />
     }
 
     return (
@@ -515,9 +659,7 @@ const ResultRenderer = ({ result }: { result: any }) => {
             </div>
 
             {viewMode === 'json' ? (
-                <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg overflow-x-auto text-xs font-mono">
-                    <pre>{JSON.stringify(result, null, 2)}</pre>
-                </div>
+                <JsonTreeViewer data={result} />
             ) : viewMode === 'enrichment' && isEnrichmentData ? (
                 <EnrichmentRenderer data={result} />
             ) : viewMode === 'image' ? (
@@ -556,8 +698,267 @@ const ResultRenderer = ({ result }: { result: any }) => {
     )
 }
 
+const ToolCard = ({ id, toolName, schema, Icon, color, onSelect }: {
+    id: string
+    toolName: string
+    schema: ToolSchema
+    Icon: React.ElementType
+    color: string
+    onSelect: (id: string) => void
+}) => (
+    <button
+        onClick={() => onSelect(id)}
+        className="group flex flex-col items-start text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50/50 dark:hover:bg-teal-900/20 hover:shadow-md transition-all duration-200"
+    >
+        <div className="flex items-center gap-3 w-full mb-2">
+            <div className={`h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
+                <Icon className="h-4.5 w-4.5" />
+            </div>
+            <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate text-sm">
+                {toolName}
+            </h3>
+        </div>
+        <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
+            {stripMarkdown(schema.description)}
+        </p>
+    </button>
+)
+
+interface CategoryDef {
+    label: string
+    icon: React.ElementType
+    color: string        // Tailwind classes for icon bg + text
+    borderColor: string  // active pill border
+    tools: string[]      // tool name suffixes (after ::)
+    serverPrefix?: string // match all tools from a server
+}
+
+const CATEGORIES: CategoryDef[] = [
+    {
+        label: "Gene Utilities",
+        icon: Dna,
+        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
+        borderColor: "border-violet-400 dark:border-violet-500",
+        tools: ["resolve_gene_identifier"],
+    },
+    {
+        label: "Expression Analysis",
+        icon: BarChart2,
+        color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
+        borderColor: "border-teal-400 dark:border-teal-500",
+        tools: ["cancer_gene_expression", "batch_cancer_gene_expression", "get_cis_correlations", "batch_get_cis_correlations"],
+    },
+    {
+        label: "Survival Analysis",
+        icon: HeartPulse,
+        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
+        borderColor: "border-rose-400 dark:border-rose-500",
+        tools: ["overall_survival_per_cancer", "batch_overall_survival_per_cancer", "tcga_survival_analysis"],
+    },
+    {
+        label: "Drug Targets",
+        icon: Pill,
+        color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
+        borderColor: "border-amber-400 dark:border-amber-500",
+        tools: ["get_target", "batch_get_target", "clinical_trial_information", "batch_clinical_trial_information"],
+    },
+    {
+        label: "Functional Networks",
+        icon: Network,
+        color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
+        borderColor: "border-blue-400 dark:border-blue-500",
+        tools: ["funmap_neighborhood"],
+    },
+    {
+        label: "Pathway Enrichment",
+        icon: FlaskConical,
+        color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
+        borderColor: "border-emerald-400 dark:border-emerald-500",
+        tools: ["webgestalt"],
+    },
+    {
+        label: "Literature",
+        icon: Library,
+        color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
+        borderColor: "border-indigo-400 dark:border-indigo-500",
+        tools: [],
+        serverPrefix: "literature",
+    },
+]
+
+function getCategoryForTool(toolId: string): CategoryDef | null {
+    const toolName = toolId.split("::").pop() || toolId
+    const serverPrefix = toolId.split("::")[0]
+    return CATEGORIES.find(cat =>
+        (cat.serverPrefix && serverPrefix === cat.serverPrefix) ||
+        cat.tools.includes(toolName)
+    ) ?? null
+}
+
+// Full names for TCGA cohort abbreviations (display-only, value passed is the abbreviation)
+const TCGA_COHORT_NAMES: Record<string, string> = {
+    ACC: "Adrenocortical Carcinoma", BLCA: "Bladder Urothelial Carcinoma",
+    BRCA: "Breast Invasive Carcinoma", CESC: "Cervical Squamous Cell Carcinoma",
+    CHOL: "Cholangiocarcinoma", COAD: "Colon Adenocarcinoma",
+    COADREAD: "Colorectal Adenocarcinoma", DLBC: "Diffuse Large B-Cell Lymphoma",
+    ESCA: "Esophageal Carcinoma", GBM: "Glioblastoma Multiforme",
+    GBMLGG: "Glioma", HNSC: "Head and Neck Squamous Cell Carcinoma",
+    KICH: "Kidney Chromophobe", KIPAN: "Pan-Kidney",
+    KIRC: "Kidney Renal Clear Cell Carcinoma", KIRP: "Kidney Renal Papillary Cell Carcinoma",
+    LAML: "Acute Myeloid Leukemia", LGG: "Brain Lower Grade Glioma",
+    LIHC: "Liver Hepatocellular Carcinoma", LUAD: "Lung Adenocarcinoma",
+    LUSC: "Lung Squamous Cell Carcinoma", MESO: "Mesothelioma",
+    OV: "Ovarian Serous Cystadenocarcinoma", PAAD: "Pancreatic Adenocarcinoma",
+    PCPG: "Pheochromocytoma and Paraganglioma", PRAD: "Prostate Adenocarcinoma",
+    SARC: "Sarcoma", SKCM: "Skin Cutaneous Melanoma",
+    STAD: "Stomach Adenocarcinoma", STES: "Stomach and Esophageal Carcinoma",
+    TGCT: "Testicular Germ Cell Tumors", THCA: "Thyroid Carcinoma",
+    THYM: "Thymoma", UCEC: "Uterine Corpus Endometrial Carcinoma",
+    UCS: "Uterine Carcinosarcoma", UVM: "Uveal Melanoma",
+}
+
+// ── Searchable enum select ────────────────────────────────────────────────────
+function EnumSelect({ name, description, required, options, value, onChange, getLabel }: {
+    name: string
+    description?: string
+    required: boolean
+    options: string[]
+    value: string
+    onChange: (v: string) => void
+    getLabel?: (opt: string) => string | undefined
+}) {
+    const [open, setOpen] = useState(false)
+    const [query, setQuery] = useState("")
+    const [dropUp, setDropUp] = useState(false)
+    const ref = useState(() => ({ current: null as HTMLDivElement | null }))[0]
+
+    const label = (opt: string) => getLabel?.(opt) || opt
+    const displayValue = value ? `${value}${getLabel?.(value) ? ` — ${getLabel!(value)}` : ""}` : ""
+
+    const filtered = query
+        ? options.filter(o =>
+            o.toLowerCase().includes(query.toLowerCase()) ||
+            label(o).toLowerCase().includes(query.toLowerCase())
+          )
+        : options
+
+    const select = (opt: string) => {
+        onChange(opt)
+        setQuery("")
+        setOpen(false)
+    }
+
+    const clear = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        onChange("")
+        setQuery("")
+    }
+
+    // Decide open direction and close on outside click
+    useEffect(() => {
+        if (!open) return
+        // Check if there's enough space below
+        if (ref.current) {
+            const rect = ref.current.getBoundingClientRect()
+            const spaceBelow = window.innerHeight - rect.bottom
+            setDropUp(spaceBelow < 240)
+        }
+        const handler = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) {
+                setOpen(false)
+                setQuery("")
+            }
+        }
+        document.addEventListener("mousedown", handler)
+        return () => document.removeEventListener("mousedown", handler)
+    }, [open, ref])
+
+    return (
+        <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {name} {required && <span className="text-red-500">*</span>}
+                <span className="ml-1.5 text-xs font-normal text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/30 px-1.5 py-0.5 rounded">
+                    {options.length} options
+                </span>
+            </label>
+            {description && (
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">{description}</div>
+            )}
+            <div className="relative" ref={(el) => { ref.current = el }}>
+                {/* Trigger */}
+                <button
+                    type="button"
+                    onClick={() => { setOpen(o => !o); setQuery("") }}
+                    className={`w-full flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors
+                        ${value
+                            ? "border-teal-400 dark:border-teal-600 bg-teal-50/50 dark:bg-teal-900/20 text-gray-900 dark:text-gray-100"
+                            : "border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500"}
+                        hover:border-teal-400 dark:hover:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/40`}
+                >
+                    <span className="truncate">{displayValue || `Select ${name}…`}</span>
+                    <span className="flex items-center gap-1 ml-2 flex-shrink-0">
+                        {value && (
+                            <span
+                                onClick={clear}
+                                className="w-4 h-4 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer text-xs leading-none"
+                                title="Clear"
+                            >✕</span>
+                        )}
+                        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+                    </span>
+                </button>
+
+                {/* Dropdown */}
+                {open && (
+                    <div className={`absolute z-50 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg overflow-hidden ${dropUp ? "bottom-full mb-1" : "mt-1"}`}>
+                        {/* Search */}
+                        {options.length > 6 && (
+                            <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    placeholder="Search…"
+                                    value={query}
+                                    onChange={e => setQuery(e.target.value)}
+                                    className="w-full text-sm px-2 py-1 rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                                />
+                            </div>
+                        )}
+                        {/* Options */}
+                        <ul className="max-h-52 overflow-y-auto py-1">
+                            {filtered.length === 0 ? (
+                                <li className="px-3 py-2 text-xs text-gray-400">No matches</li>
+                            ) : filtered.map(opt => (
+                                <li
+                                    key={opt}
+                                    onClick={() => select(opt)}
+                                    className={`px-3 py-1.5 text-sm cursor-pointer flex items-center justify-between gap-2
+                                        ${opt === value
+                                            ? "bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 font-medium"
+                                            : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"}`}
+                                >
+                                    <span className="flex items-center gap-2 min-w-0">
+                                        <span className="font-medium flex-shrink-0">{opt}</span>
+                                        {getLabel?.(opt) && (
+                                            <span className="text-xs text-gray-400 dark:text-gray-500 truncate">{getLabel(opt)}</span>
+                                        )}
+                                    </span>
+                                    {opt === value && <span className="text-teal-500 text-xs flex-shrink-0">✓</span>}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+// Module-level cache — survives re-mounts so Tools tab is instant after first load
+let _toolsCache: Record<string, ToolSchema> | null = null
+
 export default function ToolExplorer({ className = "" }: ToolExplorerProps) {
-    const [tools, setTools] = useState<Record<string, ToolSchema> | null>(null)
+    const [tools, setTools] = useState<Record<string, ToolSchema> | null>(_toolsCache)
     const [selectedToolId, setSelectedToolId] = useState<string | null>(null)
     const [args, setArgs] = useState<Record<string, any>>({})
     const [result, setResult] = useState<any>(null)
@@ -565,15 +966,17 @@ export default function ToolExplorer({ className = "" }: ToolExplorerProps) {
     const [executing, setExecuting] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
+    const [activeCategory, setActiveCategory] = useState<string | null>(null)
 
     useEffect(() => {
-        loadTools()
+        if (!_toolsCache) loadTools()
     }, [])
 
     const loadTools = async () => {
         try {
             setLoading(true)
             const data = await toolsAPI.list()
+            _toolsCache = data.tools
             setTools(data.tools)
         } catch (err: any) {
             setError(err.message || "Failed to load tools")
@@ -664,28 +1067,24 @@ export default function ToolExplorer({ className = "" }: ToolExplorerProps) {
     }
 
     const renderFormInput = (name: string, param: ToolParameter, required: boolean) => {
-        if (param.enum) {
+        // FastMCP wraps Optional[Literal[...]] as anyOf: [{enum:[...]}, {type:"null"}]
+        // so we extract enum from either location
+        const enumValues = param.enum ?? param.anyOf?.find(s => Array.isArray(s.enum))?.enum
+        if (enumValues) {
+            // Detect if this is a TCGA cohort parameter to show full names
+            const isCohortParam = name === "cohort" ||
+                enumValues.some((v: any) => String(v) in TCGA_COHORT_NAMES)
             return (
-                <div key={name} className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        {name} {required && <span className="text-red-500">*</span>}
-                    </label>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                        {param.description}
-                    </div>
-                    <select
-                        className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                        value={args[name] || ""}
-                        onChange={(e) => setArgs({ ...args, [name]: e.target.value })}
-                    >
-                        <option value="" disabled>Select {name}...</option>
-                        {param.enum.map((opt: any) => (
-                            <option key={String(opt)} value={opt}>
-                                {String(opt)}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <EnumSelect
+                    key={name}
+                    name={name}
+                    description={param.description}
+                    required={required}
+                    options={enumValues.map(String)}
+                    value={args[name] || ""}
+                    onChange={(v) => setArgs({ ...args, [name]: v })}
+                    getLabel={isCohortParam ? (opt) => TCGA_COHORT_NAMES[opt] : undefined}
+                />
             )
         }
 
@@ -725,56 +1124,141 @@ export default function ToolExplorer({ className = "" }: ToolExplorerProps) {
                     </div>
                 )}
 
-                {/* Search Bar */}
+                {/* Search Bar + Category Pills */}
                 {!selectedToolId && (
-                    <div className="mb-6 relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <input
-                            type="text"
-                            placeholder="Search tools..."
-                            className="w-full pl-9 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
+                    <div className="mb-4 space-y-3">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <input
+                                type="text"
+                                placeholder="Search tools..."
+                                className="w-full pl-9 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
+                                value={searchQuery}
+                                onChange={(e) => { setSearchQuery(e.target.value); setActiveCategory(null) }}
+                            />
+                        </div>
+                        {!searchQuery && (
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    onClick={() => setActiveCategory(null)}
+                                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                        activeCategory === null
+                                            ? "bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-800 dark:border-gray-100"
+                                            : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                                    }`}
+                                >
+                                    All
+                                </button>
+                                {CATEGORIES.filter(cat => {
+                                    if (!tools) return false
+                                    return Object.keys(tools).some(id => getCategoryForTool(id)?.label === cat.label)
+                                }).map(cat => {
+                                    const Icon = cat.icon
+                                    const isActive = activeCategory === cat.label
+                                    return (
+                                        <button
+                                            key={cat.label}
+                                            onClick={() => setActiveCategory(isActive ? null : cat.label)}
+                                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                                isActive
+                                                    ? `${cat.color} ${cat.borderColor}`
+                                                    : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                                            }`}
+                                        >
+                                            <Icon className="h-3 w-3" />
+                                            {cat.label}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        )}
                     </div>
                 )}
 
                 {/* Tool Grid */}
-                {!selectedToolId && tools && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        {Object.entries(tools)
-                            .filter(([id, schema]) =>
-                                id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                schema.description.toLowerCase().includes(searchQuery.toLowerCase())
-                            )
-                            .map(([id, schema]) => {
-                                const toolName = id.split("::").pop() || id
-                                const iconColor = "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400"
+                {!selectedToolId && tools && (() => {
+                    const filtered = Object.entries(tools).filter(([id, schema]) => {
+                        const matchesSearch = !searchQuery ||
+                            id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            schema.description.toLowerCase().includes(searchQuery.toLowerCase())
+                        const matchesCategory = !activeCategory ||
+                            getCategoryForTool(id)?.label === activeCategory
+                        return matchesSearch && matchesCategory
+                    })
 
+                    // When searching or a category is active, show flat grid
+                    if (searchQuery || activeCategory) {
+                        return (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                {filtered.map(([id, schema]) => {
+                                    const toolName = id.split("::").pop() || id
+                                    const cat = getCategoryForTool(id)
+                                    const Icon = cat?.icon ?? Beaker
+                                    const color = cat?.color ?? "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400"
+                                    return (
+                                        <ToolCard key={id} id={id} toolName={toolName} schema={schema} Icon={Icon} color={color} onSelect={handleToolSelect} />
+                                    )
+                                })}
+                                {filtered.length === 0 && (
+                                    <p className="col-span-2 text-sm text-gray-400 text-center py-8">No tools match your search.</p>
+                                )}
+                            </div>
+                        )
+                    }
+
+                    // Default: group by category
+                    const grouped: { cat: CategoryDef; entries: [string, ToolSchema][] }[] = []
+                    const uncategorized: [string, ToolSchema][] = []
+
+                    for (const cat of CATEGORIES) {
+                        const entries = filtered.filter(([id]) => getCategoryForTool(id)?.label === cat.label)
+                        if (entries.length > 0) grouped.push({ cat, entries })
+                    }
+                    for (const entry of filtered) {
+                        if (!getCategoryForTool(entry[0])) uncategorized.push(entry)
+                    }
+
+                    return (
+                        <div className="space-y-6">
+                            {grouped.map(({ cat, entries }) => {
+                                const Icon = cat.icon
                                 return (
-                                    <button
-                                        key={id}
-                                        onClick={() => handleToolSelect(id)}
-                                        className="group flex flex-col items-start text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50/50 dark:hover:bg-teal-900/20 hover:shadow-md transition-all duration-200"
-                                    >
-                                        <div className="flex items-center gap-3 w-full mb-3">
-                                            <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${iconColor}`}>
-                                                <Beaker className="h-5 w-5" />
+                                    <div key={cat.label}>
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <div className={`h-6 w-6 rounded-md flex items-center justify-center ${cat.color}`}>
+                                                <Icon className="h-3.5 w-3.5" />
                                             </div>
-                                            <div className="flex-1 min-w-0">
-                                                <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate">
-                                                    {toolName}
-                                                </h3>
-                                            </div>
+                                            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{cat.label}</h3>
+                                            <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+                                            <span className="text-xs text-gray-400">{entries.length}</span>
                                         </div>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-                                            {stripMarkdown(schema.description)}
-                                        </p>
-                                    </button>
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                            {entries.map(([id, schema]) => {
+                                                const toolName = id.split("::").pop() || id
+                                                return (
+                                                    <ToolCard key={id} id={id} toolName={toolName} schema={schema} Icon={Icon} color={cat.color} onSelect={handleToolSelect} />
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
                                 )
                             })}
-                    </div>
-                )}
+                            {uncategorized.length > 0 && (
+                                <div>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Other</h3>
+                                        <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+                                    </div>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                        {uncategorized.map(([id, schema]) => (
+                                            <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} Icon={Beaker} color="bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400" onSelect={handleToolSelect} />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )
+                })()}
 
                 {/* Selected Tool Form */}
                 {selectedToolId && tools && tools[selectedToolId] && (

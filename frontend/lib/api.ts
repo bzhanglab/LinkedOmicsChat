@@ -193,14 +193,28 @@ export interface AnalysisResult {
     interpretation?: string
 }
 
+export interface StaticVisualization {
+    type: "static_plot"
+    id: string
+    title: string
+    png_b64?: string  // base64-encoded PNG (absent for historical messages — loaded on demand)
+    svg?: string      // raw SVG string
+    csv?: string      // CSV text for download
+}
+
+export type AnyVisualization = StaticVisualization
+
 export interface ChatMessage {
     role: "user" | "assistant" | "system"
     content: string
     summary?: string
+    turnId?: number
     sourceMessageId?: number
     hasFullContent?: boolean
     hasImages?: boolean
+    hasVisualizations?: boolean   // true when plots were stripped for history; fetch on demand
     noCollapse?: boolean  // when true, never show "Show details" button
+    wasPreview?: boolean  // when true, was fetched on demand — keep collapsible regardless of length
     isGeneralKnowledge?: boolean  // true when LLM answered from training knowledge, not LinkedOmics data
     timestamp?: Date
     papers?: Paper[]
@@ -209,6 +223,7 @@ export interface ChatMessage {
     clarificationOptions?: string[]
     toolSources?: Record<string, string>
     toolsUsed?: string[]
+    visualizations?: AnyVisualization[]
 }
 
 /** Map a tool name to its human-readable data source with a URL. */
@@ -222,6 +237,7 @@ export const TOOL_DATA_SOURCES: Record<string, DataSource> = {
     get_cis_correlations:          { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
     get_trans_correlations:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
     overall_survival_per_cancer:   { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    tcga_survival_analysis:        { label: "LinkedOmics TCGA",    url: "http://linkedomics.org/" },
     clinical_trial_information:    { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
     funmap_neighborhood:           { label: "FunMap",              url: "https://funmap.linkedomics.org" },
     get_target:                    { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
@@ -281,6 +297,7 @@ export interface ChatResponse {
     message: string
     summary?: string
     session_id: string
+    turn_id?: number
     agent_responses: Array<Record<string, unknown>>
     visualizations: Array<Record<string, unknown>>
     analyses: Array<Record<string, unknown>>  // Analysis results (correlations, etc.)
@@ -427,6 +444,33 @@ export const chatAPI = {
 
     async clearSession(sessionId: string) {
         const response = await api.delete(`/api/v1/chat/sessions/${sessionId}`)
+        return response.data
+    },
+
+    async truncateSessionFromMessage(sessionId: string, messageId: number) {
+        const response = await api.post(`/api/v1/chat/sessions/${sessionId}/truncate`, {
+            message_id: messageId,
+        })
+        return response.data as {
+            message: string
+            session_id: string
+            deleted_turns: number
+            remaining_turns: number
+        }
+    },
+
+    async shareSession(sessionId: string): Promise<{ shared_token: string }> {
+        const response = await api.post(`/api/v1/chat/sessions/${sessionId}/share`)
+        return response.data
+    },
+
+    async getSharedSession(token: string) {
+        const response = await api.get(`/api/v1/chat/shared/${token}`)
+        return response.data
+    },
+
+    async getVisualization(vizId: string): Promise<{ png_b64: string; svg: string; csv: string }> {
+        const response = await api.get(`/api/v1/chat/visualizations/${vizId}`)
         return response.data
     },
 

@@ -30,25 +30,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         return false
     })
+    const [hasStoredToken, setHasStoredToken] = useState<boolean>(() => {
+        if (typeof window !== "undefined") {
+            return getAuthToken() !== null
+        }
+        return false
+    })
     const [loading, setLoading] = useState(true)
     const router = useRouter()
 
     // Load user on mount if token exists
     useEffect(() => {
         let cancelled = false
-        // Safety: never keep the app in a loading spinner forever.
-        const safety = setTimeout(() => {
-            if (!cancelled) setLoading(false)
-        }, 3000)
 
         // Guest mode is already restored synchronously above; just stop loading.
         if (isGuest) {
-            clearTimeout(safety)
             if (!cancelled) setLoading(false)
-            return () => { cancelled = true; clearTimeout(safety) }
+            return () => { cancelled = true }
         }
 
         const token = getAuthToken()
+        setHasStoredToken(!!token)
+
+        // Do not block the whole app on auth revalidation when we already have
+        // a stored token. Let the UI become interactive immediately and validate
+        // the token in the background.
+        if (!cancelled) setLoading(false)
+
         if (token) {
             authAPI
                 .getCurrentUser()
@@ -57,32 +65,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         setUser(u)
                     }
                 })
-                .catch(() => {
-                    // Token invalid or backend unreachable, remove it so user can re-login
-                    if (getAuthToken() === token) {
+                .catch((err) => {
+                    // Only clear the token on an explicit 401 (token actually invalid/expired).
+                    // Network errors, timeouts, and server restarts should NOT log the user out.
+                    const status = err?.response?.status
+                    if (status === 401 && getAuthToken() === token) {
                         removeAuthToken()
-                        if (!cancelled) setUser(null)
+                        if (!cancelled) {
+                            setUser(null)
+                            setHasStoredToken(false)
+                        }
                     }
-                })
-                .finally(() => {
-                    clearTimeout(safety)
-                    if (!cancelled) setLoading(false)
+                    // For all other errors (network, 5xx, timeout) keep the token and stay logged in.
                 })
         } else {
-            clearTimeout(safety)
-            setLoading(false)
+            setUser(null)
         }
 
         return () => {
             cancelled = true
-            clearTimeout(safety)
         }
-    }, [])
+    }, [isGuest])
 
     const login = async (username: string, password: string) => {
         try {
             const response = await authAPI.login({ username, password })
             setAuthToken(response.access_token)
+            setHasStoredToken(true)
             const userData = await authAPI.getCurrentUser()
             if (typeof window !== "undefined") {
                 sessionStorage.removeItem(GUEST_KEY)
@@ -107,6 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const enterGuestMode = () => {
         removeAuthToken()
         setUser(null)
+        setHasStoredToken(false)
         setLoading(false)
         if (typeof window !== "undefined") {
             sessionStorage.setItem(GUEST_KEY, "true")
@@ -120,6 +130,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             removeAuthToken()
             setUser(null)
             setIsGuest(false)
+            setHasStoredToken(false)
             if (typeof window !== "undefined") {
                 sessionStorage.removeItem(GUEST_KEY)
                 localStorage.removeItem(CURRENT_SESSION_KEY)
@@ -143,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 register,
                 logout,
                 enterGuestMode,
-                isAuthenticated: user !== null || isGuest,
+                isAuthenticated: user !== null || isGuest || hasStoredToken,
             }}
         >
             {children}

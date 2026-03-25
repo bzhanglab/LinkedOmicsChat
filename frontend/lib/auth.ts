@@ -3,8 +3,19 @@
  */
 import axios from "axios"
 
-// Define API_URL locally to avoid circular dependency with api.ts
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+// Define API_URL locally to avoid circular dependency with api.ts.
+// Match api.ts behavior so auth requests work on LAN and deployed hostnames too.
+function resolveApiUrl(): string {
+    if (typeof window !== "undefined") {
+        const hostname = window.location.hostname
+        if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+            return `http://${hostname}:8000`
+        }
+    }
+    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+}
+
+const API_URL = resolveApiUrl()
 
 export interface User {
     id: string

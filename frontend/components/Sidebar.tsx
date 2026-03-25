@@ -4,8 +4,6 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 import {
     MessageSquare,
-    Database,
-    BarChart3,
     ChevronLeft,
     ChevronRight,
     LogOut,
@@ -19,13 +17,14 @@ import { ChatHistory } from "@/components/ChatHistory"
 import { useAuth } from "@/components/AuthContext"
 import { useTheme } from "@/components/ThemeProvider"
 
-type View = "chat" | "datasets" | "visualizations" | "tools" | "usecases"
+type View = "chat" | "tools" | "usecases"
 
 interface SidebarProps {
     currentView: View
     onViewChange: (view: View) => void
     currentSessionId: string | null
     onSessionChange: (sessionId: string | null) => void
+    onSearchResultSelect?: (target: { sessionId: string; messageId: number }) => void
     mobileOpen?: boolean
     onMobileClose?: () => void
 }
@@ -34,11 +33,9 @@ const navItems: Array<{ id: View; label: string; icon: any; separator?: boolean;
     { id: "chat", label: "Chat", icon: MessageSquare },
     { id: "tools", label: "Tools", icon: Wrench },
     { id: "usecases", label: "Use Cases", icon: Lightbulb },
-    { id: "datasets", label: "Datasets", icon: Database, separator: true, placeholder: true, hidden: true },
-    { id: "visualizations", label: "Visualizations", icon: BarChart3, placeholder: true, hidden: true },
 ]
 
-export function Sidebar({ currentView, onViewChange, currentSessionId, onSessionChange, mobileOpen = false, onMobileClose }: SidebarProps) {
+export function Sidebar({ currentView, onViewChange, currentSessionId, onSessionChange, onSearchResultSelect, mobileOpen = false, onMobileClose }: SidebarProps) {
     const [isCollapsed, setIsCollapsed] = useState(false)
     const { user, logout, isGuest } = useAuth()
     const { theme, setTheme } = useTheme()
@@ -149,18 +146,22 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
 
             {/* Content area - always takes remaining space */}
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                {/* Chat History (only for authenticated users) */}
-                {currentView === "chat" && !isCollapsed && !isGuest && (
+                {/* Chat History — always visible when sidebar is expanded */}
+                {!isCollapsed && !isGuest && (
                     <ChatHistory
                         currentSessionId={currentSessionId}
                         onSessionSelect={(sessionId) => {
                             onSessionChange(sessionId)
                             onViewChange("chat")
                         }}
+                        onSearchResultSelect={onSearchResultSelect ? (target) => {
+                            onSearchResultSelect(target)
+                            onMobileClose?.()
+                        } : undefined}
                     />
                 )}
-                {/* Guest: prompt to sign up instead of showing history */}
-                {currentView === "chat" && !isCollapsed && isGuest && (
+                {/* Guest: prompt to sign up */}
+                {!isCollapsed && isGuest && (
                     <div className="p-4 text-xs text-muted-foreground space-y-2">
                         <p>Chat history is not saved in guest mode.</p>
                         <a href="/register" className="text-primary hover:underline block">

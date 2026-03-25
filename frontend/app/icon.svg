@@ -1,10 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg"
-     viewBox="0 0 18 32"
-     aria-label="cpgagent favicon">
-  <path d="M0 0 L18 16 L0 32"
-        fill="none"
-        stroke="#9DB2FF"
-        stroke-width="6"
-        stroke-linecap="butt"
-        stroke-linejoin="bevel"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 18 32">
+  <!-- Generator: Adobe Illustrator 30.2.1, SVG Export Plug-In . SVG Version: 2.1.1 Build 1)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: none;
+        stroke: #5f958b;
+        stroke-linejoin: bevel;
+        stroke-width: 6px;
+      }
+    </style>
+  </defs>
+  <path class="st0" d="M0,0l18,16L0,32"/>
 </svg>

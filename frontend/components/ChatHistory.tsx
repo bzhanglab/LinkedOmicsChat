@@ -28,6 +28,7 @@ interface ChatSession {
 interface ChatHistoryProps {
     currentSessionId: string | null
     onSessionSelect: (sessionId: string | null) => void
+    onSearchResultSelect?: (target: { sessionId: string; messageId: number }) => void
 }
 
 // Export loadSessions function so it can be called from parent
@@ -44,7 +45,7 @@ interface SearchResult {
     timestamp: number
 }
 
-export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryProps) {
+export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultSelect }: ChatHistoryProps) {
     const [sessions, setSessions] = useState<ChatSession[]>([])
     const [isLoading, setIsLoading] = useState(true) // Initial load only
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -57,18 +58,23 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
     useEffect(() => {
         loadSessions(true) // Initial load with loading state
 
-        // Refresh sessions more frequently to catch title updates (every 5 seconds)
-        const interval = setInterval(() => loadSessions(false), 5000)
+        // Keep sidebar data fresh without constantly competing with chat/history requests.
+        const interval = setInterval(() => loadSessions(false), 30000)
         return () => clearInterval(interval)
     }, [])
 
-    // Reload sessions when current session changes
+    // Refresh only when the selected session is new or still using the placeholder title.
+    // Switching between existing named chats should not reload the whole session list.
     useEffect(() => {
         if (currentSessionId) {
-            loadSessions(false) // Background refresh, no loading state
-            // Also refresh after a short delay to catch title updates
-            const timeout = setTimeout(() => loadSessions(false), 2000)
-            return () => clearTimeout(timeout)
+            const selected = sessions.find((session) => session.session_id === currentSessionId)
+            const needsRefresh = !selected || !selected.title || selected.title === "New Chat"
+            if (!needsRefresh) {
+                return
+            }
+            loadSessions(false)
+            const t1 = setTimeout(() => loadSessions(false), 3000)
+            return () => { clearTimeout(t1) }
         }
     }, [currentSessionId])
 
@@ -233,7 +239,16 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
                             {searchResults.map(result => (
                                 <div
                                     key={result.message_id}
-                                    onClick={() => { onSessionSelect(result.session_id); setSearchQuery("") }}
+                                    onClick={() => {
+                                        if (onSearchResultSelect) {
+                                            onSearchResultSelect({
+                                                sessionId: result.session_id,
+                                                messageId: result.message_id,
+                                            })
+                                        } else {
+                                            onSessionSelect(result.session_id)
+                                        }
+                                    }}
                                     className="cursor-pointer p-3 rounded-lg hover:bg-accent transition-all border border-transparent hover:border-border"
                                 >
                                     <p className="text-xs font-semibold text-primary truncate mb-1">{result.session_title}</p>
@@ -360,4 +375,3 @@ export function ChatHistory({ currentSessionId, onSessionSelect }: ChatHistoryPr
         </div>
     )
 }
-
