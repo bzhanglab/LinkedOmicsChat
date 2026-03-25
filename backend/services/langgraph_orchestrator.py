@@ -265,10 +265,14 @@ def _make_tool_node(tools: List[BaseTool]):
             except Exception:
                 result_dict = {"raw": content}
 
-            # Extract gene from args (protein or gene_symbol)
-            gene_arg = args.get("protein") or args.get("gene_symbol")
+            # Extract gene from args (protein, gene_symbol, gene, or proteins list for batch tools)
+            gene_arg = args.get("protein") or args.get("gene_symbol") or args.get("gene")
+            proteins_arg = args.get("proteins")  # batch tools use a list
             if gene_arg and isinstance(gene_arg, str) and gene_arg.lower() not in {"it", "its", "it's"}:
                 active_gene = gene_arg.upper()
+            elif proteins_arg and isinstance(proteins_arg, list) and proteins_arg:
+                active_gene = proteins_arg[0].upper()
+                gene_arg = None  # keep gene_arg None so renderers detect batch via data structure
 
             new_results[unique_key] = {
                 "_gene": gene_arg,
@@ -300,6 +304,7 @@ _TOOL_SOURCE_KEY: dict = {
     "get_cis_correlations":        "linkedomics",
     "get_trans_correlations":      "linkedomics",
     "overall_survival_per_cancer": "linkedomics",
+    "tcga_survival_analysis":      "linkedomics",
     "clinical_trial_information":  "trials",
     "funmap_neighborhood":         "funmap",
     "get_target":                  "targets",
@@ -324,6 +329,7 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
         "get_cis_correlations":        lambda g: f"https://kb.linkedomics.org/gene/{g}",
         "get_trans_correlations":      lambda g: f"https://kb.linkedomics.org/gene/{g}",
         "overall_survival_per_cancer": lambda g: f"https://kb.linkedomics.org/data/associations/phenotype/gene?phenotype=clinical__overall_survival&gene={g}",
+        "tcga_survival_analysis":      lambda g: f"http://aws1.zhang-lab.org:8236/api/survival?gene={g}" if g else "http://aws1.zhang-lab.org:8236/api/survival",
         "funmap_neighborhood":         lambda g: f"https://funmap.linkedomics.org/data/dag/gene/{g}.json",
         "get_target":                  lambda g: f"https://targets.linkedomics.org/{g}/",
         "clinical_trial_information":  lambda g: f"https://trials.linkedomics.org/api/table/gene/{g}",
@@ -493,59 +499,57 @@ class LangGraphOrchestrator:
 """
 
     SYSTEM_PROMPT_TEMPLATE = """\
-You are a Senior Multi-Omics Bioinformatics Analyst with access to a suite of research tools.
+You are a Senior Multi-Omics Bioinformatics Analyst for LinkedOmicsChat.
 
 {bio_guidelines}
 
 {data_access}
 
-RULES:
-- Only call tools when research data is genuinely needed. For greetings or general questions, reply directly.
-- TOOL ECONOMY: Call ONLY the tools directly needed to answer the question asked. Match the number of tool calls to the scope of the request:
-  * Single-aspect queries ("expression of TP53", "survival for BRCA1") → 1 tool.
-  * Explicit comparison queries ("compare TP53 and EGFR expression") → 1 tool per gene, same analysis.
-  * Broad profile requests ("tell me everything about TP53", "full profile", "overview") → up to 4 tools covering distinct aspects.
-  * Chained follow-up ("now do pathway enrichment on those neighbors") → only when the user's phrasing explicitly requests it.
-- Do NOT proactively chain tools or add unrequested analyses. If you think a follow-up would be valuable, mention it briefly in prose ("You may also want to explore pathway enrichment on these results") but do not call the tool unless asked.
-- If the user asks about a gene using 'it', 'this', or 'the gene', resolve to the currently active gene: '{active_gene}'.
-- GENE IDENTIFIERS: Users may provide genes as HGNC symbols (TP53), Ensembl Gene IDs (ENSG00000141510), or UniProt accessions (P04637). All tools accept any of these formats and convert automatically.
-  CRITICAL: NEVER convert a gene identifier yourself using your training knowledge. When the user provides an Ensembl Gene ID (starts with ENSG) or UniProt accession, call `resolve_gene_identifier` FIRST. If it returns an "error" key, stop immediately and report the error — do not call any other tools. If it succeeds, use the returned "hgnc_symbol" for all subsequent tool calls.
-  MULTI-GENE QUERIES: When the query mentions two or more genes (e.g., "compare TP53 and FAKEGENE"), call `resolve_gene_identifier` for EACH gene before calling any analysis tool. If ANY gene fails resolution, STOP immediately and report all failures — do NOT proceed with analysis for the valid genes. Partial results for a comparison are meaningless and must not be returned.
-  BEFORE calling any gene analysis tool, verify only that the identifier looks plausible in format:
-  * HGNC symbols: letters, numbers, and hyphens only; typically 2–8 characters (e.g., TP53, BRCA1, ESR1, EGFR).
-  * Ensembl Gene IDs: "ENSG" followed by digits only (e.g., ENSG00000141510).
-  * UniProt accessions: exactly 6 alphanumeric characters matching [A-Z][0-9][A-Z][A-Z0-9]{{2}}[0-9] or [OPQ][0-9][A-Z0-9]{{3}}[0-9] (e.g., P04637, Q9Y6K9).
-  If the identifier does NOT match any of these patterns (e.g., "P04637ABCDFD", "hello123xyz"), do NOT call any tool. Ask: "I don't recognize '[identifier]' as a valid gene symbol, Ensembl ID, or UniProt accession. Could you double-check the gene name?"
-  If a tool returns an "error" key in its result, STOP immediately — do not call any more tools. Report the error to the user and ask them to provide a valid identifier.
-- CAUTION ON AMBIGUOUS GENES: Words like "impact", "set", "met", and "clock" are valid human genes, but usually used as regular English words by users.
-   * If the word is used in a conversational or analytical context (e.g., "does it have an impact on survival?"), DO NOT treat it as a gene. The gene is '{active_gene}'.
-   * If the word is explicitly capitalized by itself (e.g., "Tell me about IMPACT"), or used explicitly as a subject of omics inquiry (e.g., "What is the expression of SET?"), treat it as the literal gene symbol.
-- Structure your final answer with: **Direct Answer**, **Key Findings**, **Analytical Synthesis**.
-- DATA GROUNDING (critical): For any question requiring specific data — mutation rates, expression levels, survival associations, available cancer types/samples, drug targets, pathway enrichment — you MUST use a tool. NEVER answer such questions from your training knowledge. If no relevant tool is available, respond: "I don't currently have access to [data type] data. This requires the [tool name] capability which is not enabled."
-- It is better to say "I don't have access to that data" than to give an answer from training knowledge that may be outdated, incorrect, or untraceable.
-- OUT-OF-SCOPE DETECTION: If the user's question is about a topic that none of the available tools can address (e.g., cell type specificity, single-cell RNA-seq, protein 3D structure, variant pathogenicity, GWAS, drug mechanism of action, sequence alignment, immune infiltration, epigenetic editing), do NOT answer from training knowledge. Instead:
-  1. In 1–2 sentences, acknowledge the question and note that this data type is outside LinkedOmicsChat's current scope.
-  2. Briefly state what LinkedOmicsChat specializes in: TCGA-based cancer multi-omics — gene expression (tumor vs normal), survival associations, FunMap protein interaction networks, clinical trial/drug targets, cis-correlations, and pathway enrichment.
-  3. On a new line, offer two choices exactly as: **Options:** `Answer using general knowledge` · `Show what LinkedOmicsChat can analyze for [GENE]`
-     (Replace [GENE] with the gene from the query, or omit that option if no gene is mentioned.)
-- GENERAL KNOWLEDGE MODE: If the user's message starts with "Answer using general knowledge", answer helpfully from your training knowledge. Start your response with the single token [GENERAL_KNOWLEDGE] on its very first line (the UI uses this to show a disclaimer). After answering, do NOT add a caveat — the UI handles it.
-- REDIRECT TO TOOLS: If the user's message starts with "Show what LinkedOmicsChat can analyze for", extract the gene name and call cancer_gene_expression, overall_survival_per_cancer, and clinical_trial_information to provide a comprehensive profile of that gene in LinkedOmicsChat.
-- CLARIFICATION: If the query is genuinely ambiguous and you cannot reasonably infer the user's intent, ask ONE focused clarification question instead of calling tools. Only ask when truly necessary; proceed directly if you can make a reasonable inference.
-  * Use **Options:** `A` · `B` · `C` format ONLY when choices are finite and exhaustive — e.g., analysis type ("Survival" / "Expression" / "Mutation frequency"), or data layer ("RNA" / "Protein" / "Both"). Place options on their own line.
-  * Do NOT use **Options:** for open-ended inputs like gene names — users are not limited to any list. Just ask plainly: "Which gene would you like to explore?"
-- PLATFORM QUESTIONS: Questions like "What cancer types are available?", "What can you do?", "What data do you have access to?" are meta questions about the platform — they are NOT about the active gene '{active_gene}'. Do NOT call gene-analysis tools (e.g. cancer_gene_expression, overall_survival_per_cancer) in response to these. Answer directly from the AVAILABLE DATA section above — do not invent or add data sources not listed there.
+PLANNING RULES:
+- Use tools only when specific research data is needed. For greetings, general chat, and platform questions, reply directly.
+- Prefer the smallest tool set that fully answers the request:
+  * Single-aspect query (survival, expression, enrichment, etc.) -> 1–2 relevant tools only.
+  * Explicit comparison -> parallel calls of the same analysis across the requested genes.
+  * Broad profile / overview explicitly requested -> up to 4 distinct tools.
+- Do not proactively chain extra analyses. Do NOT mention or suggest follow-up questions in your response — these are handled separately. Only call additional tools when the user explicitly asks.
+- For survival questions: call only survival tools (`overall_survival_per_cancer`, `tcga_survival_analysis`). Do NOT call `cancer_gene_expression` or `clinical_trial_information` unless the user explicitly asks about expression levels or drugs/treatments.
+- For expression questions: call only expression tools (`cancer_gene_expression`). Do NOT call survival or clinical trial tools unless explicitly asked.
+- `clinical_trial_information` is only relevant when the user asks about drugs, treatments, or clinical trials — never call it for survival or expression queries.
+- If the user refers to "it", "this", or "the gene", resolve that to the active gene: '{active_gene}'.
+- For platform questions like "what can you analyze?", "what cancer types are available?", or "what data do you have access to?", answer from the AVAILABLE DATA section and do not treat the active gene as the target.
 
-FORMATTING RULES (strictly enforced):
-- NEVER reproduce raw tool output (dicts, JSON, Python objects) in your response. Always interpret and summarize the data.
-- Present lists of cancer types, genes, or results as a **markdown table** (| Column | Column |) or a concise bulleted list.
-- For mutation frequency data: use a table with columns | Cancer Type | Cancer Name | Mutated Cases | Total Cases | Frequency |
-- For expression data: summarize direction and significance per cancer type in prose or a table.
-- For gene lists (e.g., functional neighbors): present as a comma-separated inline list or a short bullet list, not a Python array.
-- For literature results: format each article as a numbered entry with **bold title** (linked to pubmed_url), authors, journal + year, and 1–2 sentence abstract summary. Do NOT dump the full abstract verbatim — summarize it. Example:
-  1. **[Title](https://pubmed.ncbi.nlm.nih.gov/PMID/)** — Author et al., *Journal* (Year)
-     Brief 1-sentence summary of findings. PMID: XXXXX
-- Always add brief biological interpretation after presenting numbers (e.g., "This confirms TP53 is a major tumor suppressor...").
-- INLINE CITATIONS: After each sentence or data point that came from a specific tool, add an inline source link using this exact markdown format immediately after the period: [LinkedOmics](#source:linkedomics), [FunMap](#source:funmap), [WebGestalt](#source:webgestalt), [CPTAC](#source:cptac). Use the source that matches the tool. Do not add citations after every sentence — only where data was retrieved from a tool. Do NOT add [PubMed] inline — literature results already have per-article PMID links embedded in the numbered list titles.
+DATA GROUNDING:
+- For claims about expression, survival, drug targets, pathway enrichment, literature, or available data coverage, use tools.
+- If the needed capability is unavailable, say so plainly. Do not answer that data question from training knowledge.
+- If any tool result contains an "error" key, stop and report the error instead of continuing.
+
+GENE IDENTIFIERS:
+- Accepted inputs may be HGNC symbols, Ensembl gene IDs (ENSG...), or UniProt accessions.
+- If the user provides Ensembl or UniProt identifiers, call `resolve_gene_identifier` first and use the returned `hgnc_symbol`.
+- For multi-gene comparisons, resolve every gene before running analysis. If any gene fails, stop and report all failures; do not return partial comparisons.
+- If an identifier does not plausibly match HGNC / ENSG / UniProt format, ask the user to double-check it instead of calling tools.
+- Treat ambiguous English words like impact, set, met, or clock as genes only when they are clearly used as literal gene symbols.
+
+SURVIVAL ROUTING:
+- **Prefer `tcga_survival_analysis` for all survival questions** — it returns Kaplan-Meier sample data that generates plots. Use it whenever the user asks about survival outcome for a gene in any cohort (e.g. "does high ESR1 expression predict survival in breast cancer?").
+- Use `overall_survival_per_cancer` ONLY when the user explicitly asks for a CPTAC-specific result, a multi-cohort CPTAC overview, or when protein-level (RPPA) survival from CPTAC is specifically requested. Its available cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC.
+- Never call `overall_survival_per_cancer` for unsupported cohorts, pan-cancer queries, or omics types (methylation, miRNA, SCNA).
+
+SPECIAL MODES:
+- If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.
+- If the user's message starts with "Show what LinkedOmicsChat can analyze for", call `cancer_gene_expression`, `overall_survival_per_cancer`, `tcga_survival_analysis`, and `clinical_trial_information`.
+- If the question is outside current tool scope, explain that briefly, state the supported scope, and then offer:
+  **Options:** `Answer using general knowledge` · `Show what LinkedOmicsChat can analyze for [GENE]`
+  Omit the second option if no gene is mentioned.
+- If the request is genuinely ambiguous, ask one focused clarification question.
+  * Use **Options:** only for finite closed choices.
+  * Do not use **Options:** for open-ended inputs like gene names.
+
+RESPONSE STYLE:
+- Be concise, analytical, and easy to follow.
+- Never dump raw JSON, Python objects, or raw tool output.
+- Do NOT end your response with suggested follow-up questions or "you might also want to ask" prompts.
+- When replying directly without tools, short markdown is enough.
 """
 
     def __init__(self, parent_orchestrator=None):
@@ -588,29 +592,31 @@ FORMATTING RULES (strictly enforced):
         available = self.mcp_aggregator.list_tools()
         servers = set(info["server"] for info in available.values())
 
-        lines = ["AVAILABLE DATA (strictly what you can access via tools — nothing else):"]
+        lines = ["AVAILABLE DATA (only what the enabled tools can access):"]
         if "linkedomics" in servers:
             lines.append(
-                "- CPTAC proteogenomics (via LinkedOmics tools): Gene expression (RNA + protein levels), "
-                "survival analysis, cis-correlations, functional protein networks (FunMap), drug targets, "
-                "clinical trials. Cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC."
+                "- LinkedOmics / CPTAC: gene expression (RNA + protein), cis-correlations, FunMap networks, "
+                "drug targets, clinical trials, and CPTAC survival via `overall_survival_per_cancer` "
+                "for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
+            )
+            lines.append(
+                "- LinkedOmics / TCGA: survival associations across 35+ cohorts and multiple omics layers "
+                "via `tcga_survival_analysis`."
+            )
+        if "gene_utils" in servers:
+            lines.append(
+                "- Gene utilities: resolve HGNC / Ensembl / UniProt gene identifiers via `resolve_gene_identifier`."
             )
         if "literature" in servers:
             lines.append(
-                "- PubMed literature (via literature tools): Real-time search of peer-reviewed biomedical "
-                "publications via NCBI E-utilities. Returns titles, authors, journal, year, abstract, PMID, "
-                "and DOI. Use search_pubmed for queries; use get_pubmed_abstract when a specific PMID is given."
+                "- PubMed: live literature search via `search_pubmed` and abstract retrieval via `get_pubmed_abstract`."
             )
         if not servers:
             lines.append("- (No data tools are currently enabled.)")
         lines.append(
-            "\nNOT AVAILABLE (do not answer these from training knowledge — say you don't have access):\n"
-            "- TCGA raw genomics data (GDC): RNA-seq counts, somatic mutation frequencies, CNV, methylation from GDC portal.\n"
-            "  NOTE: CPTAC and TCGA are different datasets. CPTAC adds proteomics to some TCGA cancer types, "
-            "but raw TCGA genomic data (mutation rates, RNA-seq HTSeq counts) is NOT accessible via any tool.\n"
-            "- Any data source not explicitly listed above.\n"
-            "\nIf a user asks about TCGA specifically, say: "
-            "'I don't have access to TCGA/GDC data. I can access CPTAC proteogenomics data via LinkedOmics.'"
+            "\nOUT OF SCOPE UNLESS A TOOL EXPLICITLY SUPPORTS IT:\n"
+            "- Raw GDC mutation counts, raw TCGA genomics tables, single-cell data, protein 3D structure, "
+            "variant pathogenicity, GWAS, immune infiltration, sequence analysis, and other unlisted data sources."
         )
         return "\n".join(lines)
 
@@ -649,16 +655,17 @@ FORMATTING RULES (strictly enforced):
         self.sessions[sid] = session
         return session
 
-    async def _save_query(self, session: Dict[str, Any], query: str, response: Dict[str, Any]):
+    async def _save_query(self, session: Dict[str, Any], query: str, response: Dict[str, Any]) -> Optional[int]:
         """Persist query+response to DB (via parent) or fall back to memory."""
         if self._parent is not None:
-            await self._parent._update_session(session, query, response)
+            return await self._parent._update_session(session, query, response)
         else:
             session.setdefault("history", []).append({
                 "query": query,
                 "response": response,
                 "timestamp": time.time(),
             })
+            return None
 
     def _format_history(self, session: Dict[str, Any], limit: int = 10) -> List[BaseMessage]:
         """Convert session history into LangChain messages for graph input."""
@@ -791,12 +798,17 @@ FORMATTING RULES (strictly enforced):
                             msg_out = "\n".join(lines)
                         return msg_out, \
                                formatted.get("tools_used") or tools_used, \
-                               formatted.get("raw_results") or raw_results
+                               formatted.get("raw_results") or raw_results, \
+                               formatted.get("visualizations") or []
                     except Exception as e:
                         logger.warning(f"[LangGraph] _generate_response failed: {e}")
-                return llm_summary, tools_used, raw_results
+                return llm_summary, tools_used, raw_results, []
 
             async def _suggest():
+                # Only generate suggestions after tool-based responses — for general
+                # chat there is no research context to base meaningful follow-ups on.
+                if not raw_results:
+                    return []
                 if self._parent is not None:
                     try:
                         return await self._parent._generate_suggestions(
@@ -806,7 +818,7 @@ FORMATTING RULES (strictly enforced):
                         logger.warning(f"[LangGraph] _generate_suggestions failed: {e}")
                 return []
 
-            (rich_message, tools_used, raw_results), suggestions = await asyncio.gather(
+            (rich_message, tools_used, raw_results, visualizations), suggestions = await asyncio.gather(
                 _format(), _suggest()
             )
 
@@ -836,7 +848,7 @@ FORMATTING RULES (strictly enforced):
                 "query": query,
                 "tools_used": list(set(tools_used)),
                 "raw_results": raw_results,
-                "visualizations": [],
+                "visualizations": visualizations,
                 "analyses": [],
                 "suggestions": suggestions,
                 "datasets": [],
@@ -848,11 +860,12 @@ FORMATTING RULES (strictly enforced):
             }
 
             # Persist to DB (or memory in standalone mode)
-            await self._save_query(session, query, formatted_response)
+            turn_id = await self._save_query(session, query, formatted_response)
 
             return {
                 **formatted_response,
                 "session_id": session["id"],
+                "turn_id": turn_id,
             }
 
         except Exception as e:
@@ -981,12 +994,15 @@ FORMATTING RULES (strictly enforced):
                         _placeholder = {"", "No LinkedOmics results.", "No response generated."}
                         return _msg if _msg.strip() and _msg.strip() not in _placeholder else llm_summary, \
                                formatted.get("tools_used") or tools_used, \
-                               formatted.get("raw_results") or raw_results
+                               formatted.get("raw_results") or raw_results, \
+                               formatted.get("visualizations") or []
                     except Exception as e:
                         logger.warning(f"[LangGraph Stream] _generate_response failed: {e}")
-                return llm_summary, tools_used, raw_results
+                return llm_summary, tools_used, raw_results, []
 
             async def _suggest():
+                if not raw_results:
+                    return []
                 if self._parent is not None:
                     try:
                         return await self._parent._generate_suggestions(
@@ -996,7 +1012,7 @@ FORMATTING RULES (strictly enforced):
                         logger.warning(f"[LangGraph Stream] _generate_suggestions failed: {e}")
                 return []
 
-            (rich_message, tools_used_post, raw_results_post), suggestions = await asyncio.gather(
+            (rich_message, tools_used_post, raw_results_post, visualizations), suggestions = await asyncio.gather(
                 _format(), _suggest()
             )
 
@@ -1035,7 +1051,7 @@ FORMATTING RULES (strictly enforced):
                 "query": query,
                 "tools_used": list(set(tools_used_post)),
                 "raw_results": raw_results_post,
-                "visualizations": [],
+                "visualizations": visualizations,
                 "analyses": [],
                 "suggestions": suggestions,
                 "clarification_options": clarification_options,
@@ -1048,11 +1064,12 @@ FORMATTING RULES (strictly enforced):
                 "_output_tokens": output_tokens,
             }
 
-            await self._save_query(session, query, formatted_response)
+            turn_id = await self._save_query(session, query, formatted_response)
             
             payload = {
                 **formatted_response,
                 "session_id": session["id"],
+                "turn_id": turn_id,
             }
             
             yield f"data: {json.dumps({'type': 'final', 'content': payload})}\n\n"

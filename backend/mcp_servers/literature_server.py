@@ -117,14 +117,30 @@ def search_pubmed(
     """Search PubMed for peer-reviewed biomedical literature.
 
     Returns titles, authors, journal, year, abstract, PMID, and DOI for each article.
-    Use this tool whenever the user asks about research papers, publications,
-    clinical evidence, or literature related to genes, diseases, or treatments.
+
+    Use this tool when:
+    - The user asks about research papers, publications, or clinical evidence
+    - Queries involve genes, diseases, drugs, or treatments and their published literature
+    - The user wants citations or references to support a finding
+
+    Use cases:
+    - "Find recent papers on ESR1 and breast cancer survival"
+    - "What does the literature say about KRAS inhibitors in pancreatic cancer?"
+    - "Are there clinical studies linking TP53 expression to lung cancer prognosis?"
 
     Args:
-        query: PubMed search query. Use MeSH terms or gene names for best results.
-               Examples: "ESR1 breast cancer survival", "TP53 lung cancer prognosis",
-               "KRAS inhibitors pancreatic cancer 2022:2025[dp]"
-        max_results: Number of articles to return (default 10, max 20).
+        query (str): PubMed search query using gene names, MeSH terms, or keywords (e.g., "ESR1 breast cancer survival").
+        max_results (int): Number of articles to return (default 10, max 20).
+
+    Returns:
+        dict with keys:
+            "query" (str): The query as submitted.
+            "total_found" (int): Number of articles returned.
+            "articles" (list[dict]): Each article contains title, authors, journal, year, abstract, pmid, doi.
+
+    Notes:
+    - Use MeSH terms or gene symbols for best results. In Chat, the AI reformulates natural language queries automatically — use precise terms here.
+    - Date filtering example: append "2022:2025[dp]" to limit by publication year.
     """
     max_results = min(max(1, max_results), 20)
     try:
@@ -153,11 +169,26 @@ def search_pubmed(
 def get_pubmed_abstract(pmid: str) -> dict[str, Any]:
     """Fetch full details and abstract for a specific PubMed article by PMID.
 
-    Use this when the user provides a PMID or when you want the full abstract
-    for a specific article found via search_pubmed.
+    Use this tool when:
+    - The user provides a PMID directly
+    - You need the full abstract for an article found via search_pubmed
+
+    Use cases:
+    - "Get the abstract for PMID 25892560"
+    - "Show me the full details of this paper"
 
     Args:
-        pmid: PubMed ID, e.g. "25892560"
+        pmid (str): PubMed ID (e.g., "25892560").
+
+    Returns:
+        dict with keys:
+            "title" (str): Article title.
+            "authors" (list[str]): Author names.
+            "journal" (str): Journal name.
+            "year" (str): Publication year.
+            "abstract" (str): Full abstract text.
+            "pmid" (str): PubMed ID.
+            "doi" (str): DOI if available.
     """
     pmid = pmid.strip()
     try:

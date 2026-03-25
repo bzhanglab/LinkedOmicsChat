@@ -46,14 +46,28 @@ else:
     )
 
 
+def _run_sqlite_migrations(conn):
+    """Add any missing columns to existing SQLite tables."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(chat_sessions)")
+    existing = {row[1] for row in cursor.fetchall()}
+    if "shared_token" not in existing:
+        # SQLite doesn't allow ADD COLUMN with UNIQUE — add column then create index
+        cursor.execute("ALTER TABLE chat_sessions ADD COLUMN shared_token VARCHAR")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_chat_sessions_shared_token ON chat_sessions (shared_token)")
+        logger.info("Migration: added shared_token column to chat_sessions")
+
+
 async def init_db():
     """Initialize database tables"""
     try:
         # Import models first to register them
         import_models()
-        
+
         if settings.DATABASE_URL.startswith("sqlite"):
             Base.metadata.create_all(bind=engine)
+            with engine.connect() as conn:
+                _run_sqlite_migrations(conn.connection)
         else:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)

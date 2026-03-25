@@ -7,7 +7,7 @@ Falls back to the legacy single-shot planner when USE_LANGGRAPH=False.
 from typing import Dict, Any, Optional, List, AsyncGenerator
 import logging
 import time
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -17,6 +17,306 @@ from models.database import ChatSession, ChatMessage as DBChatMessage, TokenUsag
 from services.mcp_aggregator import MCPAggregator
 
 logger = logging.getLogger(__name__)
+
+# Full names for TCGA cohort abbreviations
+_TCGA_COHORT_NAMES: dict[str, str] = {
+    "ACC":     "Adrenocortical Carcinoma",
+    "BLCA":    "Bladder Urothelial Carcinoma",
+    "BRCA":    "Breast Invasive Carcinoma",
+    "CESC":    "Cervical Squamous Cell Carcinoma",
+    "CHOL":    "Cholangiocarcinoma",
+    "COAD":    "Colon Adenocarcinoma",
+    "COADREAD":"Colorectal Adenocarcinoma",
+    "DLBC":    "Diffuse Large B-Cell Lymphoma",
+    "ESCA":    "Esophageal Carcinoma",
+    "GBM":     "Glioblastoma Multiforme",
+    "GBMLGG":  "Glioma",
+    "HNSC":    "Head and Neck Squamous Cell Carcinoma",
+    "KICH":    "Kidney Chromophobe",
+    "KIPAN":   "Pan-Kidney",
+    "KIRC":    "Kidney Renal Clear Cell Carcinoma",
+    "KIRP":    "Kidney Renal Papillary Cell Carcinoma",
+    "LAML":    "Acute Myeloid Leukemia",
+    "LGG":     "Brain Lower Grade Glioma",
+    "LIHC":    "Liver Hepatocellular Carcinoma",
+    "LUAD":    "Lung Adenocarcinoma",
+    "LUSC":    "Lung Squamous Cell Carcinoma",
+    "MESO":    "Mesothelioma",
+    "OV":      "Ovarian Serous Cystadenocarcinoma",
+    "PAAD":    "Pancreatic Adenocarcinoma",
+    "PCPG":    "Pheochromocytoma and Paraganglioma",
+    "PRAD":    "Prostate Adenocarcinoma",
+    "SARC":    "Sarcoma",
+    "SKCM":    "Skin Cutaneous Melanoma",
+    "STAD":    "Stomach Adenocarcinoma",
+    "STES":    "Stomach and Esophageal Carcinoma",
+    "TGCT":    "Testicular Germ Cell Tumors",
+    "THCA":    "Thyroid Carcinoma",
+    "THYM":    "Thymoma",
+    "UCEC":    "Uterine Corpus Endometrial Carcinoma",
+    "UCS":     "Uterine Carcinosarcoma",
+    "UVM":     "Uveal Melanoma",
+}
+
+
+def _generate_km_static(samples: list, gene: str, cohort: str, omics: str,
+                        hr: float, pvalue: float, n: int) -> Optional[dict]:
+    """Compute Kaplan-Meier curves and return PNG (base64), SVG, and CSV data.
+
+    Args:
+        samples: list of {"group": "High"|"Low", "time": int, "status": int, "expr": float}
+        gene, cohort, omics: used for the plot title / file naming
+        hr, pvalue, n: summary statistics for annotation
+    Returns:
+        dict with keys: png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import io, base64, csv as _csv
+        import numpy as np
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as mticker
+        from lifelines import KaplanMeierFitter
+
+        high = [s for s in samples if s.get("group") == "High"]
+        low  = [s for s in samples if s.get("group") == "Low"]
+        if not high or not low:
+            return None
+
+        omics_label = {
+            "RNAseq": "RNA expression",
+            "RPPA": "protein (RPPA)",
+            "Methylation": "methylation",
+            "SCNA": "copy number",
+            "miRNASeq": "miRNA expression",
+        }.get(omics, omics or "expression")
+        title = f"{gene} {omics_label} vs. Overall Survival — TCGA {cohort}"
+
+        COLORS = {"High": "#c0392b", "Low": "#2980b9"}
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        csv_rows = []
+
+        for label, group in [("High", high), ("Low", low)]:
+            kmf = KaplanMeierFitter()
+            kmf.fit(
+                [s["time"] for s in group],
+                event_observed=[s["status"] for s in group],
+                label=f"{label} (n={len(group)})",
+            )
+            kmf.plot_survival_function(
+                ax=ax,
+                ci_show=False,
+                color=COLORS[label],
+                linewidth=2,
+            )
+            # Censoring ticks
+            censored = [s for s in group if s.get("status") == 0]
+            if censored:
+                cens_t = [s["time"] for s in censored]
+                cens_p = [float(kmf.predict(t)) for t in cens_t]
+                ax.scatter(cens_t, cens_p, marker="+", color=COLORS[label],
+                           s=60, linewidths=1.5, zorder=5)
+            # Collect CSV rows
+            sf = kmf.survival_function_
+            et = kmf.event_table
+            for t in sf.index:
+                prob = float(sf.loc[t].iloc[0])
+                at_risk = int(et.loc[t, "at_risk"]) if t in et.index else ""
+                csv_rows.append([label, t, round(prob, 6), at_risk])
+
+        # Stats annotation
+        annot_parts = []
+        if hr is not None:
+            annot_parts.append(f"HR = {hr:.4f}")
+        if pvalue is not None:
+            sig = " *" if pvalue < 0.05 else ""
+            annot_parts.append(f"p = {pvalue:.4f}{sig}")
+        if n is not None:
+            annot_parts.append(f"n = {n}")
+        if annot_parts:
+            ax.text(0.03, 0.05, "\n".join(annot_parts),
+                    transform=ax.transAxes, fontsize=9, verticalalignment="bottom",
+                    bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                              edgecolor="#cccccc", linewidth=0.8))
+
+        ax.set_title(title, fontsize=11, pad=10)
+        ax.set_xlabel("Time (days)", fontsize=10)
+        ax.set_ylabel("Survival Probability", fontsize=10)
+        ax.set_ylim(-0.05, 1.05)
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+        ax.grid(True, color="#eeeeee", linewidth=0.8)
+        ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
+        ax.spines[["top", "right"]].set_visible(False)
+
+        # Set x-axis ticks at ~8 evenly spaced points across the data range
+        all_times = [s["time"] for s in high + low]
+        t_max = max(all_times)
+        step = int(np.ceil(t_max / 8 / 100) * 100)  # round up to nearest 100
+        xticks = list(range(0, int(t_max) + step, step))
+        ax.set_xticks(xticks)
+        fig.tight_layout()
+
+        # PNG
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        # SVG
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+
+        plt.close(fig)
+
+        # CSV
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["group", "time_days", "survival_probability", "at_risk"])
+        writer.writerows(csv_rows)
+        csv_str = csv_buf.getvalue()
+
+        return {
+            "png_b64": png_b64,
+            "svg": svg_str,
+            "csv": csv_str,
+            "title": title,
+        }
+
+    except Exception as e:
+        logger.warning(f"[KM plot] Failed to generate static survival curve: {e}")
+        return None
+
+
+def _generate_volcano_static(
+    results: list,
+    cohort: str,
+    omics: str,
+    title: str,
+) -> Optional[dict]:
+    """Generate a volcano plot (log2 HR vs −log10 FDR) as PNG, SVG, and CSV.
+
+    Args:
+        results: list of {gene, hr, pvalue, fdr, n} dicts
+        cohort, omics: used for axis/title labels
+        title: plot title
+    Returns:
+        dict with png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.patheffects as pe
+        from adjustText import adjust_text  # pip install adjustText
+
+        sig_threshold = 0.05
+        sig_pts, nonsig_pts = [], []
+        csv_rows = []
+
+        for r in results:
+            hr  = r.get("hr")
+            fdr = r.get("fdr") or r.get("pvalue")
+            gene = r.get("gene", "")
+            n    = r.get("n")
+            if hr is None or fdr is None or fdr <= 0 or hr <= 0:
+                continue
+            x = math.log2(hr)
+            y = -math.log10(fdr)
+            sig = fdr < sig_threshold
+            entry = (x, y, gene, sig, hr > 1)
+            (sig_pts if sig else nonsig_pts).append(entry)
+            csv_rows.append([gene, round(hr, 6), round(fdr, 8), n, "significant" if sig else "not_significant"])
+
+        if not sig_pts and not nonsig_pts:
+            return None
+
+        fig, ax = plt.subplots(figsize=(8, 5.5))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        # Non-significant (grey, smaller, semi-transparent)
+        if nonsig_pts:
+            ax.scatter([p[0] for p in nonsig_pts], [p[1] for p in nonsig_pts],
+                       c="#cccccc", s=12, alpha=0.4, linewidths=0, rasterized=True)
+
+        # Significant harmful (red) and protective (blue)
+        harmful  = [p for p in sig_pts if p[4]]
+        protect  = [p for p in sig_pts if not p[4]]
+        if harmful:
+            ax.scatter([p[0] for p in harmful], [p[1] for p in harmful],
+                       c="#c0392b", s=20, alpha=0.85, linewidths=0, label="Harmful (sig.)")
+        if protect:
+            ax.scatter([p[0] for p in protect], [p[1] for p in protect],
+                       c="#2980b9", s=20, alpha=0.85, linewidths=0, label="Protective (sig.)")
+
+        # FDR threshold line
+        threshold_y = -math.log10(sig_threshold)
+        x_min = min(p[0] for p in sig_pts + nonsig_pts) - 0.3
+        x_max = max(p[0] for p in sig_pts + nonsig_pts) + 0.3
+        ax.axhline(threshold_y, color="#e74c3c", linestyle="--", linewidth=0.9, alpha=0.7,
+                   label=f"FDR = {sig_threshold}")
+        ax.axvline(0, color="#999999", linestyle="-", linewidth=0.7, alpha=0.5)
+
+        # Label top 15 significant genes by -log10(FDR)
+        top_genes = sorted(sig_pts, key=lambda p: -p[1])[:15]
+        texts = []
+        for p in top_genes:
+            t = ax.text(p[0], p[1], p[2], fontsize=7, ha="center", va="bottom",
+                        color="#222222",
+                        path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+            texts.append(t)
+        try:
+            adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="#999999", lw=0.5))
+        except Exception:
+            pass  # adjustText optional — fall back to un-adjusted labels
+
+        ax.set_xlabel("log₂(Hazard Ratio)\n← Protective  |  Harmful →", fontsize=10, labelpad=6)
+        ax.set_ylabel("−log₁₀(FDR)", fontsize=10)
+        ax.set_title(title, fontsize=11, pad=10)
+        ax.set_xlim(x_min, x_max)
+        ax.xaxis.label.set_color("#333333")
+        ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
+        ax.grid(True, color="#eeeeee", linewidth=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+        fig.tight_layout()
+
+        # PNG
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        # SVG
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+
+        plt.close(fig)
+
+        # CSV
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["gene", "hr", "fdr", "n", "significance"])
+        writer.writerows(csv_rows)
+
+        return {
+            "png_b64": png_b64,
+            "svg": svg_str,
+            "csv": csv_buf.getvalue(),
+            "title": title,
+        }
+
+    except Exception as e:
+        logger.warning(f"[Volcano plot] Failed to generate static plot: {e}")
+        return None
 
 
 class MCPOrchestrator:
@@ -171,10 +471,14 @@ class MCPOrchestrator:
                     unique_key = f"{tool_id}#0"
                 
                 # Update active gene tracking from tool arguments
-                # Most genomic tools use 'protein' or 'gene_symbol'
-                gene_arg = args.get("protein") or args.get("gene_symbol")
+                # Most genomic tools use 'protein' or 'gene_symbol'; batch tools use 'proteins'
+                gene_arg = args.get("protein") or args.get("gene_symbol") or args.get("gene")
+                proteins_arg = args.get("proteins")
                 if gene_arg and isinstance(gene_arg, str) and gene_arg.lower() not in ["it", "its", "it's"]:
                     active_gene = gene_arg.upper()
+                elif proteins_arg and isinstance(proteins_arg, list) and proteins_arg:
+                    active_gene = proteins_arg[0].upper()
+                    gene_arg = None  # keep None so renderers detect batch via data structure
                 
                 try:
                     result = await self.mcp_aggregator.call_tool(tool_id, args)
@@ -221,12 +525,13 @@ class MCPOrchestrator:
             }
             
             # Update session
-            await self._update_session(session, query, formatted_response)
+            turn_id = await self._update_session(session, query, formatted_response)
             
             # Return with session_id
             return {
                 **formatted_response,
-                "session_id": session["id"]
+                "session_id": session["id"],
+                "turn_id": turn_id,
             }
             
         except Exception as e:
@@ -279,7 +584,7 @@ class MCPOrchestrator:
                         ).order_by(DBChatMessage.timestamp.asc()).all()
                         
                         history = [
-                            {"query": m.query, "response": m.response, "timestamp": m.timestamp}
+                            {"id": m.id, "query": m.query, "response": m.response, "timestamp": m.timestamp}
                             for m in messages
                         ]
                         
@@ -341,7 +646,7 @@ class MCPOrchestrator:
                         messages = messages_result.scalars().all()
                         
                         history = [
-                            {"query": m.query, "response": m.response, "timestamp": m.timestamp}
+                            {"id": m.id, "query": m.query, "response": m.response, "timestamp": m.timestamp}
                             for m in messages
                         ]
                         
@@ -654,8 +959,9 @@ Structure your response as:
 (2-3 sentences connecting the datasets and explaining the biological/clinical implications)
 
 Rules:
-- Output ONLY the markdown text above.
+- Output ONLY the markdown text above — no extra sections.
 - DO NOT use JSON, code blocks (```), or any preamble/metadata.
+- DO NOT add follow-up questions, suggested next queries, or "you might also want to ask" sections.
 - Use ONLY the provided tool results.
 - Be precise with biological terminology.
 - DO NOT state your identity or use phrases like 'As a Senior Analyst'.
@@ -692,18 +998,21 @@ Rules:
         """
         if not self.llm or settings.MOCK_LLM:
             return []
+
         try:
             from langchain_core.messages import SystemMessage, HumanMessage
 
             history_str = self._format_recent_history(session) if session else ""
             history_block = f"\nRecent conversation:\n{history_str}\n" if history_str else ""
+            # Use the query itself as context when the response text is empty
+            context_text = response_text.strip() or query
 
             prompt = f"""{history_block}
 The user just asked:
 {query}
 
 The assistant responded (excerpt):
-{response_text[:800]}
+{context_text[:800]}
 
 Generate exactly {n} short, specific follow-up questions the user might naturally ask next.
 Each question should be on its own line, numbered 1. 2. 3. etc.
@@ -713,6 +1022,7 @@ IMPORTANT — LinkedOmicsChat can ONLY answer questions that use one of these ca
 - Protein/gene interaction neighborhood from FunMap (functional co-expression network)
 - Cancer gene expression levels (tumor vs normal) across TCGA cancer types
 - Overall survival associations for a gene across cancer types
+- TCGA survival analysis with specific omics layers (RNA, protein, methylation, copy number, miRNA)
 - Clinical trial information and drug targets for a gene
 - Cis-correlations (DNA methylation ↔ mRNA co-expression) for a gene in a cancer type
 - Pathway enrichment analysis (WebGestalt) on a list of genes
@@ -730,12 +1040,12 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
             )
             text = (resp or "").strip()
             # Parse numbered lines
+            import re as _re
             suggestions: List[str] = []
             for line in text.splitlines():
                 line = line.strip()
-                # Remove leading number + dot/paren
-                import re as _re
                 line = _re.sub(r"^\d+[\.\)]\s*", "", line).strip()
+                line = line.strip("`").strip()
                 if line and len(line) > 10:
                     suggestions.append(line)
             return suggestions[:n]
@@ -1089,15 +1399,24 @@ Please provide a helpful, natural, and professional response. If they are just g
         # If LinkedOmics tools were used, format them nicely as markdown
         if any(tool_id.startswith("linkedomics::") for tool_id in results.keys()):
             try:
-                message = self._format_linkedomics_results(results, query)
+                fmt = self._format_linkedomics_results(results, query, session_id=session.get("id", ""))
+                message = fmt["message"]
+                visualizations = fmt.get("visualizations", [])
+                rendered_ids = fmt.get("rendered_tool_ids", set())
+                # Only surface badges for tools that actually produced visible output
+                if rendered_ids:
+                    tools_used = [k for k in results.keys() if (k.split('#')[0] if '#' in k else k) in rendered_ids]
+                else:
+                    tools_used = list(results.keys())
                 summary = await self._llm_summarize_tool_results(query, results)
                 return {
                     "success": True,
                     "summary": summary or "",
                     "message": message,
                     "query": query,
-                    "tools_used": list(results.keys()),
+                    "tools_used": tools_used,
                     "raw_results": results,
+                    "visualizations": visualizations,
                 }
             except Exception as e:
                 logger.error(f"Error formatting LinkedOmics results: {e}", exc_info=True)
@@ -1213,8 +1532,13 @@ Please provide a clear, informative response about this gene. Include the key de
             "raw_results": results
         }
 
-    def _format_linkedomics_results(self, results: Dict[str, Any], query: str = "") -> str:
-        """Format LinkedOmics MCP tool outputs into nice markdown for chat UI."""
+    def _format_linkedomics_results(self, results: Dict[str, Any], query: str = "", session_id: str = "") -> Dict[str, Any]:
+        """Format LinkedOmics MCP tool outputs into nice markdown for chat UI.
+
+        Returns a dict with keys:
+            "message":       str  — markdown text
+            "visualizations": list — list of Plotly figure dicts
+        """
         import json
 
         def _maybe_json(v: Any) -> Any:
@@ -1234,11 +1558,37 @@ Please provide a clear, informative response about this gene. Include the key de
             return f"data:{mime};base64,{data}"
 
         sections: List[str] = []
+        _visualizations: list = []
+        _rendered_tool_ids: set = set()  # tracks tools that produced visible output
+
+        import uuid as _uuid
+
+        # Pre-collect tcga_survival_analysis results grouped by (gene, cohort).
+        # Rendered inline in the main loop to preserve section ordering.
+        _tcga_groups: Dict[tuple, List[Any]] = {}
+        _OMICS_LABEL_PRE = {
+            "RNAseq": "RNA expression", "RPPA": "protein (RPPA)",
+            "Methylation": "methylation", "SCNA": "copy number",
+            "miRNASeq": "miRNA expression",
+        }
+        for unique_key, wrapped_result in results.items():
+            tid = unique_key.split('#')[0] if '#' in unique_key else unique_key
+            if not tid.endswith("tcga_survival_analysis"):
+                continue
+            raw = wrapped_result["_result"] if isinstance(wrapped_result, dict) and "_result" in wrapped_result else wrapped_result
+            parsed = _maybe_json(raw)
+            if not isinstance(parsed, dict) or parsed.get("status") == "error" or "results" not in parsed:
+                continue
+            gene_key = wrapped_result.get("_gene", "") if isinstance(wrapped_result, dict) else ""
+            cohort_key = parsed.get("query", {}).get("cohort", "")
+            _tcga_groups.setdefault((gene_key, cohort_key), []).append(parsed)
+
+        _tcga_rendered: set = set()
 
         for unique_key, wrapped_result in results.items():
             # Strip the #N suffix to get the actual tool_id
             tool_id = unique_key.split('#')[0] if '#' in unique_key else unique_key
-            
+
             # Extract gene name and actual result from wrapper
             gene_name = ""
             if isinstance(wrapped_result, dict) and "_result" in wrapped_result:
@@ -1247,8 +1597,9 @@ Please provide a clear, informative response about this gene. Include the key de
             else:
                 # Fallback for non-wrapped results (backward compatibility)
                 raw = wrapped_result
-                
+
             parsed = _maybe_json(raw)
+            _sections_before = len(sections)  # track whether this tool produces output
 
             # Structured payload from MCPAggregator (images etc.)
             if isinstance(parsed, dict) and "mcp" in parsed and "parts" in parsed:
@@ -1277,6 +1628,8 @@ Please provide a clear, informative response about this gene. Include the key de
                     if unknowns:
                         md.append("\n\n```text\n" + "\n".join(u.get("repr","") for u in unknowns) + "\n```\n")
                     sections.append("\n\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
                 continue
 
             # Tool-specific formatting for dict outputs
@@ -1298,30 +1651,107 @@ Please provide a clear, informative response about this gene. Include the key de
                         md.append("- " + ", ".join(f"{g}" for g in chunk))
                 else:
                     md.append("\n_No neighborhood found._")
-                
+
+                md.append("\n> **Source:** [FunMap](#source:funmap)")
                 sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
                 continue
 
             if tool_id.endswith("cancer_gene_expression") or tool_id.endswith("overall_survival_per_cancer"):
                 # parsed: {"protein_level": {"status":..., "data": {...}}, "RNA_level": {...}}
+                # OR batch: {"status": "available", "data": {"GENE1": {"protein_level":..., "RNA_level":...}, ...}}
                 if not isinstance(parsed, dict):
                     sections.append(f"## {tool_id}\n\n```json\n{json.dumps(parsed, indent=2)}\n```\n")
+                    _rendered_tool_ids.add(tool_id)
                     continue
-                
-                prot = (parsed.get("protein_level") or {})
-                rna = (parsed.get("RNA_level") or {})
-                prot_data = prot.get("data") or {}
-                rna_data = rna.get("data") or {}
-                cancers = sorted(set(list(prot_data.keys()) + list(rna_data.keys())))
-                
-                base_title = "Cancer expression (Tumor vs Normal)" if tool_id.endswith("cancer_gene_expression") else "Overall survival associations"
-                # Use gene_name from metadata wrapper
-                title = f"{base_title} - {gene_name}" if gene_name else base_title
 
-                lines = [f"## {title}", "", "| Cancer | RNA | Protein |", "|---|---|---|"]
-                for c in cancers:
-                    lines.append(f"| {c} | {rna_data.get(c,'-')} | {prot_data.get(c,'-')} |")
-                sections.append("\n".join(lines) + "\n")
+                if tool_id.endswith("cancer_gene_expression"):
+                    base_title = "Cancer expression (Tumor vs Normal)"
+                    subtitle = " · CPTAC"
+                    source_desc = "CPTAC cohorts"
+                    col_rna = "RNA (Tumor vs Normal)"
+                    col_prot = "Protein (Tumor vs Normal)"
+                else:
+                    base_title = "Overall survival associations"
+                    subtitle = " · CPTAC"
+                    source_desc = "CPTAC cohorts · RNA expression and protein level vs. overall survival"
+                    col_rna = "RNA expression"
+                    col_prot = "Protein level"
+
+                # Detect batch result: {"status": ..., "data": {"GENE": {...}, ...}}
+                batch_data = parsed.get("data") if ("data" in parsed and isinstance(parsed.get("data"), dict) and not parsed.get("protein_level") and not parsed.get("RNA_level")) else None
+
+                def _render_single_gene_table(g_name, g_parsed, b_title, sub, s_desc, c_rna, c_prot):
+                    p = (g_parsed.get("protein_level") or {})
+                    r = (g_parsed.get("RNA_level") or {})
+                    pd_ = p.get("data") or {}
+                    rd_ = r.get("data") or {}
+                    cancers_ = sorted(set(list(pd_.keys()) + list(rd_.keys())))
+                    t = f"{b_title} - {g_name}{sub}" if g_name else f"{b_title}{sub}"
+                    ls = [f"## {t}", "", f"| Cancer | {c_rna} | {c_prot} |", "|---|---|---|"]
+                    for c in cancers_:
+                        ls.append(f"| {c} | {rd_.get(c,'-')} | {pd_.get(c,'-')} |")
+                    ls.append("")
+                    ls.append(f"> **Source:** [LinkedOmics](#source:linkedomics) · {s_desc}")
+                    return "\n".join(ls) + "\n"
+
+                if batch_data:
+                    for g, g_result in batch_data.items():
+                        if isinstance(g_result, dict) and ("protein_level" in g_result or "RNA_level" in g_result):
+                            sections.append(_render_single_gene_table(g, g_result, base_title, subtitle, source_desc, col_rna, col_prot))
+                else:
+                    # Use gene_name from metadata wrapper
+                    sections.append(_render_single_gene_table(gene_name, parsed, base_title, subtitle, source_desc, col_rna, col_prot))
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("get_target") or tool_id.endswith("batch_get_target"):
+                if not isinstance(parsed, dict):
+                    continue
+                # batch returns {"results": {"GENE": {"result": {...}}, ...}}
+                # single returns {"result": {...}}
+                entries: list[tuple[str, dict]] = []
+                if tool_id.endswith("batch_get_target"):
+                    for g_sym, g_data in (parsed.get("results") or {}).items():
+                        r = g_data.get("result") if isinstance(g_data, dict) else None
+                        if isinstance(r, dict):
+                            entries.append((g_sym, r))
+                else:
+                    r = parsed.get("result")
+                    if isinstance(r, dict):
+                        entries.append((gene_name or "Gene", r))
+                if not entries:
+                    continue
+                for g_sym, r in entries:
+                    title = f"Drug target profile — {g_sym}"
+                    md = [f"## {title}", ""]
+                    tier = r.get("tier", ""); family = r.get("family", "")
+                    if tier:
+                        md.append(f"**Tier:** {tier}")
+                    if family:
+                        md.append(f"**Family:** {family}")
+                    drugs_raw = r.get("drugs", "")
+                    if drugs_raw and str(drugs_raw).strip() not in ("", "nan", "None"):
+                        md.append(f"\n**Drugs:** {drugs_raw}")
+                    dep = r.get("cell_line_dependency", "")
+                    if dep:
+                        md.append(f"\n**Cell line dependency:** {dep}")
+                    overexp = r.get("tumor_overexpression", "")
+                    if overexp:
+                        md.append(f"\n**Tumor overexpression:** {overexp}")
+                    sites = r.get("hyperactivated_sites", "")
+                    if sites and sites != "No evidence of hyperactivated sites":
+                        if isinstance(sites, list):
+                            site_strs = [f"{list(s.keys())[0]}: {list(s.values())[0]}" for s in sites if isinstance(s, dict)]
+                            md.append(f"\n**Hyperactivated sites:** {'; '.join(site_strs)}")
+                        else:
+                            md.append(f"\n**Hyperactivated sites:** {sites}")
+                    md.append("\n> **Source:** [LinkedOmics Targets](#source:targets)")
+                    sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
                 continue
 
             if tool_id.endswith("clinical_trial_information"):
@@ -1341,7 +1771,10 @@ Please provide a clear, informative response about this gene. Include the key de
                                 md.append(f"- {item}")
                     else:
                         md.append("_No results._")
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
                 sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
                 continue
 
             if tool_id.endswith("get_cis_correlations"):
@@ -1374,7 +1807,10 @@ Please provide a clear, informative response about this gene. Include the key de
                          else:
                              md.append("_No records._")
 
+                md.append("\n> **Source:** [LinkedOmics](#source:linkedomics)")
                 sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
                 continue
 
             if tool_id.endswith("webgestalt"):
@@ -1406,12 +1842,126 @@ Please provide a clear, informative response about this gene. Include the key de
                     md.append(f"| {gs} | {desc} | {er} | {fdr} |")
                 if not rows:
                     md.append("| — | No enriched terms found | — | — |")
+                md.append("\n> **Source:** [WebGestalt](#source:webgestalt)")
                 sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
                 continue
+
+            if tool_id.endswith("tcga_survival_analysis"):
+                # Render the merged group section on first encounter; skip duplicates.
+                gene_name_k = wrapped_result.get("_gene", "") if isinstance(wrapped_result, dict) else ""
+                raw_k = wrapped_result["_result"] if isinstance(wrapped_result, dict) and "_result" in wrapped_result else wrapped_result
+                parsed_k = _maybe_json(raw_k)
+                cohort_key_k = (parsed_k.get("query", {}).get("cohort", "") if isinstance(parsed_k, dict) else "")
+                group_key = (gene_name_k, cohort_key_k)
+                if group_key in _tcga_rendered:
+                    continue
+                _tcga_rendered.add(group_key)
+                parsed_list = _tcga_groups.get(group_key, [])
+                if not parsed_list:
+                    continue
+                all_results = []
+                mode = 1
+                omics_query = ""
+                for p in parsed_list:
+                    mode = p.get("mode", 1)
+                    omics_query = omics_query or p.get("query", {}).get("omics", "")
+                    all_results.extend(p.get("results") or [])
+                if not all_results:
+                    continue
+                first_res = all_results[0]
+                g = first_res.get("gene") or gene_name_k or "Gene"
+                logger.info(f"[tcga_survival] grouped mode={mode} gene={g} cohort={cohort_key_k!r} n_results={len(all_results)}")
+                if mode == 4:
+                    # Genome-wide scan (cohort + omics): render volcano plot + top-gene table
+                    omics_label = _OMICS_LABEL_PRE.get(omics_query, omics_query)
+                    cohort_full = _TCGA_COHORT_NAMES.get(cohort_key_k, cohort_key_k)
+                    section_title = f"TCGA Genome-wide Survival Scan — {cohort_key_k} ({omics_label})"
+                    viz_title = f"Survival associations — {cohort_key_k} {omics_label}"
+                    viz_id = _uuid.uuid4().hex
+                    fig_dict = _generate_volcano_static(all_results, cohort_key_k, omics_query, viz_title)
+                    # Top 20 significant genes table
+                    sig_results = sorted(
+                        [r for r in all_results if (r.get("fdr") or r.get("pvalue") or 1.0) < 0.05],
+                        key=lambda r: float(r.get("fdr") or r.get("pvalue") or 1.0),
+                    )[:20]
+                    md = [f"## {section_title}", ""]
+                    if fig_dict:
+                        _visualizations.append({"type": "static_plot", "id": viz_id, "title": fig_dict["title"],
+                                                 **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")}})
+                        md.append(f"[PLOT:{viz_id}]")
+                        md.append("")
+                    n_sig = len([r for r in all_results if (r.get("fdr") or r.get("pvalue") or 1.0) < 0.05])
+                    md.append(f"**{n_sig}** significant genes (FDR < 0.05) out of **{len(all_results)}** tested in {cohort_full}.")
+                    md.append("")
+                    if sig_results:
+                        md.append("**Top prognostic genes:**")
+                        md.append("")
+                        md.append("| Gene | HR | FDR | N | Direction |")
+                        md.append("|---|---|---|---|---|")
+                        for res in sig_results:
+                            gene_r = res.get("gene", ""); hr_r = res.get("hr"); fdr_r = res.get("fdr") or res.get("pvalue"); n_r = res.get("n")
+                            direction = "↑ Harmful" if hr_r and hr_r > 1 else "↓ Protective"
+                            md.append(f"| {gene_r} | {f'{hr_r:.4f}' if hr_r is not None else '—'} | {f'{fdr_r:.2e}' if fdr_r is not None else '—'} | {n_r if n_r is not None else '—'} | {direction} |")
+                    else:
+                        md.append("_No significant associations found at FDR < 0.05._")
+                    md.append("")
+                    md.append(f"> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                elif mode == 3 and not cohort_key_k:
+                    omics_label = _OMICS_LABEL_PRE.get(omics_query, omics_query)
+                    section_title = f"TCGA Survival Analysis — {g} ({omics_label}, all cohorts)"
+                    md = [f"## {section_title}", "", "| Cohort | Cancer | HR | p-value | N | Significant |", "|---|---|---|---|---|---|"]
+                    sorted_results = sorted(all_results, key=lambda r: float(r.get("pvalue") or 1.0))
+                    for res in sorted_results:
+                        c = res.get("cohort", ""); hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
+                        c_full = _TCGA_COHORT_NAMES.get(c, c)
+                        md.append(f"| {c} | {c_full} | {f'{hr:.4f}' if hr is not None else '—'} | {f'{pval:.4e}' if pval is not None else '—'} | {n_tot if n_tot is not None else '—'} | {'✓' if pval is not None and pval < 0.05 else ''} |")
+                    md.append("\n> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                    for res in [r for r in sorted_results if (r.get("pvalue") or 1.0) < 0.05][:5]:
+                        c = res.get("cohort", "")
+                        fig_dict = _generate_km_static(res.get("samples") or [], g, c, omics_query, res.get("hr"), res.get("pvalue"), res.get("n"))
+                        if fig_dict:
+                            c_full = _TCGA_COHORT_NAMES.get(c, c)
+                            viz_id = _uuid.uuid4().hex
+                            _visualizations.append({"type": "static_plot", "id": viz_id, "title": fig_dict["title"], **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")}})
+                            md.append(f"\n[PLOT:{viz_id}]")
+                else:
+                    # Mode 1 (cohort+gene+omics) or Mode 2 (cohort+gene): KM plot per omics type
+                    cohort = first_res.get("cohort", "") or cohort_key_k
+                    cohort_full = _TCGA_COHORT_NAMES.get(cohort, cohort)
+                    cohort_display = f"{cohort} — {cohort_full}" if cohort_full and cohort_full != cohort else cohort
+                    section_title = f"TCGA Survival Analysis — {g} ({cohort_display})" if cohort_display else f"TCGA Survival Analysis — {g}"
+                    md = [f"## {section_title}"]
+                    for res in all_results:
+                        omics = res.get("omics", "") or omics_query
+                        hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
+                        omics_label = _OMICS_LABEL_PRE.get(omics, omics) or "expression"
+                        plot_title = f"{g} {omics_label} vs. Overall Survival — TCGA {cohort}".strip()
+                        fig_dict = _generate_km_static(res.get("samples") or [], g, cohort, omics, hr, pval, n_tot)
+                        if fig_dict:
+                            viz_id = _uuid.uuid4().hex
+                            _visualizations.append({"type": "static_plot", "id": viz_id, "title": fig_dict["title"], **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")}})
+                            md.append(f"\n[PLOT:{viz_id}]")
+                        else:
+                            stats = []
+                            if hr is not None: stats.append(f"HR={hr:.4f}")
+                            if pval is not None: stats.append(f"p={pval:.4f}")
+                            if n_tot is not None: stats.append(f"n={n_tot}")
+                            md.append(f"\n**{omics_label}**: " + (", ".join(stats) if stats else "no data"))
+                    md.append("\n> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
+                continue
+
 
             # Fallback: tool has no specific renderer — skip raw output.
             # The LLM's analytical summary in the 'summary' field covers this.
             logger.debug(f"[format] No specific renderer for {tool_id}, skipping raw output.")
+
+            if len(sections) > _sections_before:
+                _rendered_tool_ids.add(tool_id)
 
         # Add placeholder sections for genes that were requested but have no data.
         # Skip entirely if any tool returned an error (e.g. invalid gene resolution) —
@@ -1441,14 +1991,31 @@ Please provide a clear, informative response about this gene. Include the key de
                         sections.append(f"## Cancer expression (Tumor vs Normal) - {gene}\n\nData unavailable\n")
                     elif any("overall_survival" in t for t in tool_types):
                         sections.append(f"## Overall survival associations - {gene}\n\nData unavailable\n")
+                    elif any("tcga_survival_analysis" in t for t in tool_types):
+                        sections.append(f"## TCGA survival analysis - {gene}\n\nData unavailable\n")
                     elif any("get_survival_plot" in t for t in tool_types):
                         sections.append(f"## Survival plot - {gene}\n\nData unavailable\n")
                     else:
                         # Generic placeholder
                         sections.append(f"## Analysis - {gene}\n\nData unavailable\n")
 
-        return "\n\n".join(sections).strip() or "No LinkedOmics results."
-    
+        # Re-order sections so related analyses group together:
+        # 1. Survival (TCGA + CPTAC) 2. Expression (tumor vs normal) 3. Everything else
+        def _section_priority(s: str) -> int:
+            h = s.lstrip("#").lstrip().lower()
+            if h.startswith("tcga survival") or h.startswith("overall survival"):
+                return 0
+            if h.startswith("cancer expression"):
+                return 2
+            return 1
+        sections.sort(key=_section_priority, reverse=False)
+
+        return {
+            "message": "\n\n".join(sections).strip() or "No LinkedOmics results.",
+            "visualizations": _visualizations,
+            "rendered_tool_ids": _rendered_tool_ids,
+        }
+
     async def _generate_session_title(self, first_query: str) -> str:
         """Generate a short title for the chat session based on first query"""
         if settings.MOCK_LLM:
@@ -1474,12 +2041,70 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             logger.error(f"Error generating title: {e}")
             return first_query[:50] + ("..." if len(first_query) > 50 else "")
     
+    @staticmethod
+    def _persist_viz_to_disk(visualizations: list) -> None:
+        """Save PNG/SVG/CSV plot files to PLOT_DIR so they can be served later."""
+        import os, json as _json, base64 as _b64
+        plot_dir = settings.PLOT_DIR
+        os.makedirs(plot_dir, exist_ok=True)
+        for viz in visualizations:
+            if viz.get("type") != "static_plot":
+                continue
+            viz_id = viz.get("id")
+            if not viz_id:
+                continue
+            # Save title sidecar so the API can return it for lazy-loaded plots
+            title = viz.get("title")
+            if title:
+                try:
+                    with open(os.path.join(plot_dir, f"{viz_id}.json"), "w", encoding="utf-8") as f:
+                        _json.dump({"title": title}, f)
+                except Exception:
+                    pass
+            png = viz.get("png_b64")
+            if png:
+                try:
+                    with open(os.path.join(plot_dir, f"{viz_id}.png"), "wb") as f:
+                        f.write(_b64.b64decode(png))
+                except Exception:
+                    pass
+            svg = viz.get("svg")
+            if svg:
+                try:
+                    with open(os.path.join(plot_dir, f"{viz_id}.svg"), "w", encoding="utf-8") as f:
+                        f.write(svg)
+                except Exception:
+                    pass
+            csv = viz.get("csv")
+            if csv:
+                try:
+                    with open(os.path.join(plot_dir, f"{viz_id}.csv"), "w", encoding="utf-8") as f:
+                        f.write(csv)
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _strip_viz_binary(response: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of response with visualization binary data removed.
+        We keep viz metadata (type, id, title) so the frontend knows plots existed,
+        but strip png_b64 / svg / csv to keep the DB row small.
+        """
+        vizs = response.get("visualizations")
+        if not vizs:
+            return response
+        slim = dict(response)
+        slim["visualizations"] = [
+            {k: v for k, v in viz.items() if k not in ("png_b64", "svg", "csv")}
+            for viz in vizs
+        ]
+        return slim
+
     async def _update_session(
         self,
         session: Dict[str, Any],
         query: str,
         response: Dict[str, Any]
-    ):
+    ) -> Optional[int]:
         """Update session with query and response. Guest sessions skip DB persistence."""
         import asyncio
 
@@ -1507,7 +2132,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     db.commit()
                 finally:
                     db.close()
-            return
+            return None
 
         if settings.DATABASE_URL.startswith("sqlite"):
             db = SessionLocal()
@@ -1524,14 +2149,17 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     ).count()
                     is_first_message = message_count == 0
                     
-                    # Add message (ChatMessage uses query/response format)
+                    # Persist plot files to disk, then strip binary from DB row
+                    self._persist_viz_to_disk(response.get("visualizations") or [])
                     message = DBChatMessage(
                         session_id=session_id,
                         query=query,
-                        response=response,
+                        response=self._strip_viz_binary(response),
                         timestamp=time.time()
                     )
                     db.add(message)
+                    db.flush()
+                    turn_id = message.id
 
                     # Record token usage if present (set by LangGraphOrchestrator)
                     in_tok = response.get("_input_tokens", 0) or 0
@@ -1563,6 +2191,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                         if "history" not in self.sessions[session_id]:
                             self.sessions[session_id]["history"] = []
                         self.sessions[session_id]["history"].append({
+                            "id": turn_id,
                             "query": query,
                             "response": response,
                             "timestamp": message.timestamp
@@ -1570,7 +2199,17 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                         
                     # Generate title after first message
                     if is_first_message and db_session.title == "New Chat":
-                        asyncio.create_task(self._update_session_title(session_id, query))
+                        # Set a quick title immediately (truncated query) so the UI
+                        # always shows something meaningful even if LLM refining fails.
+                        quick_title = query[:50] + ("..." if len(query) > 50 else "")
+                        db_session.title = quick_title
+                        if session_id in self.sessions:
+                            self.sessions[session_id]["title"] = quick_title
+                        db.commit()
+                        # Refine with LLM in background (skip when MOCK_LLM — would produce identical result)
+                        if not settings.MOCK_LLM:
+                            asyncio.create_task(self._update_session_title(session_id, query))
+                    return turn_id
             finally:
                 db.close()
         else:
@@ -1592,14 +2231,17 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     message_count = len(msg_count_result.scalars().all())
                     is_first_message = message_count == 0
                     
-                    # Add message (ChatMessage uses query/response, not role/content)
+                    # Persist plot files to disk, then strip binary from DB row
+                    self._persist_viz_to_disk(response.get("visualizations") or [])
                     message = DBChatMessage(
                         session_id=session_id,
                         query=query,
-                        response=response,
+                        response=self._strip_viz_binary(response),
                         timestamp=time.time()
                     )
                     db.add(message)
+                    await db.flush()
+                    turn_id = message.id
 
                     # Record token usage if present (set by LangGraphOrchestrator)
                     in_tok = response.get("_input_tokens", 0) or 0
@@ -1631,6 +2273,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                         if "history" not in self.sessions[session_id]:
                             self.sessions[session_id]["history"] = []
                         self.sessions[session_id]["history"].append({
+                            "id": turn_id,
                             "query": query,
                             "response": response,
                             "timestamp": message.timestamp
@@ -1638,7 +2281,18 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                         
                     # Generate title after first message
                     if is_first_message and db_session.title == "New Chat":
-                        asyncio.create_task(self._update_session_title(session_id, query))
+                        # Set a quick title immediately (truncated query) so the UI
+                        # always shows something meaningful even if LLM refining fails.
+                        quick_title = query[:50] + ("..." if len(query) > 50 else "")
+                        db_session.title = quick_title
+                        if session_id in self.sessions:
+                            self.sessions[session_id]["title"] = quick_title
+                        await db.commit()
+                        # Refine with LLM in background (skip when MOCK_LLM — would produce identical result)
+                        if not settings.MOCK_LLM:
+                            asyncio.create_task(self._update_session_title(session_id, query))
+                    return turn_id
+        return None
     
     async def _update_session_title(self, session_id: str, first_query: str):
         """Async task to generate and update session title"""
@@ -1698,61 +2352,72 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
     async def _load_all_sessions_from_db(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Load all sessions from database, optionally filtered by user_id"""
         from typing import List
+        from sqlalchemy import func
         try:
             if settings.DATABASE_URL.startswith("sqlite"):
                 # SQLite uses sync session
                 db = SessionLocal()
                 try:
-                    query = db.query(ChatSession)
+                    q = db.query(ChatSession)
                     if user_id:
-                        query = query.filter(ChatSession.user_id == user_id)
-                    db_sessions = query.all()
-                    sessions_list = []
-                    
-                    for db_session in db_sessions:
-                        message_count = db.query(DBChatMessage).filter(
-                            DBChatMessage.session_id == db_session.id
-                        ).count()
-                        
-                        sessions_list.append({
-                            "id": db_session.id,
-                            "user_id": db_session.user_id,
-                            "title": db_session.title,
-                            "created_at": db_session.created_at,
-                            "last_updated": db_session.last_updated,
-                            "message_count": message_count
-                        })
-                    
-                    return sessions_list
+                        q = q.filter(ChatSession.user_id == user_id)
+                    db_sessions = q.all()
+
+                    # Single GROUP BY query for all message counts — avoids N+1
+                    session_ids = [s.id for s in db_sessions]
+                    counts: dict = {}
+                    if session_ids:
+                        counts = dict(
+                            db.query(DBChatMessage.session_id, func.count(DBChatMessage.id))
+                            .filter(DBChatMessage.session_id.in_(session_ids))
+                            .group_by(DBChatMessage.session_id)
+                            .all()
+                        )
+
+                    return [
+                        {
+                            "id": s.id,
+                            "user_id": s.user_id,
+                            "title": s.title,
+                            "created_at": s.created_at,
+                            "last_updated": s.last_updated,
+                            "message_count": counts.get(s.id, 0),
+                        }
+                        for s in db_sessions
+                    ]
                 finally:
                     db.close()
             else:
                 # PostgreSQL uses async session
                 async with SessionLocal() as db:
-                    query = select(ChatSession)
+                    q = select(ChatSession)
                     if user_id:
-                        query = query.filter(ChatSession.user_id == user_id)
-                    result = await db.execute(query)
+                        q = q.filter(ChatSession.user_id == user_id)
+                    result = await db.execute(q)
                     db_sessions = result.scalars().all()
-                    
-                    sessions_list = []
-                    for db_session in db_sessions:
-                        # Count messages
-                        msg_result = await db.execute(
-                            select(DBChatMessage).filter(DBChatMessage.session_id == db_session.id)
+
+                    # Single GROUP BY query for all message counts — avoids N+1
+                    session_ids = [s.id for s in db_sessions]
+                    counts: dict = {}
+                    if session_ids:
+                        counts_result = await db.execute(
+                            select(DBChatMessage.session_id, func.count(DBChatMessage.id))
+                            .filter(DBChatMessage.session_id.in_(session_ids))
+                            .group_by(DBChatMessage.session_id)
                         )
-                        message_count = len(msg_result.scalars().all())
-                        
-                        sessions_list.append({
-                            "id": db_session.id,
-                            "user_id": db_session.user_id,
-                            "title": db_session.title,
-                            "created_at": db_session.created_at,
-                            "last_updated": db_session.last_updated,
-                            "message_count": message_count
-                        })
-                    
-                    return sessions_list
+                        counts = dict(counts_result.all())
+
+                    return [
+                        {
+                            "id": s.id,
+                            "user_id": s.user_id,
+                            "title": s.title,
+                            "created_at": s.created_at,
+                            "last_updated": s.last_updated,
+                            "message_count": counts.get(s.id, 0),
+                        }
+                        for s in db_sessions
+                    ]
         except Exception as e:
             logger.error(f"Error loading sessions from database: {e}")
             return []
@@ -1782,6 +2447,8 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                 # Always drop heavy fields that the chat UI doesn't need for history rendering.
                 # Keeping these can make some sessions too large to load smoothly.
                 new_resp.pop("raw_results", None)
+                # Record presence before stripping so the frontend can lazy-fetch
+                new_resp["has_visualizations"] = bool(new_resp.get("visualizations"))
                 new_resp.pop("visualizations", None)
 
                 # 1) Only sanitize inline data URLs if they're large.
@@ -1835,6 +2502,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     
                     history = [
                         {
+                            "id": msg.id,
                             "query": msg.query,
                             "response": _sanitize_large_inline_images(msg.response),
                             "timestamp": msg.timestamp
@@ -1875,6 +2543,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     
                     history = [
                         {
+                            "id": msg.id,
                             "query": msg.query,
                             "response": _sanitize_large_inline_images(msg.response),
                             "timestamp": msg.timestamp
@@ -1896,6 +2565,128 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         except Exception as e:
             logger.error(f"Error loading session from database: {e}")
             return None
+
+    def _derive_active_gene_from_db_messages(self, messages: List[DBChatMessage]) -> Optional[str]:
+        """Best-effort reconstruction of active_gene from persisted turns."""
+        for msg in reversed(messages):
+            resp = msg.response if isinstance(msg.response, dict) else {}
+            raw_results = resp.get("raw_results") if isinstance(resp, dict) else None
+            if isinstance(raw_results, dict):
+                for wrapped in reversed(list(raw_results.values())):
+                    if not isinstance(wrapped, dict):
+                        continue
+                    gene = wrapped.get("_gene")
+                    if isinstance(gene, str) and gene.strip():
+                        return gene.upper()
+
+                    args = wrapped.get("_args") or {}
+                    if isinstance(args, dict):
+                        gene = args.get("protein") or args.get("gene_symbol") or args.get("gene")
+                        if isinstance(gene, str) and gene.strip():
+                            return gene.upper()
+                        proteins = args.get("proteins")
+                        if isinstance(proteins, list) and proteins:
+                            first = proteins[0]
+                            if isinstance(first, str) and first.strip():
+                                return first.upper()
+
+            genes = self._extract_gene_symbols(msg.query or "")
+            if genes:
+                return genes[0]
+
+        return None
+
+    async def _truncate_session_from_message(self, session_id: str, message_id: int) -> Dict[str, int]:
+        """Delete the specified turn and all later turns, then rebuild session context."""
+        deleted_turns = 0
+        remaining_turns = 0
+        now = time.time()
+
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if not db_session:
+                    raise ValueError("Session not found")
+
+                target = (
+                    db.query(DBChatMessage)
+                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.id == message_id)
+                    .first()
+                )
+                if not target:
+                    raise ValueError("Turn not found in this session")
+
+                remaining_messages = (
+                    db.query(DBChatMessage)
+                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.id < message_id)
+                    .order_by(DBChatMessage.timestamp.asc(), DBChatMessage.id.asc())
+                    .all()
+                )
+
+                deleted_turns = (
+                    db.query(DBChatMessage)
+                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.id >= message_id)
+                    .delete(synchronize_session=False)
+                )
+
+                active_gene = self._derive_active_gene_from_db_messages(remaining_messages)
+                db_session.context = {"active_gene": active_gene} if active_gene else {}
+                db_session.last_updated = now
+                if not remaining_messages:
+                    db_session.title = "New Chat"
+
+                db.commit()
+                remaining_turns = len(remaining_messages)
+            finally:
+                db.close()
+        else:
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(ChatSession).filter(ChatSession.id == session_id)
+                )
+                db_session = result.scalar_one_or_none()
+                if not db_session:
+                    raise ValueError("Session not found")
+
+                result = await db.execute(
+                    select(DBChatMessage).filter(
+                        DBChatMessage.session_id == session_id,
+                        DBChatMessage.id == message_id,
+                    )
+                )
+                target = result.scalar_one_or_none()
+                if not target:
+                    raise ValueError("Turn not found in this session")
+
+                result = await db.execute(
+                    select(DBChatMessage)
+                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.id < message_id)
+                    .order_by(DBChatMessage.timestamp.asc(), DBChatMessage.id.asc())
+                )
+                remaining_messages = list(result.scalars().all())
+
+                delete_result = await db.execute(
+                    delete(DBChatMessage).where(
+                        DBChatMessage.session_id == session_id,
+                        DBChatMessage.id >= message_id,
+                    )
+                )
+                deleted_turns = delete_result.rowcount or 0
+
+                active_gene = self._derive_active_gene_from_db_messages(remaining_messages)
+                db_session.context = {"active_gene": active_gene} if active_gene else {}
+                db_session.last_updated = now
+                if not remaining_messages:
+                    db_session.title = "New Chat"
+
+                await db.commit()
+                remaining_turns = len(remaining_messages)
+
+        return {
+            "deleted_turns": deleted_turns,
+            "remaining_turns": remaining_turns,
+        }
     
     def _save_session_to_db(self, session: Dict[str, Any]):
         """Save session to database (sync for SQLite compatibility)"""

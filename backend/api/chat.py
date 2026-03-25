@@ -8,6 +8,7 @@ from typing import Optional, Any, Dict, List
 from collections import defaultdict, deque
 import logging
 import time
+import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, cast, Text as SAText
 
@@ -49,7 +50,7 @@ def _check_guest_rate_limit(ip: str) -> None:
 
     timestamps.append(now)
 
-from models.schemas import ChatRequest, ChatResponse
+from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest
 from models.database import User, ChatSession, ChatMessage as DBChatMessage
 from services.mcp_orchestrator import MCPOrchestrator
 from core.config import settings
@@ -70,7 +71,12 @@ def _sanitize_response_for_history(resp: Any) -> Any:
         new_resp = dict(resp)
         # Always drop heavy fields that UI doesn't need for rendering history.
         new_resp.pop("raw_results", None)
-        new_resp.pop("visualizations", None)
+        # Keep lightweight viz metadata (type/id/title) — binary was already stripped
+        # before DB save so this is safe. Frontend uses the IDs to load plot files.
+        vizs = new_resp.get("visualizations") or []
+        lean_vizs = [{k: v for k, v in viz.items() if k not in ("png_b64", "svg", "csv")} for viz in vizs]
+        new_resp["visualizations"] = lean_vizs if lean_vizs else []
+        new_resp["has_visualizations"] = bool(lean_vizs)
         # These can be extremely large and will freeze the UI when rendering history.
         # They are fetched on-demand via /messages/{message_id}.
         new_resp.pop("analyses", None)
@@ -187,6 +193,7 @@ async def chat_query(
             # Short LLM summary shown above the full response
             summary=result.get("summary", "") or None,
             session_id=result.get("session_id", ""),
+            turn_id=result.get("turn_id"),
             agent_responses=agent_responses_list,
             visualizations=result.get("visualizations", []),
             analyses=result.get("analyses", []),  # Include analysis results
@@ -596,6 +603,56 @@ async def search_messages(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/visualizations/{viz_id}/png")
+async def get_visualization_png(viz_id: str):
+    """Serve a plot PNG directly (no auth — IDs are random UUIDs, used by shared session pages)."""
+    import os
+    from fastapi.responses import FileResponse
+    safe_id = os.path.basename(viz_id)
+    png_path = os.path.join(settings.PLOT_DIR, f"{safe_id}.png")
+    if not os.path.exists(png_path):
+        raise HTTPException(status_code=404, detail="Visualization not found")
+    return FileResponse(png_path, media_type="image/png")
+
+
+@router.get("/visualizations/{viz_id}")
+async def get_visualization(viz_id: str):
+    """Return saved plot data (png_b64, svg, csv) for a visualization ID. No auth required — IDs are random UUIDs."""
+    import os, base64 as _b64
+    from core.config import settings
+    plot_dir = settings.PLOT_DIR
+
+    # Sanitize viz_id to prevent path traversal
+    safe_id = os.path.basename(viz_id)
+    png_path = os.path.join(plot_dir, f"{safe_id}.png")
+    if not os.path.exists(png_path):
+        raise HTTPException(status_code=404, detail="Visualization not found")
+
+    with open(png_path, "rb") as f:
+        png_b64 = _b64.b64encode(f.read()).decode()
+
+    title = ""
+    json_path = os.path.join(plot_dir, f"{safe_id}.json")
+    if os.path.exists(json_path):
+        import json as _json
+        with open(json_path, encoding="utf-8") as f:
+            title = _json.load(f).get("title", "")
+
+    svg = ""
+    svg_path = os.path.join(plot_dir, f"{safe_id}.svg")
+    if os.path.exists(svg_path):
+        with open(svg_path, encoding="utf-8") as f:
+            svg = f.read()
+
+    csv = ""
+    csv_path = os.path.join(plot_dir, f"{safe_id}.csv")
+    if os.path.exists(csv_path):
+        with open(csv_path, encoding="utf-8") as f:
+            csv = f.read()
+
+    return {"type": "static_plot", "id": safe_id, "title": title, "png_b64": png_b64, "svg": svg, "csv": csv}
+
+
 @router.patch("/sessions/{session_id}/title")
 async def update_session_title(
     session_id: str,
@@ -685,7 +742,129 @@ async def clear_session(
         await active_orchestrator._delete_session_from_db(session_id)
         
         return {"message": "Session cleared", "session_id": session_id}
-        
+
     except Exception as e:
         logger.error(f"Error clearing session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/truncate")
+async def truncate_session_from_turn(
+    session_id: str,
+    request: TurnTruncateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete the specified turn and all later turns in a session.
+    Intended for "edit and resubmit from here" UX.
+    """
+    try:
+        active_orchestrator = orchestrator
+
+        if session_id in active_orchestrator.sessions:
+            if active_orchestrator.sessions[session_id].get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            session = await active_orchestrator._load_session_from_db(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session.get("user_id") != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
+            active_orchestrator.sessions[session_id] = session
+
+        stats = await active_orchestrator._truncate_session_from_message(session_id, request.message_id)
+        refreshed = await active_orchestrator._load_session_from_db(session_id)
+        if refreshed:
+            active_orchestrator.sessions[session_id] = refreshed
+        elif session_id in active_orchestrator.sessions:
+            del active_orchestrator.sessions[session_id]
+
+        return {
+            "message": "Session truncated",
+            "session_id": session_id,
+            **stats,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error truncating session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/share")
+async def share_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generate a public share token for a session.
+    Returns a shareable URL that anyone can view without logging in.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            sess = (
+                db.query(ChatSession)
+                .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+                .first()
+            )
+            if not sess:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            if not sess.shared_token:
+                sess.shared_token = str(uuid.uuid4())
+                db.commit()
+
+            return {"shared_token": sess.shared_token}
+        finally:
+            db.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sharing session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/shared/{token}")
+async def get_shared_session(token: str):
+    """
+    Public endpoint — returns session messages for a shared token.
+    No authentication required.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            sess = db.query(ChatSession).filter(ChatSession.shared_token == token).first()
+            if not sess:
+                raise HTTPException(status_code=404, detail="Shared session not found")
+
+            msgs = (
+                db.query(DBChatMessage)
+                .filter(DBChatMessage.session_id == sess.id)
+                .order_by(DBChatMessage.timestamp.asc())
+                .all()
+            )
+            history = [
+                {
+                    "id": m.id,
+                    "query": m.query,
+                    "response": m.response,
+                    "timestamp": m.timestamp,
+                }
+                for m in msgs
+            ]
+            return {
+                "session_id": sess.id,
+                "title": sess.title or "Shared Research Session",
+                "history": history,
+                "created_at": sess.created_at,
+            }
+        finally:
+            db.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching shared session: {e}")
         raise HTTPException(status_code=500, detail=str(e))

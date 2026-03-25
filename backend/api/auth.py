@@ -19,7 +19,7 @@ from models.schemas import (
 )
 from core.database import get_db
 from core.auth import (
-    verify_password,
+    verify_password_async,
     create_access_token,
     get_user_by_username,
     get_user_by_email,
@@ -131,8 +131,8 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Verify password
-    if not verify_password(user_data.password, user.password_hash):
+    # Verify password (runs bcrypt in thread pool — avoids blocking the event loop)
+    if not await verify_password_async(user_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",

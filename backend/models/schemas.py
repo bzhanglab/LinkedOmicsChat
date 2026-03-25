@@ -41,11 +41,17 @@ class ChatRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
+class TurnTruncateRequest(BaseModel):
+    """Request schema for truncating a session from a given turn/message row."""
+    message_id: int
+
+
 class ChatResponse(BaseModel):
     """Response schema for chat endpoint"""
     message: str
     summary: Optional[str] = None
     session_id: str
+    turn_id: Optional[int] = None
     agent_responses: List[Dict[str, Any]] = []
     visualizations: List[Dict[str, Any]] = []
     analyses: List[Dict[str, Any]] = []  # Analysis results (correlations, etc.)

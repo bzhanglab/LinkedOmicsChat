@@ -64,6 +64,19 @@ class MCPAggregator:
                 [str(server_path)],
             )
         
+        # Gene utilities MCP server (identifier resolution: Ensembl/UniProt → HGNC)
+        if settings.MCP_GENE_UTILS_SERVER_ENABLED:
+            backend_dir = Path(__file__).parent.parent
+            server_path = backend_dir / "mcp_servers" / "gene_utils_server.py"
+            if not server_path.exists():
+                logger.error(f"Gene Utils MCP server not found at: {server_path}")
+            else:
+                await self.connect_server(
+                    "gene_utils",
+                    str(sys.executable),
+                    [str(server_path)],
+                )
+
         # Literature MCP server (PubMed via NCBI E-utilities)
         if settings.MCP_LITERATURE_SERVER_ENABLED:
             backend_dir = Path(__file__).parent.parent

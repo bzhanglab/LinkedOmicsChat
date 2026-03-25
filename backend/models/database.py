@@ -36,6 +36,7 @@ class ChatSession(Base):
     created_at = Column(Float, nullable=False)
     last_updated = Column(Float, nullable=False)
     context = Column(JSON, nullable=True)
+    shared_token = Column(String, nullable=True, unique=True, index=True)
 
     # Relationships
     user = relationship("User", back_populates="sessions")

@@ -16,9 +16,8 @@ import secrets
 logger = logging.getLogger(__name__)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
+    """Verify a password against its hash (sync, CPU-bound — use verify_password_async in async context)."""
     try:
-        # Ensure password is bytes
         if isinstance(plain_password, str):
             plain_password = plain_password.encode('utf-8')
         if isinstance(hashed_password, str):
@@ -29,29 +28,36 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """Non-blocking bcrypt verify — runs in a thread pool to avoid stalling the event loop."""
+    import asyncio
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
+
+
 def get_password_hash(password: str) -> str:
-    """Hash a password using bcrypt"""
+    """Hash a password using bcrypt (sync, CPU-bound — use get_password_hash_async in async context)."""
     try:
-        # Ensure password is bytes and not longer than 72 bytes (bcrypt limit)
         if isinstance(password, str):
             password_bytes = password.encode('utf-8')
         else:
             password_bytes = password
-        
-        # Truncate if necessary (very unlikely for normal passwords)
+
         if len(password_bytes) > 72:
-            logger.warning(f"Password exceeds 72 bytes, truncating")
+            logger.warning("Password exceeds 72 bytes, truncating")
             password_bytes = password_bytes[:72]
-        
-        # Generate salt and hash
+
         salt = bcrypt.gensalt(rounds=12)
         hashed = bcrypt.hashpw(password_bytes, salt)
-        
-        # Return as string
         return hashed.decode('utf-8')
     except Exception as e:
         logger.error(f"Error hashing password: {e}")
         raise
+
+
+async def get_password_hash_async(password: str) -> str:
+    """Non-blocking bcrypt hash — runs in a thread pool to avoid stalling the event loop."""
+    import asyncio
+    return await asyncio.to_thread(get_password_hash, password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -142,7 +148,7 @@ async def create_user(
 ) -> User:
     """Create a new user (works with both sync and async sessions)"""
     from core.config import settings as db_settings
-    hashed_password = get_password_hash(password)
+    hashed_password = await get_password_hash_async(password)
     user = User(
         id=str(uuid.uuid4()),
         username=username,
@@ -244,7 +250,7 @@ async def update_user_password(
 ) -> None:
     """Update user password and clear reset token"""
     from core.config import settings as db_settings
-    hashed_password = get_password_hash(new_password)
+    hashed_password = await get_password_hash_async(new_password)
     
     try:
         if db_settings.DATABASE_URL.startswith("sqlite"):

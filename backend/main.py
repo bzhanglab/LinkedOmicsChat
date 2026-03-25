@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import logging
 from typing import AsyncGenerator
 
-from api import chat, datasets, analyses, auth, tools
+from api import chat, auth, tools
 from core.config import settings
 from core.database import init_db
 from services.mcp_orchestrator import MCPOrchestrator
@@ -137,8 +137,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
-app.include_router(datasets.router, prefix="/api/v1/datasets", tags=["Datasets"])
-app.include_router(analyses.router, prefix="/api/v1/analyses", tags=["Analyses"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["Tools"])
 
 
@@ -160,5 +158,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.DEBUG
+        reload=settings.DEBUG,
+        reload_dirs=["api", "core", "models", "services", "mcp_servers"],
     )

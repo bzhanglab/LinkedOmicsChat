@@ -102,9 +102,14 @@ class Settings(BaseSettings):
     NCBI_EMAIL: str = ""
     NCBI_API_KEY: str = ""  # optional — raises rate limit from 3 to 10 req/s
 
+    # Plot cache: PNG/SVG/CSV files are written here so they survive history reloads.
+    # Can be set to any writable path; defaults to ./data/plots relative to the working dir.
+    PLOT_DIR: str = "./data/plots"
+
     # MCP Configuration (Phase 1 Migration)
     USE_MCP: bool = False  # Feature flag to enable MCP architecture
     MCP_LINKEDOMICS_SERVER_ENABLED: bool = False  # Optional external data MCP server
+    MCP_GENE_UTILS_SERVER_ENABLED: bool = True   # Gene identifier resolution (Ensembl/UniProt → HGNC)
     MCP_LITERATURE_SERVER_ENABLED: bool = True   # PubMed literature search
     MCP_FILES_SERVER_ENABLED: bool = False  # Phase 3
     MCP_COMPUTE_SERVER_ENABLED: bool = False  # Phase 3
