@@ -235,7 +235,13 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                 </button>
                 {!isCollapsed && (
                     <p className="px-4 pt-1 text-xs text-muted-foreground">
-                        &copy; 2026 Zhang Lab
+                        &copy; 2026 Zhang Lab &middot;{" "}
+                        <a href="/about" target="_blank" rel="noopener noreferrer" className="hover:underline">About</a>
+                        {" "}&middot;{" "}
+                        <a href="https://github.com/bzhanglab/LinkedOmicsChat/issues" target="_blank" rel="noopener noreferrer" className="hover:underline">Feedback</a>
+                        {process.env.NEXT_PUBLIC_APP_VERSION && (
+                            <span className="ml-1 text-muted-foreground/60">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
+                        )}
                     </p>
                 )}
             </div>
