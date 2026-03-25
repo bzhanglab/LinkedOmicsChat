@@ -50,13 +50,24 @@ export default function Home() {
     // Redirect to login if not authenticated
     useEffect(() => {
         if (!loading && !isAuthenticated) {
-            router.push("/welcome")
+            // Send first-time visitors to the welcome/landing page,
+            // but returning users (who have ever logged in) go straight to login.
+            const hasVisited = localStorage.getItem("linkedomicsai-has-visited")
+            router.push(hasVisited ? "/login" : "/welcome")
         }
     }, [isAuthenticated, loading, router])
 
-    // Pick up prefill query set by the welcome page chip click
+    // Pick up prefill query — from URL ?q= param (new tab) or sessionStorage (same tab)
     useEffect(() => {
         if (!isAuthenticated) return
+        const urlQuery = new URLSearchParams(window.location.search).get("q")
+        if (urlQuery) {
+            setPrefilledQuery(urlQuery)
+            const url = new URL(window.location.href)
+            url.searchParams.delete("q")
+            window.history.replaceState({}, "", url.toString())
+            return
+        }
         const prefill = sessionStorage.getItem("linkedomicsai-prefill-query")
         if (prefill) {
             sessionStorage.removeItem("linkedomicsai-prefill-query")

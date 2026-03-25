@@ -98,6 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
             setIsGuest(false)
             setUser(userData)
+            localStorage.setItem("linkedomicsai-has-visited", "1")
         } catch (error: any) {
             throw new Error(error.response?.data?.detail || "Login failed")
         }
