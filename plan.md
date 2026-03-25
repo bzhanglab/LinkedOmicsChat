@@ -1,230 +1,183 @@
-# NAR Publication Plan: cpgAgent → LinkedOmics AI Assistant
+# NAR Publication Plan: LinkedOmicsChat
 
----
+## Scope Of This Update
+This plan reflects the current repository state on 2026-03-23. It is intentionally grounded in code and config present in this repo, not unverified assumptions about external deployment.
 
 ## Context
-cpgAgent is a conversational AI interface over cancer multi-omics data (TCGA + CPTAC + LinkedOmics). The goal is to make it publishable in the NAR Web Server Issue as the first AI-powered natural language interface to LinkedOmics/TCGA/CPTAC data.
+LinkedOmicsChat is a conversational AI interface for cancer multi-omics research built around LinkedOmics, CPTAC, PubMed, FunMap, and WebGestalt workflows. The publication goal remains the NAR Web Server Issue, with emphasis on natural-language querying, reproducible sharing, and multi-step tool chaining over real biomedical data sources.
 
-## Current Build Snapshot (as of 2026-03-11)
-- Core platform is live: FastAPI backend, MCP Aggregator, LangGraph orchestrator, LinkedOmics MCP all working.
-- Only `linkedomics_server.py` exists in `mcp_servers/` — 7 real tools (funmap_neighborhood, get_target, cancer_gene_expression, overall_survival_per_cancer, clinical_trial_information, get_cis_correlations, webgestalt).
-- Dead code removed: `tcga_service.py`, `cptac_service.py`, `data_server.py` all deleted.
-- LLM hallucination on TCGA questions fixed: system prompt now has explicit NOT AVAILABLE section and dynamic data-access section from `_build_data_access_section()`.
-- LLM formatting fixed: no longer dumps raw Python dicts; uses markdown tables.
-- Guest mode, auth, chat history, right panel, use cases, citations, LaTeX rendering all working.
+## Current Build Snapshot (Repo-Verified)
 
----
+- Branding: `cpgAgent` has been fully rebranded to `LinkedOmicsChat`.
+- Backend: FastAPI + SQLAlchemy with SQLite for development and PostgreSQL-ready production config.
+- Orchestration: LangGraph-backed MCP orchestration with tool chaining and data-access guardrails.
+- Frontend: Next.js 14 + Tailwind + shadcn/ui.
+- Auth: registration, login, JWT auth, password reset, guest mode.
+- Sessions: persistent chat history, paginated history loading, cross-session search, in-chat search.
+- Visualization: Plotly charts render inline in chat, in the right-side context panel, and on shared read-only pages.
+- Sharing: public read-only session links at `/shared/[token]`.
+- Export: HTML export with embedded Plotly charts. Export now fetches session data directly so it works immediately after reload.
+- Session actions: `Share` and `Export` are available as soon as a saved session is restored after reload.
+- Docs: custom frontend docs page exists; default FastAPI Swagger docs exist; metadata is still minimal.
+- Deployment scaffold: `docker-compose.yml` includes postgres/redis/ollama/backend/frontend; an nginx reverse-proxy block exists only as commented scaffold.
 
-## Current Gaps (vs. NAR Web Server Issue Requirements)
+## Active MCP Servers (3 Servers / 16 Tools)
 
-| Gap | Severity | Status |
-|-----|----------|--------|
-| No real TCGA data (GDC API not integrated) | 🔴 Blocking | Not started |
-| No real CPTAC protein-level data beyond LinkedOmics tools | 🔴 Blocking | LinkedOmics covers RNA+protein expression; raw CPTAC package not integrated |
-| No stable public URL / production deployment | 🔴 Blocking | Docker scaffold exists, no confirmed public URL |
-| `analysis_agent.py` still uses `np.random` mock data (fallback path) | 🟡 Required | Not started |
-| No rate limiting enforcement (config exists but no middleware) | 🟡 Required | Not started |
-| Literature agent uses DuckDuckGo only (falsely claims PubMed access) | 🟡 Required | Not started |
-| VisualizationsPanel is hardcoded mock data — not wired to real sessions | 🟡 Required | Not started |
-| No backend export API or viz download (frontend Markdown export exists) | 🟡 Required | In progress |
-| No session sharing / reproducible links | 🟡 Required | Not started |
-| OpenAPI docs missing contact/license/tags/API links | 🟢 Recommended | In progress |
-| No biological validation / ground-truth test suite | 🟡 Required | Not started |
-| No case studies demonstrating real biology (needed for paper) | 🟡 Required | Not started |
-| No architecture diagram for paper | 🟢 Recommended | Not started |
-| Tool name "cpgAgent" implies CpG methylation — misleading | 🟢 Recommended | Decision pending |
-| No Nginx reverse proxy / SSL | 🔴 Blocking | Not started |
+| Server | Live Tools | Status |
+|--------|------------|--------|
+| `linkedomics_server.py` | `funmap_neighborhood`, `get_target`, `batch_get_target`, `cancer_gene_expression`, `batch_cancer_gene_expression`, `overall_survival_per_cancer`, `batch_overall_survival_per_cancer`, `clinical_trial_information`, `batch_clinical_trial_information`, `get_cis_correlations`, `batch_get_cis_correlations`, `webgestalt`, `tcga_survival_analysis` | ✅ Live |
+| `literature_server.py` | `search_pubmed`, `get_pubmed_abstract` | ✅ Live |
+| `gene_utils_server.py` | `resolve_gene_identifier` | ✅ Live |
 
----
+## What Is Already Done
 
-## Completed ✅
+### Platform And Orchestration
+- FastAPI backend wired to LangGraph-backed MCP orchestration.
+- MCP aggregator initializes multiple stdio MCP servers from repo-managed config.
+- Data-access routing logic is explicitly encoded in the system prompt, including TCGA-vs-CPTAC guidance.
 
-### Platform Foundation
-- `backend/services/mcp_aggregator.py` — MCP aggregation
-- `backend/services/langgraph_orchestrator.py` — LangGraph chaining / streaming with tool-grounded system prompt
-  - `_build_data_access_section()` — dynamically lists enabled MCP servers; prevents hallucination
-  - FORMATTING RULES — prevents raw dict output
-  - NOT AVAILABLE section — LLM correctly says "I don't have TCGA/GDC data" instead of hallucinating
-- `backend/mcp_servers/linkedomics_server.py` — 7 real LinkedOmics tools
-- `backend/api/tools.py` + `frontend/components/ToolExplorer.tsx` — direct MCP tool browsing / execution UI
-- `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile` — container stack scaffold
+### Data And Tools
+- LinkedOmics / FunMap / WebGestalt / PubMed / gene-identifier toolchain is live.
+- `tcga_survival_analysis` is already available through `linkedomics_server.py`.
+- Literature search has already moved to real PubMed integration instead of generic web search.
 
-### Dead Code Removal ✅ (2026-03-11)
-- Deleted: `backend/mcp_servers/data_server.py`
-- Deleted: `backend/services/tcga_service.py`
-- Deleted: `backend/services/cptac_service.py`
-- Cleaned dead imports from `association_agent.py`, `differential_expression_agent.py`
+### UX And Frontend
+- Shared read-only session pages are implemented and render Plotly charts.
+- Right-side context panel can preview plots and jump back to the originating chat message.
+- Chat history supports paginated loading and search across sessions.
+- Share popup now opens immediately and supports copy-to-clipboard.
+- Share/export controls are usable immediately after a saved session reloads.
+- Export is now session-backed instead of only UI-state-backed, which avoids partial exports after refresh.
 
-### Milestone 2A: Guest/Demo Mode ✅
-- `get_optional_user()` dependency, in-memory guest sessions
-- "Continue as Guest" button on login page
-- Guest banner on main page
+### Auth And Sessions
+- Full auth flow is implemented.
+- Guest mode exists with in-memory sessions and rate limiting.
+- Session persistence, rename, delete, and search are implemented.
 
-### UX Improvements ✅
-- Friendly progress labels during tool execution
-- Data source citation pills below responses
-- LaTeX math rendering
-- Dark mode text color fixes
-- Chat history preserved across sidebar panel switches
-- Auth token validation timeout reduced (10s → 3s)
+### Infra And Docs
+- Docker Compose scaffold exists for local/prod-like stack bring-up.
+- Deployment helper scripts exist (`deploy_aws.sh`, `deploy_rsync.sh`, `restart.sh`).
+- A custom documentation page exists in the frontend.
 
----
+## Plan Changes From The Previous Version
 
-## What to Improve Next (Priority Order)
+- Corrected the active tool inventory: the repo now exposes 16 MCP tools, not the smaller older set in the previous plan.
+- Updated TCGA status: TCGA survival support already exists via `tcga_survival_analysis`; the remaining gap is a separate GDC mutation/clinical server, not TCGA access in general.
+- Corrected export status: the current product supports HTML export with embedded charts; a separate Markdown export is not the primary live path.
+- Marked session sharing, shared pages, Plotly rendering, and immediate post-reload session actions as complete.
+- Reframed the highest-risk gaps away from core product UX and toward deployment hardening plus validation for publication.
 
-### 🔴 Priority 1: Nginx + SSL (Prerequisite for Public URL)
-Without a public URL, NAR reviewers cannot access the tool.
+## Current Gaps (NAR-Facing)
 
-**Create:** `nginx/nginx.conf`
-```nginx
-server {
-    listen 80;
-    location /api/ { proxy_pass http://backend:8000/; proxy_read_timeout 300s; }
-    location / { proxy_pass http://frontend:3000/; }
-}
-```
-**Modify:** `docker-compose.yml` — add nginx service, uncomment SSL cert volume.
+| Gap | Severity | Current Status |
+|-----|----------|----------------|
+| Public deployment is not standardized in repo | 🔴 Blocking | No repo-managed live domain/SSL setup; nginx in `docker-compose.yml` is commented out |
+| No biological validation suite | 🟡 Required | No `backend/tests` validation or benchmark harness present |
+| No formal case-study runner for paper figures | 🟡 Required | No scripted case-study outputs in repo |
+| No standalone GDC mutation/clinical MCP server | 🟡 Important | TCGA survival is live, but mutation frequency and clinical case summaries are still missing |
+| OpenAPI metadata is minimal | 🟢 Recommended | `backend/main.py` lacks `contact`, `license_info`, and `tags_metadata` |
+| Paper-support assets are missing | 🟢 Recommended | No architecture diagram or comparison table in repo |
+| Deployment runbook is incomplete | 🟢 Recommended | Compose exists, but reverse proxy / SSL / domain ownership are not documented as code |
 
----
+## Recommended Priority Order
 
-### 🟡 Priority 2: Rate Limiting Middleware
-Required before public exposure to prevent abuse.
+### 1. Public Deployment Hardening
+This is still the biggest publication blocker.
 
-**Create:** `backend/core/rate_limiter.py` — Redis sliding window:
-- Guests: 10 req/hour per IP (`X-Forwarded-For`)
-- Authenticated: 60 req/hour per `user_id`
+Targets:
+- Enable a repo-managed reverse proxy path.
+- Add SSL termination and document certificate renewal.
+- Standardize the production URL, CORS origins, and health-check path.
+- Capture a reproducible deployment runbook in the repo.
 
-**Modify:** `backend/main.py` — add rate limiter as FastAPI middleware after CORS.
+Concrete repo work:
+- Add or un-comment a real nginx service in `docker-compose.yml`, or document the existing Apache-based production pattern in repo-managed config.
+- Add `nginx/nginx.conf` and, if applicable, TLS instructions.
+- Add a short deployment README that explains the expected production topology.
 
----
+### 2. Biological Validation And Case Studies
+This is the highest-value scientific work now that the core app experience is already strong.
 
-### 🟡 Priority 3: PubMed Integration
-The literature agent currently uses DuckDuckGo and falsely claims PubMed access. This is a credibility issue for NAR.
+Targets:
+- Build a small benchmark set of known biology questions.
+- Define expected tool calls and expected directional answers.
+- Produce reproducible outputs for 5 paper-quality case studies.
 
-**Modify:** `backend/agents/literature_agent.py` — replace DuckDuckGo with NCBI E-utilities:
-- `esearch.fcgi?db=pubmed&term={query}&retmax=10` → IDs
-- `efetch.fcgi?db=pubmed&id={ids}&rettype=xml` → title, authors, abstract, PMID, DOI
+Suggested files:
+- `backend/tests/test_biological_accuracy.py`
+- `backend/tests/run_case_studies.py`
+- `docs/case_studies/`
 
-**Modify:** `backend/core/config.py` — add `NCBI_EMAIL: str = ""` (required by NCBI ToS).
+### 3. Paper Assets And API Polish
+The repo is already good enough to support this phase.
 
----
+Targets:
+- Add OpenAPI `contact`, `license_info`, and `tags_metadata` in `backend/main.py`.
+- Expand `frontend/app/docs/page.tsx` with Swagger/ReDoc links, citation text, and data-source attribution.
+- Add an architecture diagram.
+- Add a comparison table against LinkedOmics / cBioPortal / similar portals.
 
-### 🟡 Priority 4: Real TCGA Data via GDC MCP Server
-The biggest scientific gap. LinkedOmics covers CPTAC proteogenomics, but not raw TCGA mutation frequencies, RNA-seq counts, or clinical data from GDC.
+Suggested files:
+- `docs/architecture_diagram.py`
+- `docs/comparison_table.md`
 
-**Create:** `backend/mcp_servers/gdc_server.py` — FastMCP tools:
-- `get_available_tcga_projects()` — all 33 TCGA cancer types + sample counts
-- `get_tcga_mutation_frequency(gene, cancer_type=None)` — somatic mutation rates via `/ssm_occurrences` with facet aggregation
-- `get_tcga_clinical_data(cancer_type)` — age, stage, vital_status via `/cases`
+### 4. GDC Expansion (Mutation + Clinical)
+This is now an extension, not the immediate blocker it was in the older plan.
 
-**Modify:** `backend/core/config.py` — add `MCP_GDC_SERVER_ENABLED: bool = False`
+Rationale:
+- The repo already supports TCGA survival queries through `tcga_survival_analysis`.
+- What is still missing is direct GDC-backed mutation frequency and clinical metadata access.
 
-**Modify:** `backend/services/mcp_aggregator.py` — register gdc_server in `initialize()`
+Suggested implementation:
+- `backend/mcp_servers/gdc_server.py`
+- config flag in `backend/core/config.py`
+- MCP registration in `backend/services/mcp_aggregator.py`
+- prompt updates in `backend/services/langgraph_orchestrator.py`
 
-**Modify:** `backend/services/langgraph_orchestrator.py` `_build_data_access_section()` — add GDC entry when `"gdc" in servers`
+Suggested first tools:
+- `get_available_tcga_projects()`
+- `get_tcga_mutation_frequency(gene, cancer_type)`
+- `get_tcga_clinical_data(cancer_type)`
 
-Note: A working GDC server was previously implemented and tested (TP53 in BRCA = 30.6%, KRAS in PAAD = 58.4%). It was deleted to avoid TCGA/CPTAC conflation confusion. Can be recreated cleanly now that the system prompt properly distinguishes TCGA vs CPTAC.
+### 5. Nice-To-Have Product Polish
+These are useful, but they should not outrank deployment or validation.
 
----
+Ideas:
+- Decide whether to reintroduce a separate Markdown export path.
+- Add shared-link revocation or expiry controls.
+- Add CI smoke tests for share/export and shared-page rendering.
 
-### 🟡 Priority 5: Fix analysis_agent.py Mock Data
-`analysis_agent.py` still uses `np.random.seed(42)` fallback paths. These are reached when MCP tools fail. Should either remove them (fail loudly) or route through real tools.
+## Immediate Next-Step Sequence
 
-**Modify:** `backend/agents/analysis_agent.py` — replace `np.random` mock fallbacks with explicit error responses: "Analysis failed: [reason]. Please try again."
-
----
-
-### 🟡 Priority 6: VisualizationsPanel — Wire to Real Session Data
-Currently hardcoded mock plots. The LinkedOmics tools already return base64 PNG plots in their responses; they just need to be extracted and displayed.
-
-**Modify:** `backend/api/chat.py` or create `backend/api/export.py` — add `GET /api/v1/chat/sessions/{id}/visualizations` that extracts base64 images from stored messages.
-
-**Modify:** `frontend/components/VisualizationsPanel.tsx` — call the real endpoint; replace mock data; add Download PNG button.
-
-**Modify:** `frontend/lib/api.ts` — add `visualizationsAPI.getSessionVisualizations(sessionId)`.
-
----
-
-### 🟡 Priority 7: Session Sharing (Reproducible Links)
-Required for NAR — reviewers need to reproduce analyses.
-
-**Modify:** `backend/models/database.py` — add `shared_token` (UUID) and `is_public` (bool) to `ChatSession`.
-
-**Modify:** `backend/api/chat.py` — add `POST /api/v1/chat/sessions/{id}/share` → returns shareable URL.
-
-**Create:** `frontend/app/shared/[token]/page.tsx` — read-only session viewer.
-
----
-
-### 🟡 Priority 8: Biological Validation Suite
-Required to demonstrate the tool produces correct biology for the paper.
-
-**Create:** `backend/tests/` directory.
-
-**Create:** `backend/tests/test_biological_accuracy.py`:
-```python
-VALIDATION_QUERIES = [
-  {"query": "Is ESR1 associated with survival in BRCA?",
-   "expected_tools": ["linkedomics::overall_survival_per_cancer"],
-   "expected_direction": "better", "reference": "PMID:25892560"},
-  {"query": "What are TP53 functional neighbors?",
-   "expected_in_neighborhood": ["MDM2", "CDKN1A"]},
-  {"query": "Is EGFR overexpressed in LUAD?",
-   "expected_direction": "higher"},
-]
-```
-
-**Create:** `backend/tests/run_case_studies.py` — runs 5 NAR case studies, outputs `case_study_results.json`.
-
----
-
-### 🟢 Priority 9: OpenAPI Documentation Enhancement
-**Modify:** `backend/main.py` — add `contact`, `license_info`, `tags_metadata` to `FastAPI()`.
-
-**Modify:** `frontend/app/docs/page.tsx` — add Swagger/ReDoc links, citation BibTeX block, data-source attribution (LinkedOmics, GDC, PDC/CPTAC, WebGestalt), GitHub link.
-
----
-
-### 🟢 Priority 10: Architecture Diagram + Paper Support
-**Create:** `docs/generate_architecture_diagram.py` — matplotlib figure:
-- Browser → Next.js → FastAPI → LangGraph → MCP Aggregator → [LinkedOmics | GDC] MCPs → APIs
-
-**Create:** `docs/comparison_table.md`
-
-| Feature | LinkedOmics | cBioPortal | cpgAgent |
-|---------|------------|------------|---------|
-| Natural language interface | No | No | **Yes** |
-| Multi-step auto-chaining | No | No | **Yes (LangGraph)** |
-| TCGA mutation data | Yes | Yes | **Yes (GDC API)** |
-| CPTAC proteogenomics | Yes | Partial | **Yes (LinkedOmics)** |
-| PubMed literature mining | No | No | **Yes** |
-| Export (Markdown/TSV) | Partial | Yes | **Yes** |
-| Reproducible shared links | No | Yes | **Yes** |
-| REST API | No | Yes | **Yes** |
-| Open source | No | Yes | **Yes** |
-
----
-
-## Tool Name Decision
-"cpgAgent" implies CpG methylation. Suggested alternatives:
-- **LinkedOmics-AI** — leverages brand recognition (check with LinkedOmics team)
-- **OmicsChat** — broad, descriptive
-- **CancerOmicsAgent** — descriptive
-
-Discuss with PI before domain registration.
-
----
+1. Freeze the current product surface for paper-facing work.
+2. Finish deployment hardening so reviewers can access a stable public instance.
+3. Build the biological validation suite.
+4. Script 5 strong case studies and save their outputs.
+5. Add paper-support assets and API metadata.
+6. Only then decide whether GDC mutation/clinical expansion fits the submission timeline.
 
 ## Verification Checklist
 
-1. `docker compose up` → all containers healthy
-2. Visit public URL without login → guest mode loads with banner
-3. Ask "What TCGA cancer types are available?" → "I don't have access to TCGA/GDC data" (currently passing ✅)
-4. Ask "What is the TP53 mutation rate in BRCA?" → declines gracefully (currently passing ✅)
-5. Ask "Show ESR1 expression in BRCA" → calls `linkedomics::cancer_gene_expression`, returns real data
-6. Ask "Find BRCA1 partners and run enrichment" → LangGraph chains `funmap_neighborhood` → `webgestalt`
-7. Click Export on a session → markdown report downloads
-8. Click Share → link opens read-only view without login
-9. `python backend/tests/run_case_studies.py` → all 5 case studies complete
-10. `python backend/tests/test_biological_accuracy.py` → ≥80% match expected biology
-11. Visit `/api/docs` → full Swagger UI
+### Current Product Smoke Tests
+1. Reload a saved chat page: `Share` and `Export` are visible immediately.
+2. Click `Share`: popup appears immediately and the copy button works.
+3. Open the shared link in a logged-out browser: read-only session loads with Plotly charts.
+4. Click `Export` right after reload: HTML report downloads successfully even before the visible history fully hydrates.
+5. Ask a PubMed question: `search_pubmed` / `get_pubmed_abstract` path returns real literature data.
+6. Ask a TCGA survival question for a non-CPTAC cohort: `tcga_survival_analysis` is selected.
+
+### Pre-Submission Checklist
+1. Public URL is stable and HTTPS-enabled.
+2. Reverse proxy and SSL are documented in repo-managed config.
+3. `backend/tests/test_biological_accuracy.py` exists and passes agreed thresholds.
+4. `backend/tests/run_case_studies.py` generates the paper case studies reproducibly.
+5. `/api/docs` includes contact/license/tags metadata.
+6. Architecture diagram and comparison table are committed.
+
+## Bottom Line
+The project is no longer in an early product-build phase. The core app, multi-tool research workflow, sharing flow, and charting UX are already present. The real work left for an NAR submission is now:
+
+- deployment hardening,
+- scientific validation,
+- case-study packaging,
+- and publication-support documentation.

@@ -54,6 +54,7 @@ yarn-error.log*
 # Generated data files (created on-demand)
 data/*
 !data/.gitkeep
+backend/data/plots/
 
 # Logs
 logs/
@@ -63,6 +64,8 @@ logs/
 tmp/
 temp/
 *.tmp
+frontend/tsconfig.tsbuildinfo
+plan.md
 
 # Redis
 dump.rdb
