@@ -523,6 +523,500 @@ def _generate_enrichment_static(rows: list, title: str) -> Optional[dict]:
         return None
 
 
+def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = False) -> Optional[dict]:
+    """Generate a 2-row × N-col color tile matrix for expression or survival data.
+
+    Args:
+        data: {"protein_level": {"status": ..., "data": {cancer: msg}}, "RNA_level": {...}}
+        gene: gene symbol for title
+        is_survival: False for tumor-vs-normal expression, True for survival association
+    Returns:
+        dict with png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import re, io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Patch
+
+        p_data = (data.get("protein_level") or {}).get("data") or {}
+        r_data = (data.get("RNA_level") or {}).get("data") or {}
+        cancers = sorted(set(list(p_data.keys()) + list(r_data.keys())))
+        if not cancers:
+            return None
+
+        def _parse_entry(msg: str):
+            if not msg or msg in ("Data unavailable", "-", ""):
+                return 0, None, False
+            m = re.search(r'p=([\d.e+\-]+)', msg, re.IGNORECASE)
+            pval = float(m.group(1)) if m else None
+            msg_l = msg.lower()
+            if is_survival:
+                if "higher expression associated with poor" in msg_l:
+                    return 1, pval, True
+                if "lower expression associated with poor" in msg_l:
+                    return -1, pval, True
+            else:
+                if "significantly higher" in msg_l:
+                    return 1, pval, True
+                if "significantly lower" in msg_l:
+                    return -1, pval, True
+            return 0, pval, False
+
+        layers = [("Protein", p_data), ("RNA", r_data)]
+        n_cols = len(cancers)
+        tile_colors, tile_annots = [], []
+        csv_rows = []  # flat: one row per (layer, cancer)
+        for layer_name, layer_data in layers:
+            row_c, row_a = [], []
+            for cancer in cancers:
+                msg = layer_data.get(cancer, "Data unavailable")
+                direction, pval, sig = _parse_entry(msg)
+                if sig and pval and pval > 0:
+                    intensity = min(1.0, -math.log10(pval) / 6)
+                    if direction > 0:
+                        color = (1.0, 1.0 - intensity * 0.75, 1.0 - intensity * 0.75)
+                    else:
+                        color = (1.0 - intensity * 0.75, 1.0 - intensity * 0.75, 1.0)
+                    annot = f"{pval:.0e}" if pval < 0.001 else f"{pval:.3f}"
+                else:
+                    color = (0.88, 0.88, 0.88)
+                    annot = "N.S." if not sig else ""
+                row_c.append(color); row_a.append(annot)
+                dir_label = {1: "up", -1: "down", 0: "NS"}.get(direction, "")
+                csv_rows.append([layer_name, cancer, msg,
+                                  dir_label,
+                                  f"{pval:.4e}" if pval is not None else "",
+                                  "yes" if sig else "no"])
+            tile_colors.append(row_c); tile_annots.append(row_a)
+
+        title_suffix = "Survival Association — CPTAC" if is_survival else "Tumor vs. Normal — CPTAC"
+        title = f"{gene} {title_suffix}"
+
+        fig_w = max(7, n_cols * 0.9 + 1.5)
+        fig, ax = plt.subplots(figsize=(fig_w, 2.6))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        for ri, (row_c, row_a) in enumerate(zip(tile_colors, tile_annots)):
+            for ci, (color, annot) in enumerate(zip(row_c, row_a)):
+                rect = plt.Rectangle([ci - 0.46, ri - 0.46], 0.92, 0.92,
+                                      facecolor=color, edgecolor="#cccccc", linewidth=0.7)
+                ax.add_patch(rect)
+                if annot:
+                    ax.text(ci, ri, annot, ha="center", va="center",
+                            fontsize=6.5, color="#333333")
+
+        if is_survival:
+            legend_els = [
+                Patch(facecolor="#c0392b", label="Higher expr → poor survival"),
+                Patch(facecolor="#2980b9", label="Lower expr → poor survival"),
+                Patch(facecolor="#dddddd", label="Not significant / no data"),
+            ]
+        else:
+            legend_els = [
+                Patch(facecolor="#c0392b", label="Higher in tumor"),
+                Patch(facecolor="#2980b9", label="Lower in tumor"),
+                Patch(facecolor="#dddddd", label="Not significant / no data"),
+            ]
+        ax.legend(handles=legend_els, loc="upper left", fontsize=7.5,
+                  framealpha=0.9, bbox_to_anchor=(0.0, 1.42), ncol=3)
+
+        ax.set_xlim(-0.55, n_cols - 0.45)
+        ax.set_ylim(-0.55, 1.55)
+        ax.set_xticks(range(n_cols))
+        ax.set_xticklabels(cancers, fontsize=9)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["Protein", "RNA"], fontsize=9)
+        ax.tick_params(length=0)
+        ax.set_title(title, fontsize=11, pad=28)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["layer", "cancer", "full_message", "direction", "pvalue", "significant"])
+        writer.writerows(csv_rows)
+
+        return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
+
+    except Exception as e:
+        logger.warning(f"[Expression tile] Failed to generate: {e}")
+        return None
+
+
+def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
+    """Generate a heatmap for cis-correlations across cohorts and molecular pair types.
+
+    Args:
+        data: {cohort: [record, ...]}  — field names auto-detected from records
+        gene: gene symbol for title
+    Returns:
+        dict with png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+        import numpy as np
+
+        # Auto-detect which fields hold pair-type, correlation value, and p-value
+        # by inspecting available records.
+        _PAIR_CANDIDATES = ("pair", "datatype_pair", "type", "omics_pair", "layer", "name", "label", "category", "data_type", "omics", "datatype", "comparison")
+        _VAL_CANDIDATES  = ("val", "value", "correlation", "r", "cor", "rho")
+        _PVAL_CANDIDATES = ("pval", "pvalue", "p_value", "p", "padj", "fdr")
+
+        def _detect_field(rec: dict, candidates: tuple) -> Optional[str]:
+            for c in candidates:
+                if c in rec:
+                    return c
+            return None
+
+        pair_field = val_field = pval_field = None
+        first_rec: Optional[dict] = None
+        for records in data.values():
+            if isinstance(records, list):
+                for rec in records:
+                    if isinstance(rec, dict) and len(rec) >= 2:
+                        if first_rec is None:
+                            first_rec = rec
+                        pair_field = pair_field or _detect_field(rec, _PAIR_CANDIDATES)
+                        val_field  = val_field  or _detect_field(rec, _VAL_CANDIDATES)
+                        pval_field = pval_field or _detect_field(rec, _PVAL_CANDIDATES)
+                        if pair_field and val_field:
+                            break
+            if pair_field and val_field:
+                break
+
+        # Fallback: if pair_field still not found but we have a record,
+        # pick the field whose values look like molecular-layer labels
+        # (non-numeric strings) that isn't the val/pval field.
+        if not pair_field and first_rec and val_field:
+            known = {val_field, pval_field}
+            for k, v in first_rec.items():
+                if k in known:
+                    continue
+                v_str = str(v)
+                try:
+                    float(v_str)  # skip purely numeric fields
+                except ValueError:
+                    pair_field = k
+                    break
+
+        if not pair_field or not val_field:
+            logger.warning(f"[Cis-correlation heatmap] Could not detect field names in records. "
+                           f"Available keys: {list(first_rec.keys()) if first_rec else 'none'}. "
+                           f"pair_field={pair_field}, val_field={val_field}")
+            return None
+
+        # Collect all pair types and cohorts
+        all_pairs: set = set()
+        for records in data.values():
+            if isinstance(records, list):
+                for rec in records:
+                    if isinstance(rec, dict):
+                        v = rec.get(pair_field, "")
+                        if v:
+                            all_pairs.add(str(v))
+        cohorts = sorted(data.keys())
+        pairs = sorted(all_pairs)
+        if not cohorts or not pairs:
+            return None
+
+        logger.debug(f"[Cis-correlation heatmap] detected fields: pair={pair_field!r} val={val_field!r} pval={pval_field!r}, cohorts={cohorts}, pairs={pairs}")
+
+        # Build correlation and significance matrices
+        corr_matrix = np.full((len(cohorts), len(pairs)), np.nan)
+        sig_matrix = np.zeros((len(cohorts), len(pairs)), dtype=bool)
+
+        for ci, cohort in enumerate(cohorts):
+            for rec in (data.get(cohort) or []):
+                if not isinstance(rec, dict):
+                    continue
+                pair = str(rec.get(pair_field, ""))
+                if pair not in pairs:
+                    continue
+                pi = pairs.index(pair)
+                try:
+                    corr_matrix[ci, pi] = float(rec[val_field])
+                    if pval_field and pval_field in rec:
+                        pval = float(rec[pval_field])
+                        sig_matrix[ci, pi] = pval < 0.05
+                except (ValueError, TypeError):
+                    pass
+
+        title = f"{gene} Cis-Correlations"
+
+        fig_h = max(3.5, len(cohorts) * 0.45 + 1.5)
+        fig_w = max(4.5, len(pairs) * 1.4 + 1.5)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("#f5f5f5")
+
+        vmax = max(0.6, float(np.nanmax(np.abs(corr_matrix)))) if not np.all(np.isnan(corr_matrix)) else 1.0
+        cmap = plt.get_cmap("RdBu_r")
+        norm = mcolors.Normalize(vmin=-vmax, vmax=vmax)
+
+        im = ax.imshow(corr_matrix, cmap=cmap, norm=norm, aspect="auto")
+
+        # Annotate cells
+        for ci in range(len(cohorts)):
+            for pi in range(len(pairs)):
+                val = corr_matrix[ci, pi]
+                if not np.isnan(val):
+                    marker = "*" if sig_matrix[ci, pi] else ""
+                    ax.text(pi, ci, f"{val:.2f}{marker}", ha="center", va="center",
+                            fontsize=8, color="white" if abs(val) > vmax * 0.6 else "#222222")
+
+        ax.set_xticks(range(len(pairs)))
+        ax.set_xticklabels(pairs, fontsize=9, rotation=20, ha="right")
+        ax.set_yticks(range(len(cohorts)))
+        ax.set_yticklabels(cohorts, fontsize=9)
+        ax.set_title(title, fontsize=11, pad=8)
+        ax.text(0.5, -0.15, "* p < 0.05", transform=ax.transAxes,
+                fontsize=8, color="#666666", ha="center")
+
+        cbar = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.8)
+        cbar.set_label("Correlation", fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+        plt.close(fig)
+
+        # CSV: flat table preserving all original fields from every record
+        all_keys: list = []
+        for records in data.values():
+            if isinstance(records, list):
+                for rec in records:
+                    if isinstance(rec, dict):
+                        for k in rec:
+                            if k not in all_keys:
+                                all_keys.append(k)
+                        break
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["cohort"] + all_keys)
+        for cohort in cohorts:
+            for rec in (data.get(cohort) or []):
+                if isinstance(rec, dict):
+                    writer.writerow([cohort] + [rec.get(k, "") for k in all_keys])
+
+        return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
+
+    except Exception as e:
+        logger.warning(f"[Cis-correlation heatmap] Failed to generate: {e}")
+        return None
+
+
+def _generate_tcga_omics_heatmap_static(results: list, gene: str, cohort: str) -> Optional[dict]:
+    """Generate a horizontal bar chart of survival HR per omics type for TCGA mode 2.
+
+    Args:
+        results: [{omics, hr, pvalue, fdr, n}, ...]  (one entry per omics type)
+        gene: gene symbol
+        cohort: TCGA cohort name
+    Returns:
+        dict with png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        _OMICS_LABEL = {
+            "RNAseq": "RNA expression", "RPPA": "protein (RPPA)",
+            "Methylation": "methylation", "SCNA": "copy number",
+            "miRNASeq": "miRNA expression",
+        }
+
+        entries = []
+        for res in results:
+            hr = res.get("hr")
+            pval = res.get("fdr") or res.get("pvalue")
+            omics = res.get("omics", "")
+            n = res.get("n")
+            if hr is None or hr <= 0:
+                continue
+            entries.append({
+                "omics": _OMICS_LABEL.get(omics, omics),
+                "log2hr": math.log2(hr),
+                "hr": hr,
+                "pval": pval,
+                "n": n,
+                "sig": pval is not None and pval < 0.05,
+            })
+        if not entries:
+            return None
+
+        entries.sort(key=lambda e: e["log2hr"])
+        title = f"{gene} Survival — {cohort} (all omics)"
+
+        fig, ax = plt.subplots(figsize=(7, max(2.8, len(entries) * 0.6 + 1.2)))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        y_pos = list(range(len(entries)))
+        colors = ["#c0392b" if e["log2hr"] > 0 else "#2980b9" for e in entries]
+        edge_colors = ["#8e1a0e" if e["sig"] else "#aaaaaa" for e in entries]
+
+        bars = ax.barh(y_pos, [e["log2hr"] for e in entries],
+                       color=colors, edgecolor=edge_colors, linewidth=1.2,
+                       height=0.6)
+
+        for bar, entry in zip(bars, entries):
+            label = f"HR={entry['hr']:.3f}"
+            if entry["pval"] is not None:
+                label += f"  p={entry['pval']:.2e}"
+            if entry["sig"]:
+                label += " *"
+            x_off = 0.04 if entry["log2hr"] >= 0 else -0.04
+            ha = "left" if entry["log2hr"] >= 0 else "right"
+            ax.text(entry["log2hr"] + x_off, bar.get_y() + bar.get_height() / 2,
+                    label, va="center", ha=ha, fontsize=8, color="#333333")
+
+        ax.axvline(0, color="#555555", linewidth=0.9, linestyle="-")
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels([e["omics"] for e in entries], fontsize=9)
+        ax.set_xlabel("log₂(Hazard Ratio)\n← Protective  |  Harmful →", fontsize=9)
+        ax.set_title(title, fontsize=11, pad=8)
+        ax.text(0.99, 0.01, "* FDR < 0.05", transform=ax.transAxes,
+                fontsize=8, color="#666666", ha="right", va="bottom")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(axis="x", color="#eeeeee", linewidth=0.7)
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["omics", "hr", "log2_hr", "pvalue", "n", "significant"])
+        for e in entries:
+            writer.writerow([e["omics"], round(e["hr"], 6), round(e["log2hr"], 6),
+                             f"{e['pval']:.4e}" if e["pval"] is not None else "",
+                             e["n"] or "", "yes" if e["sig"] else "no"])
+
+        return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
+
+    except Exception as e:
+        logger.warning(f"[TCGA omics heatmap] Failed to generate: {e}")
+        return None
+
+
+def _generate_funmap_network_static(neighborhood: list, gene: str) -> Optional[dict]:
+    """Generate a spring-layout network graph for FunMap functional partners.
+
+    Args:
+        neighborhood: list of gene symbol strings
+        gene: query gene symbol (center node)
+    Returns:
+        dict with png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import io, base64, csv as _csv
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import networkx as nx
+
+        neighbors = [n for n in neighborhood if n != gene][:40]
+        if not neighbors:
+            return None
+
+        title = f"{gene} Functional Network — FunMap"
+
+        G = nx.Graph()
+        G.add_node(gene)
+        for n in neighbors:
+            G.add_node(n)
+            G.add_edge(gene, n)
+
+        pos = nx.spring_layout(G, seed=42, k=2.0 / (len(neighbors) ** 0.5))
+
+        fig_side = max(6.5, min(11, 5 + len(neighbors) * 0.15))
+        fig, ax = plt.subplots(figsize=(fig_side, fig_side))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        nx.draw_networkx_edges(G, pos, ax=ax, edge_color="#cccccc", width=1.0, alpha=0.8)
+        nx.draw_networkx_nodes(G, pos, ax=ax,
+                               nodelist=[gene],
+                               node_color="#c0392b", node_size=600, alpha=0.95)
+        nx.draw_networkx_nodes(G, pos, ax=ax,
+                               nodelist=neighbors,
+                               node_color="#2980b9", node_size=220, alpha=0.75)
+        nx.draw_networkx_labels(G, pos, ax=ax,
+                                labels={gene: gene},
+                                font_size=10, font_weight="bold", font_color="white")
+        nx.draw_networkx_labels(G, pos, ax=ax,
+                                labels={n: n for n in neighbors},
+                                font_size=7.5, font_color="#222222")
+
+        ax.set_title(title, fontsize=11, pad=8)
+        ax.text(0.5, -0.02,
+                f"{len(neighbors)} functional partners shown  ·  Center node = {gene}",
+                transform=ax.transAxes, fontsize=8.5, color="#666666", ha="center")
+        ax.axis("off")
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["source", "target"])
+        for n in neighbors:
+            writer.writerow([gene, n])
+
+        return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
+
+    except Exception as e:
+        logger.warning(f"[FunMap network] Failed to generate: {e}")
+        return None
+
+
 class MCPOrchestrator:
     """Orchestrator that uses MCP tools instead of direct agent calls"""
     
@@ -1903,15 +2397,25 @@ Please provide a clear, informative response about this gene. Include the key de
                 neigh = []
                 if isinstance(parsed, dict):
                     neigh = parsed.get("neighborhood") or []
-                
+
                 funmap_title = f"FunMap neighborhood - {gene_name}" if gene_name else "FunMap neighborhood"
                 md = [
                     f"## {funmap_title}",
                     f"**Nodes found:** {len(neigh)}",
+                    "",
                 ]
-                
+                fig_dict = _generate_funmap_network_static(neigh, gene_name or "Gene")
+                if fig_dict:
+                    viz_id = _uuid.uuid4().hex
+                    _visualizations.append({
+                        "type": "static_plot",
+                        "id": viz_id,
+                        "title": fig_dict["title"],
+                        **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                    })
+                    md.append(f"[PLOT:{viz_id}]")
+                    md.append("")
                 if neigh:
-                    md.append("")  # For newline spacing
                     chunks = [neigh[i:i + 5] for i in range(0, len(neigh), 5)]
                     for chunk in chunks:
                         md.append("- " + ", ".join(f"{g}" for g in chunk))
@@ -1948,27 +2452,45 @@ Please provide a clear, informative response about this gene. Include the key de
                 # Detect batch result: {"status": ..., "data": {"GENE": {...}, ...}}
                 batch_data = parsed.get("data") if ("data" in parsed and isinstance(parsed.get("data"), dict) and not parsed.get("protein_level") and not parsed.get("RNA_level")) else None
 
-                def _render_single_gene_table(g_name, g_parsed, b_title, sub, s_desc, c_rna, c_prot):
+                is_surv = tool_id.endswith("overall_survival_per_cancer")
+
+                def _render_single_gene_section(g_name, g_parsed, b_title, sub, s_desc, c_rna, c_prot):
                     p = (g_parsed.get("protein_level") or {})
                     r = (g_parsed.get("RNA_level") or {})
                     pd_ = p.get("data") or {}
                     rd_ = r.get("data") or {}
                     cancers_ = sorted(set(list(pd_.keys()) + list(rd_.keys())))
                     t = f"{b_title} - {g_name}{sub}" if g_name else f"{b_title}{sub}"
-                    ls = [f"## {t}", "", f"| Cancer | {c_rna} | {c_prot} |", "|---|---|---|"]
-                    for c in cancers_:
-                        ls.append(f"| {c} | {rd_.get(c,'-')} | {pd_.get(c,'-')} |")
-                    ls.append("")
+                    ls = [f"## {t}", ""]
+                    fig_dict = _generate_expression_tile_static(g_parsed, g_name or "Gene", is_survival=is_surv)
+                    has_plot = False
+                    if fig_dict:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "static_plot",
+                            "id": viz_id,
+                            "title": fig_dict["title"],
+                            **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                        })
+                        ls.append(f"[PLOT:{viz_id}]")
+                        ls.append("")
+                        has_plot = True
+                    # Only show table as fallback if the plot could not be generated
+                    if not has_plot:
+                        ls.extend([f"| Cancer | {c_rna} | {c_prot} |", "|---|---|---|"])
+                        for c in cancers_:
+                            ls.append(f"| {c} | {rd_.get(c,'-')} | {pd_.get(c,'-')} |")
+                        ls.append("")
                     ls.append(f"> **Source:** [LinkedOmics](#source:linkedomics) · {s_desc}")
                     return "\n".join(ls) + "\n"
 
                 if batch_data:
                     for g, g_result in batch_data.items():
                         if isinstance(g_result, dict) and ("protein_level" in g_result or "RNA_level" in g_result):
-                            sections.append(_render_single_gene_table(g, g_result, base_title, subtitle, source_desc, col_rna, col_prot))
+                            sections.append(_render_single_gene_section(g, g_result, base_title, subtitle, source_desc, col_rna, col_prot))
                 else:
                     # Use gene_name from metadata wrapper
-                    sections.append(_render_single_gene_table(gene_name, parsed, base_title, subtitle, source_desc, col_rna, col_prot))
+                    sections.append(_render_single_gene_section(gene_name, parsed, base_title, subtitle, source_desc, col_rna, col_prot))
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
                 continue
@@ -2046,32 +2568,45 @@ Please provide a clear, informative response about this gene. Include the key de
             if tool_id.endswith("get_cis_correlations"):
                 if not isinstance(parsed, dict) or "data" not in parsed:
                     continue  # skip unrenderable result silently
-                
+
                 data = parsed.get("data", {})
                 cis_title = f"Cis-Correlations - {gene_name}" if gene_name else "Cis-Correlations"
-                md = [f"## {cis_title}"]
-                
-                if not data:
-                    md.append("_No correlation data found._")
-                else:
-                     for cohort, records in data.items():
-                         if not records: 
-                             continue
-                         md.append(f"\n### {cohort}")
-                         # Assuming records is a list of dicts, take keys from first record
-                         if isinstance(records, list) and len(records) > 0:
-                             keys = list(records[0].keys())
-                             header = "| " + " | ".join(keys) + " |"
-                             separator = "| " + " | ".join(["---"] * len(keys)) + " |"
-                             md.append(header)
-                             md.append(separator)
-                             for rec in records[:10]: # Limit to top 10 per cohort
-                                 row = "| " + " | ".join(str(rec.get(k, "")) for k in keys) + " |"
-                                 md.append(row)
-                             if len(records) > 10:
-                                 md.append(f"_(showing 10 of {len(records)} records)_")
-                         else:
-                             md.append("_No records._")
+                md = [f"## {cis_title}", ""]
+                fig_dict = _generate_cis_correlation_static(data, gene_name or "Gene")
+                cis_has_plot = False
+                if fig_dict:
+                    viz_id = _uuid.uuid4().hex
+                    _visualizations.append({
+                        "type": "static_plot",
+                        "id": viz_id,
+                        "title": fig_dict["title"],
+                        **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                    })
+                    md.append(f"[PLOT:{viz_id}]")
+                    md.append("")
+                    cis_has_plot = True
+                # Only show per-cohort tables as fallback if plot could not be generated
+                if not cis_has_plot:
+                    if not data:
+                        md.append("_No correlation data found._")
+                    else:
+                        for cohort, records in data.items():
+                            if not records:
+                                continue
+                            md.append(f"\n### {cohort}")
+                            if isinstance(records, list) and len(records) > 0:
+                                keys = list(records[0].keys())
+                                header = "| " + " | ".join(keys) + " |"
+                                separator = "| " + " | ".join(["---"] * len(keys)) + " |"
+                                md.append(header)
+                                md.append(separator)
+                                for rec in records[:10]:
+                                    row = "| " + " | ".join(str(rec.get(k, "")) for k in keys) + " |"
+                                    md.append(row)
+                                if len(records) > 10:
+                                    md.append(f"_(showing 10 of {len(records)} records)_")
+                            else:
+                                md.append("_No records._")
 
                 md.append("\n> **Source:** [LinkedOmics](#source:linkedomics)")
                 sections.append("\n".join(md) + "\n")
@@ -2203,17 +2738,23 @@ Please provide a clear, informative response about this gene. Include the key de
                             _visualizations.append({"type": "static_plot", "id": viz_id, "title": fig_dict["title"], **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")}})
                             md.append(f"\n[PLOT:{viz_id}]")
                 else:
-                    # Mode 1 (cohort+gene+omics) or Mode 2 (cohort+gene): KM plot per omics type
+                    # Mode 1 (cohort+gene+omics) or Mode 2 (cohort+gene, all omics): KM plot per omics type
                     cohort = first_res.get("cohort", "") or cohort_key_k
                     cohort_full = _TCGA_COHORT_NAMES.get(cohort, cohort)
                     cohort_display = f"{cohort} — {cohort_full}" if cohort_full and cohort_full != cohort else cohort
                     section_title = f"TCGA Survival Analysis — {g} ({cohort_display})" if cohort_display else f"TCGA Survival Analysis — {g}"
                     md = [f"## {section_title}"]
+                    # Mode 2: multiple omics results for the same cohort → show summary heatmap
+                    if len(all_results) > 1:
+                        omics_fig = _generate_tcga_omics_heatmap_static(all_results, g, cohort)
+                        if omics_fig:
+                            viz_id = _uuid.uuid4().hex
+                            _visualizations.append({"type": "static_plot", "id": viz_id, "title": omics_fig["title"], **{k: omics_fig[k] for k in ("png_b64", "svg", "csv")}})
+                            md.append(f"\n[PLOT:{viz_id}]")
                     for res in all_results:
                         omics = res.get("omics", "") or omics_query
                         hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
                         omics_label = _OMICS_LABEL_PRE.get(omics, omics) or "expression"
-                        plot_title = f"{g} {omics_label} vs. Overall Survival — TCGA {cohort}".strip()
                         fig_dict = _generate_km_static(res.get("samples") or [], g, cohort, omics, hr, pval, n_tot)
                         if fig_dict:
                             viz_id = _uuid.uuid4().hex
