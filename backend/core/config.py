@@ -102,8 +102,12 @@ class Settings(BaseSettings):
     NCBI_EMAIL: str = ""
     NCBI_API_KEY: str = ""  # optional — raises rate limit from 3 to 10 req/s
 
-    # Plot cache: PNG/SVG/CSV files are written here so they survive history reloads.
-    # Can be set to any writable path; defaults to ./data/plots relative to the working dir.
+    # Durable artifact root for session-scoped workspaces (plots, exports, attachments).
+    # Defaults to ./data/artifacts relative to the backend working dir.
+    ARTIFACT_ROOT: str = "./data/artifacts"
+
+    # Legacy flat plot cache retained for backward compatibility with older messages.
+    # New visualizations are stored in per-session workspaces under ARTIFACT_ROOT.
     PLOT_DIR: str = "./data/plots"
 
     # MCP Configuration (Phase 1 Migration)

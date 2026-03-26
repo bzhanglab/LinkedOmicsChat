@@ -10,6 +10,13 @@ import time
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.artifacts import (
+    delete_session_workspace,
+    delete_visualization_artifacts,
+    ensure_session_workspace,
+    session_plot_dir,
+    write_visualization_index,
+)
 from core.config import settings
 from core.llm_factory import LLMFactory
 from core.database import SessionLocal
@@ -319,6 +326,203 @@ def _generate_volcano_static(
         return None
 
 
+def _generate_enrichment_static(rows: list, title: str) -> Optional[dict]:
+    """Generate a dot plot for pathway enrichment results as PNG, SVG, and CSV."""
+    try:
+        import io, base64, csv as _csv, math, textwrap
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+
+        plot_rows = []
+        csv_rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            description = str(row.get("description") or row.get("geneSet") or "").strip()
+            gene_set = str(row.get("geneSet") or "").strip()
+            link = str(row.get("link") or "").strip()
+            overlap_id = str(row.get("overlapId") or "").strip()
+            try:
+                ratio = float(row.get("enrichmentRatio"))
+                fdr = float(row.get("FDR"))
+            except (TypeError, ValueError):
+                continue
+            try:
+                overlap = int(float(row.get("overlap", 0)))
+            except (TypeError, ValueError):
+                overlap = 0
+            try:
+                size = int(float(row.get("size", 0)))
+            except (TypeError, ValueError):
+                size = 0
+            try:
+                expect = float(row.get("expect", 0))
+            except (TypeError, ValueError):
+                expect = 0.0
+            try:
+                pvalue = float(row.get("pValue"))
+            except (TypeError, ValueError):
+                pvalue = float("nan")
+
+            if ratio <= 0 or fdr < 0:
+                continue
+
+            plot_rows.append({
+                "description": description,
+                "gene_set": gene_set,
+                "ratio": ratio,
+                "fdr": max(fdr, 1e-300),
+                "overlap": max(overlap, 1),
+                "size": max(size, 0),
+                "expect": expect,
+            })
+            csv_rows.append([
+                gene_set,
+                description,
+                size,
+                overlap,
+                round(expect, 6),
+                round(ratio, 6),
+                "" if math.isnan(pvalue) else f"{pvalue:.8g}",
+                f"{fdr:.8g}",
+                overlap_id,
+                link,
+            ])
+
+        if not plot_rows:
+            return None
+
+        display_rows = list(reversed(plot_rows))
+        labels = []
+        ratios = []
+        overlaps = []
+        neglog_fdr = []
+        for entry in display_rows:
+            label = textwrap.fill(entry["description"], width=34)
+            if entry["gene_set"]:
+                label = f"{label}\n{entry['gene_set']}"
+            labels.append(label)
+            ratios.append(entry["ratio"])
+            overlaps.append(entry["overlap"])
+            neglog_fdr.append(-math.log10(entry["fdr"]))
+
+        fig_height = max(3.8, 0.8 * len(display_rows) + 1.8)
+        fig, ax = plt.subplots(figsize=(8.4, fig_height))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        y_pos = list(range(len(display_rows)))
+        x_max = max(ratios) * 1.18 if ratios else 1.0
+        min_size = 80
+        max_size = 280
+        max_overlap = max(overlaps) if overlaps else 1
+        if max_overlap <= 1:
+            sizes = [min_size for _ in overlaps]
+        else:
+            sizes = [
+                min_size + ((ov - 1) / (max_overlap - 1)) * (max_size - min_size)
+                for ov in overlaps
+            ]
+
+        cmap = plt.get_cmap("YlOrRd")
+        norm = mcolors.Normalize(vmin=min(neglog_fdr), vmax=max(neglog_fdr) if max(neglog_fdr) > min(neglog_fdr) else min(neglog_fdr) + 1)
+
+        for y, ratio in zip(y_pos, ratios):
+            ax.hlines(y, xmin=0, xmax=ratio, color="#d1d5db", linewidth=1.2, zorder=1)
+
+        scatter = ax.scatter(
+            ratios,
+            y_pos,
+            s=sizes,
+            c=neglog_fdr,
+            cmap=cmap,
+            norm=norm,
+            edgecolors="#374151",
+            linewidths=0.6,
+            zorder=3,
+        )
+
+        label_offset = 0.22
+        for y, ratio in zip(y_pos, ratios):
+            ax.text(
+                ratio,
+                y - label_offset,
+                f"{ratio:.1f}x",
+                va="top",
+                ha="center",
+                fontsize=7.5,
+                color="#374151",
+            )
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(labels, fontsize=9)
+        ax.set_xlabel("Enrichment Ratio", fontsize=10)
+        ax.set_xlim(0, x_max)
+        ax.set_ylim(-0.55, len(display_rows) - 0.35)
+        ax.grid(axis="x", color="#eeeeee", linewidth=0.8)
+        ax.spines[["top", "right", "left"]].set_visible(False)
+        ax.tick_params(axis="y", length=0)
+        ax.tick_params(axis="x", labelsize=9)
+
+        cbar = fig.colorbar(scatter, ax=ax, pad=0.02)
+        cbar.set_label("−log10(FDR)", fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
+
+        fig.suptitle(title, fontsize=12, y=0.985)
+        fig.text(
+            0.125,
+            0.965,
+            "Dot size = overlap genes · label = enrichment ratio",
+            fontsize=8.5,
+            color="#6b7280",
+            ha="left",
+            va="top",
+        )
+
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow([
+            "geneSet",
+            "description",
+            "size",
+            "overlap",
+            "expect",
+            "enrichmentRatio",
+            "pValue",
+            "FDR",
+            "overlapId",
+            "link",
+        ])
+        writer.writerows(csv_rows)
+
+        return {
+            "png_b64": png_b64,
+            "svg": svg_str,
+            "csv": csv_buf.getvalue(),
+            "title": title,
+        }
+
+    except Exception as e:
+        logger.warning(f"[Enrichment plot] Failed to generate static plot: {e}")
+        return None
+
+
 class MCPOrchestrator:
     """Orchestrator that uses MCP tools instead of direct agent calls"""
     
@@ -597,6 +801,7 @@ class MCPOrchestrator:
                             "created_at": db_session.created_at,
                             "last_updated": db_session.last_updated
                         }
+                        ensure_session_workspace(session["id"])
                         self.sessions[session_id] = session
                         return session
                 
@@ -621,6 +826,7 @@ class MCPOrchestrator:
                     "created_at": new_session.created_at,
                     "last_updated": new_session.last_updated
                 }
+                ensure_session_workspace(session["id"])
                 self.sessions[session["id"]] = session
                 return session
             finally:
@@ -659,6 +865,7 @@ class MCPOrchestrator:
                             "created_at": db_session.created_at,
                             "last_updated": db_session.last_updated
                         }
+                        ensure_session_workspace(session["id"])
                         self.sessions[session_id] = session
                         return session
                 
@@ -683,6 +890,7 @@ class MCPOrchestrator:
                     "created_at": new_session.created_at,
                     "last_updated": new_session.last_updated
                 }
+                ensure_session_workspace(session["id"])
                 self.sessions[session["id"]] = session
                 return session
     
@@ -941,6 +1149,7 @@ Tool results (sanitized JSON):
 {evidence}
 
 CRITICAL: Your response must DIRECTLY ANSWER the user's question using the tool results above.
+The app will show detailed tables, plots, and structured tool outputs separately. Your job is to provide a concise executive takeaway that complements those details instead of repeating them.
 
 If the user is asking to:
 - **Prioritize/Compare genes**: Provide a clear recommendation on which gene(s) to prioritize and why, based on the data.
@@ -949,14 +1158,14 @@ If the user is asking to:
 
 Structure your response as:
 
-**Direct Answer**
-(2-3 sentences directly answering the user's question with a clear recommendation or conclusion)
+**Takeaway**
+(1-2 sentences directly answering the user's question with a clear recommendation or conclusion)
 
-**Key Findings**
-- [3-5 bullet points highlighting the most important data points that support your answer]
+**Why It Matters**
+- [2-4 bullet points highlighting only the most decision-relevant findings]
 
-**Analytical Synthesis**
-(2-3 sentences connecting the datasets and explaining the biological/clinical implications)
+**Interpretation**
+(1-2 sentences connecting the findings and explaining the biological/clinical implications)
 
 Rules:
 - Output ONLY the markdown text above — no extra sections.
@@ -966,6 +1175,10 @@ Rules:
 - Be precise with biological terminology.
 - DO NOT state your identity or use phrases like 'As a Senior Analyst'.
 - MOST IMPORTANT: Directly answer what the user asked, don't just summarize data.
+- Do NOT restate the full ranked list, table, or plot contents row-by-row.
+- Do NOT copy tool phrases verbatim unless a specific wording is biologically important.
+- Mention at most 3 specific genes, pathways, cohorts, or terms unless the user explicitly asked for an exhaustive list.
+- Prefer synthesis, ranking, caveats, and notable exceptions over repeating exact values that will already be visible in the detailed output.
 """
             resp = await LLMFactory.invoke_async(
                 self.llm,
@@ -1585,6 +1798,59 @@ Please provide a clear, informative response about this gene. Include the key de
 
         _tcga_rendered: set = set()
 
+        def _normalize_tool_id(tool_id: str) -> str:
+            return tool_id.split("::", 1)[1] if "::" in tool_id else tool_id
+
+        def _placeholder_title_for_tool(tool_id: str) -> Optional[str]:
+            normalized = _normalize_tool_id(tool_id)
+            if normalized in {"cancer_gene_expression", "batch_cancer_gene_expression"}:
+                return "Cancer expression (Tumor vs Normal)"
+            if normalized in {"overall_survival_per_cancer", "batch_overall_survival_per_cancer"}:
+                return "Overall survival associations"
+            if normalized == "tcga_survival_analysis":
+                return "TCGA survival analysis"
+            if normalized == "get_survival_plot":
+                return "Survival plot"
+            if normalized in {"get_target", "batch_get_target"}:
+                return "Drug target profile"
+            if normalized == "clinical_trial_information":
+                return "Clinical trial associations"
+            if normalized == "get_cis_correlations":
+                return "Cis-Correlations"
+            return None
+
+        def _covered_genes_for_result(tool_id: str, wrapped_result: Any) -> set[str]:
+            covered: set[str] = set()
+            if not isinstance(wrapped_result, dict):
+                return covered
+
+            gene_name = wrapped_result.get("_gene")
+            if isinstance(gene_name, str) and gene_name.strip():
+                covered.add(gene_name.upper())
+
+            raw_result = wrapped_result.get("_result", wrapped_result)
+            parsed_result = _maybe_json(raw_result)
+            if not isinstance(parsed_result, dict):
+                return covered
+
+            normalized = _normalize_tool_id(tool_id)
+            batch_gene_map = None
+            if normalized in {"batch_cancer_gene_expression", "batch_overall_survival_per_cancer"}:
+                batch_gene_map = parsed_result.get("data")
+            elif normalized == "batch_get_target":
+                batch_gene_map = parsed_result.get("results")
+
+            if isinstance(batch_gene_map, dict):
+                for batch_gene, batch_payload in batch_gene_map.items():
+                    if not isinstance(batch_gene, str) or not batch_gene.strip():
+                        continue
+                    if normalized == "batch_get_target":
+                        if not (isinstance(batch_payload, dict) and isinstance(batch_payload.get("result"), dict)):
+                            continue
+                    covered.add(batch_gene.upper())
+
+            return covered
+
         for unique_key, wrapped_result in results.items():
             # Strip the #N suffix to get the actual tool_id
             tool_id = unique_key.split('#')[0] if '#' in unique_key else unique_key
@@ -1820,12 +2086,22 @@ Please provide a clear, informative response about this gene. Include the key de
                 if not isinstance(rows, list):
                     rows = []
                 enrich_title = f"Pathway / GO enrichment - {gene_name}" if gene_name else "Pathway / GO enrichment"
-                md = [
-                    f"## {enrich_title}",
-                    "",
+                md = [f"## {enrich_title}", ""]
+                fig_dict = _generate_enrichment_static(rows, enrich_title)
+                if fig_dict:
+                    viz_id = _uuid.uuid4().hex
+                    _visualizations.append({
+                        "type": "static_plot",
+                        "id": viz_id,
+                        "title": fig_dict["title"],
+                        **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                    })
+                    md.append(f"[PLOT:{viz_id}]")
+                    md.append("")
+                md.extend([
                     "| GO Term | Description | Enrichment Ratio | FDR |",
                     "|---|---|---|---|",
-                ]
+                ])
                 for row in rows:
                     gs = row.get("geneSet", "")
                     desc = row.get("description", "")
@@ -1973,31 +2249,27 @@ Please provide a clear, informative response about this gene. Include the key de
         if query and not any_errors:
             requested_genes = self._extract_gene_symbols(query)
             if requested_genes:
+                tool_types = [key.split('#')[0] for key in results.keys()]
+                placeholder_title = next(
+                    (title for title in (_placeholder_title_for_tool(tool_id) for tool_id in tool_types) if title),
+                    None,
+                )
+                if not placeholder_title:
+                    requested_genes = []
+
+            if requested_genes:
                 # Extract genes that already have data in the results
                 genes_with_data = set()
                 for unique_key, wrapped_result in results.items():
-                    if isinstance(wrapped_result, dict) and "_gene" in wrapped_result:
-                        genes_with_data.add(wrapped_result["_gene"])
+                    tool_id = unique_key.split('#')[0] if '#' in unique_key else unique_key
+                    genes_with_data.update(_covered_genes_for_result(tool_id, wrapped_result))
 
                 # Find genes without data
                 genes_without_data = [g for g in requested_genes if g not in genes_with_data]
 
                 # Add placeholder sections for genes without data
                 for gene in genes_without_data:
-                    # Determine which type of analysis was requested based on tool_ids
-                    tool_types = [key.split('#')[0] for key in results.keys()]
-                    
-                    if any("cancer_gene_expression" in t for t in tool_types):
-                        sections.append(f"## Cancer expression (Tumor vs Normal) - {gene}\n\nData unavailable\n")
-                    elif any("overall_survival" in t for t in tool_types):
-                        sections.append(f"## Overall survival associations - {gene}\n\nData unavailable\n")
-                    elif any("tcga_survival_analysis" in t for t in tool_types):
-                        sections.append(f"## TCGA survival analysis - {gene}\n\nData unavailable\n")
-                    elif any("get_survival_plot" in t for t in tool_types):
-                        sections.append(f"## Survival plot - {gene}\n\nData unavailable\n")
-                    else:
-                        # Generic placeholder
-                        sections.append(f"## Analysis - {gene}\n\nData unavailable\n")
+                    sections.append(f"## {placeholder_title} - {gene}\n\nData unavailable\n")
 
         # Re-order sections so related analyses group together:
         # 1. Survival (TCGA + CPTAC) 2. Expression (tumor vs normal) 3. Everything else
@@ -2042,46 +2314,79 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             return first_query[:50] + ("..." if len(first_query) > 50 else "")
     
     @staticmethod
-    def _persist_viz_to_disk(visualizations: list) -> None:
-        """Save PNG/SVG/CSV plot files to PLOT_DIR so they can be served later."""
+    def _persist_viz_to_disk(visualizations: list, session_id: str) -> None:
+        """Save plot files into the session workspace and index them by visualization ID."""
         import os, json as _json, base64 as _b64
-        plot_dir = settings.PLOT_DIR
-        os.makedirs(plot_dir, exist_ok=True)
+        plot_dir = session_plot_dir(session_id)
         for viz in visualizations:
             if viz.get("type") != "static_plot":
                 continue
             viz_id = viz.get("id")
             if not viz_id:
                 continue
+            safe_viz_id = os.path.basename(str(viz_id))
             # Save title sidecar so the API can return it for lazy-loaded plots
             title = viz.get("title")
             if title:
                 try:
-                    with open(os.path.join(plot_dir, f"{viz_id}.json"), "w", encoding="utf-8") as f:
+                    with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
                         _json.dump({"title": title}, f)
                 except Exception:
                     pass
             png = viz.get("png_b64")
             if png:
                 try:
-                    with open(os.path.join(plot_dir, f"{viz_id}.png"), "wb") as f:
+                    with open(plot_dir / f"{safe_viz_id}.png", "wb") as f:
                         f.write(_b64.b64decode(png))
                 except Exception:
                     pass
             svg = viz.get("svg")
             if svg:
                 try:
-                    with open(os.path.join(plot_dir, f"{viz_id}.svg"), "w", encoding="utf-8") as f:
+                    with open(plot_dir / f"{safe_viz_id}.svg", "w", encoding="utf-8") as f:
                         f.write(svg)
                 except Exception:
                     pass
             csv = viz.get("csv")
             if csv:
                 try:
-                    with open(os.path.join(plot_dir, f"{viz_id}.csv"), "w", encoding="utf-8") as f:
+                    with open(plot_dir / f"{safe_viz_id}.csv", "w", encoding="utf-8") as f:
                         f.write(csv)
                 except Exception:
                     pass
+            try:
+                write_visualization_index(safe_viz_id, session_id, title or "")
+            except Exception:
+                pass
+
+    @staticmethod
+    def _extract_visualization_ids(response: Any) -> set[str]:
+        """Collect static visualization IDs from a stored response payload."""
+        viz_ids: set[str] = set()
+        if not isinstance(response, dict):
+            return viz_ids
+        visualizations = response.get("visualizations") or []
+        if not isinstance(visualizations, list):
+            return viz_ids
+        for viz in visualizations:
+            if not isinstance(viz, dict):
+                continue
+            if viz.get("type") != "static_plot":
+                continue
+            viz_id = viz.get("id")
+            if isinstance(viz_id, str) and viz_id.strip():
+                viz_ids.add(viz_id)
+        return viz_ids
+
+    @classmethod
+    def _extract_visualization_ids_from_messages(cls, messages: List[Any]) -> set[str]:
+        viz_ids: set[str] = set()
+        for msg in messages or []:
+            response = getattr(msg, "response", None)
+            if response is None and isinstance(msg, dict):
+                response = msg.get("response")
+            viz_ids.update(cls._extract_visualization_ids(response))
+        return viz_ids
 
     @staticmethod
     def _strip_viz_binary(response: Dict[str, Any]) -> Dict[str, Any]:
@@ -2150,7 +2455,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     is_first_message = message_count == 0
                     
                     # Persist plot files to disk, then strip binary from DB row
-                    self._persist_viz_to_disk(response.get("visualizations") or [])
+                    self._persist_viz_to_disk(response.get("visualizations") or [], session_id)
                     message = DBChatMessage(
                         session_id=session_id,
                         query=query,
@@ -2232,7 +2537,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     is_first_message = message_count == 0
                     
                     # Persist plot files to disk, then strip binary from DB row
-                    self._persist_viz_to_disk(response.get("visualizations") or [])
+                    self._persist_viz_to_disk(response.get("visualizations") or [], session_id)
                     message = DBChatMessage(
                         session_id=session_id,
                         query=query,
@@ -2600,6 +2905,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         """Delete the specified turn and all later turns, then rebuild session context."""
         deleted_turns = 0
         remaining_turns = 0
+        removed_viz_ids: set[str] = set()
         now = time.time()
 
         if settings.DATABASE_URL.startswith("sqlite"):
@@ -2623,6 +2929,12 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     .order_by(DBChatMessage.timestamp.asc(), DBChatMessage.id.asc())
                     .all()
                 )
+                deleted_messages = (
+                    db.query(DBChatMessage)
+                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.id >= message_id)
+                    .order_by(DBChatMessage.timestamp.asc(), DBChatMessage.id.asc())
+                    .all()
+                )
 
                 deleted_turns = (
                     db.query(DBChatMessage)
@@ -2638,6 +2950,10 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
 
                 db.commit()
                 remaining_turns = len(remaining_messages)
+                removed_viz_ids = (
+                    self._extract_visualization_ids_from_messages(deleted_messages)
+                    - self._extract_visualization_ids_from_messages(remaining_messages)
+                )
             finally:
                 db.close()
         else:
@@ -2665,6 +2981,12 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     .order_by(DBChatMessage.timestamp.asc(), DBChatMessage.id.asc())
                 )
                 remaining_messages = list(result.scalars().all())
+                result = await db.execute(
+                    select(DBChatMessage)
+                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.id >= message_id)
+                    .order_by(DBChatMessage.timestamp.asc(), DBChatMessage.id.asc())
+                )
+                deleted_messages = list(result.scalars().all())
 
                 delete_result = await db.execute(
                     delete(DBChatMessage).where(
@@ -2682,6 +3004,13 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
 
                 await db.commit()
                 remaining_turns = len(remaining_messages)
+                removed_viz_ids = (
+                    self._extract_visualization_ids_from_messages(deleted_messages)
+                    - self._extract_visualization_ids_from_messages(remaining_messages)
+                )
+
+        for viz_id in removed_viz_ids:
+            delete_visualization_artifacts(viz_id)
 
         return {
             "deleted_turns": deleted_turns,
@@ -2749,9 +3078,12 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
     async def _delete_session_from_db(self, session_id: str):
         """Delete session from database"""
         try:
+            viz_ids: set[str] = set()
             if settings.DATABASE_URL.startswith("sqlite"):
                 db = SessionLocal()
                 try:
+                    messages = db.query(DBChatMessage).filter(DBChatMessage.session_id == session_id).all()
+                    viz_ids = self._extract_visualization_ids_from_messages(messages)
                     # Delete messages first
                     db.query(DBChatMessage).filter(DBChatMessage.session_id == session_id).delete()
                     # Delete session
@@ -2764,9 +3096,14 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             else:
                 # PostgreSQL async
                 async with SessionLocal() as db:
-                    # Delete messages
-                    await db.execute(
+                    result = await db.execute(
                         select(DBChatMessage).filter(DBChatMessage.session_id == session_id)
+                    )
+                    messages = list(result.scalars().all())
+                    viz_ids = self._extract_visualization_ids_from_messages(messages)
+                    # Delete messages first, then the session row.
+                    await db.execute(
+                        delete(DBChatMessage).where(DBChatMessage.session_id == session_id)
                     )
                     result = await db.execute(
                         select(ChatSession).filter(ChatSession.id == session_id)
@@ -2774,6 +3111,9 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     db_session = result.scalar_one_or_none()
                     if db_session:
                         await db.delete(db_session)
-                        await db.commit()
+                    await db.commit()
+            for viz_id in viz_ids:
+                delete_visualization_artifacts(viz_id)
+            delete_session_workspace(session_id)
         except Exception as e:
             logger.error(f"Error deleting session from database: {e}")

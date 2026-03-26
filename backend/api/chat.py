@@ -12,6 +12,8 @@ import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, cast, Text as SAText
 
+from core.artifacts import resolve_visualization_paths
+
 # ── In-memory guest rate limiter (sliding window, per IP) ──────────────────
 # Stores a deque of request timestamps per IP address.
 # On each request we drop timestamps older than 1 hour, then check the count.
@@ -606,11 +608,10 @@ async def search_messages(
 @router.get("/visualizations/{viz_id}/png")
 async def get_visualization_png(viz_id: str):
     """Serve a plot PNG directly (no auth — IDs are random UUIDs, used by shared session pages)."""
-    import os
     from fastapi.responses import FileResponse
-    safe_id = os.path.basename(viz_id)
-    png_path = os.path.join(settings.PLOT_DIR, f"{safe_id}.png")
-    if not os.path.exists(png_path):
+    paths = resolve_visualization_paths(viz_id)
+    png_path = paths.get("png") if paths else None
+    if not png_path or not png_path.exists():
         raise HTTPException(status_code=404, detail="Visualization not found")
     return FileResponse(png_path, media_type="image/png")
 
@@ -618,39 +619,36 @@ async def get_visualization_png(viz_id: str):
 @router.get("/visualizations/{viz_id}")
 async def get_visualization(viz_id: str):
     """Return saved plot data (png_b64, svg, csv) for a visualization ID. No auth required — IDs are random UUIDs."""
-    import os, base64 as _b64
-    from core.config import settings
-    plot_dir = settings.PLOT_DIR
+    import base64 as _b64
+    import json as _json
 
-    # Sanitize viz_id to prevent path traversal
-    safe_id = os.path.basename(viz_id)
-    png_path = os.path.join(plot_dir, f"{safe_id}.png")
-    if not os.path.exists(png_path):
+    paths = resolve_visualization_paths(viz_id)
+    png_path = paths.get("png") if paths else None
+    if not png_path or not png_path.exists():
         raise HTTPException(status_code=404, detail="Visualization not found")
 
     with open(png_path, "rb") as f:
         png_b64 = _b64.b64encode(f.read()).decode()
 
     title = ""
-    json_path = os.path.join(plot_dir, f"{safe_id}.json")
-    if os.path.exists(json_path):
-        import json as _json
+    json_path = paths.get("json") if paths else None
+    if json_path and json_path.exists():
         with open(json_path, encoding="utf-8") as f:
             title = _json.load(f).get("title", "")
 
     svg = ""
-    svg_path = os.path.join(plot_dir, f"{safe_id}.svg")
-    if os.path.exists(svg_path):
+    svg_path = paths.get("svg") if paths else None
+    if svg_path and svg_path.exists():
         with open(svg_path, encoding="utf-8") as f:
             svg = f.read()
 
     csv = ""
-    csv_path = os.path.join(plot_dir, f"{safe_id}.csv")
-    if os.path.exists(csv_path):
+    csv_path = paths.get("csv") if paths else None
+    if csv_path and csv_path.exists():
         with open(csv_path, encoding="utf-8") as f:
             csv = f.read()
 
-    return {"type": "static_plot", "id": safe_id, "title": title, "png_b64": png_b64, "svg": svg, "csv": csv}
+    return {"type": "static_plot", "id": viz_id, "title": title, "png_b64": png_b64, "svg": svg, "csv": csv}
 
 
 @router.patch("/sessions/{session_id}/title")

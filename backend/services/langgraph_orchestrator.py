@@ -778,6 +778,7 @@ RESPONSE STYLE:
                             effective_query, raw_results, session, intent="research"
                         )
                         _msg = formatted.get("message") or ""
+                        _summary = formatted.get("summary") or ""
                         _placeholder = {"", "No LinkedOmics results.", "No response generated."}
                         msg_out = _msg if _msg.strip() and _msg.strip() not in _placeholder else llm_summary
                         # Last resort: build a plain-text summary from raw results so the
@@ -796,13 +797,15 @@ RESPONSE STYLE:
                                 else:
                                     lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: completed")
                             msg_out = "\n".join(lines)
+                        summary_out = _summary.strip() or llm_summary
                         return msg_out, \
+                               summary_out, \
                                formatted.get("tools_used") or tools_used, \
                                formatted.get("raw_results") or raw_results, \
                                formatted.get("visualizations") or []
                     except Exception as e:
                         logger.warning(f"[LangGraph] _generate_response failed: {e}")
-                return llm_summary, tools_used, raw_results, []
+                return llm_summary, llm_summary, tools_used, raw_results, []
 
             async def _suggest():
                 # Only generate suggestions after tool-based responses — for general
@@ -818,7 +821,7 @@ RESPONSE STYLE:
                         logger.warning(f"[LangGraph] _generate_suggestions failed: {e}")
                 return []
 
-            (rich_message, tools_used, raw_results, visualizations), suggestions = await asyncio.gather(
+            (rich_message, display_summary, tools_used, raw_results, visualizations), suggestions = await asyncio.gather(
                 _format(), _suggest()
             )
 
@@ -837,13 +840,13 @@ RESPONSE STYLE:
                 not any_errors
                 and raw_results
                 and rich_message.strip()
-                and llm_summary.strip()
-                and rich_message.strip() != llm_summary.strip()
+                and display_summary.strip()
+                and rich_message.strip() != display_summary.strip()
             )
 
             formatted_response = {
                 "success": True,
-                "summary": llm_summary if show_summary else "",
+                "summary": display_summary if show_summary else "",
                 "message": rich_message,
                 "query": query,
                 "tools_used": list(set(tools_used)),
@@ -991,14 +994,16 @@ RESPONSE STYLE:
                             effective_query, raw_results, session, intent="research"
                         )
                         _msg = formatted.get("message") or ""
+                        _summary = formatted.get("summary") or ""
                         _placeholder = {"", "No LinkedOmics results.", "No response generated."}
                         return _msg if _msg.strip() and _msg.strip() not in _placeholder else llm_summary, \
+                               (_summary.strip() or llm_summary), \
                                formatted.get("tools_used") or tools_used, \
                                formatted.get("raw_results") or raw_results, \
                                formatted.get("visualizations") or []
                     except Exception as e:
                         logger.warning(f"[LangGraph Stream] _generate_response failed: {e}")
-                return llm_summary, tools_used, raw_results, []
+                return llm_summary, llm_summary, tools_used, raw_results, []
 
             async def _suggest():
                 if not raw_results:
@@ -1012,7 +1017,7 @@ RESPONSE STYLE:
                         logger.warning(f"[LangGraph Stream] _generate_suggestions failed: {e}")
                 return []
 
-            (rich_message, tools_used_post, raw_results_post, visualizations), suggestions = await asyncio.gather(
+            (rich_message, display_summary, tools_used_post, raw_results_post, visualizations), suggestions = await asyncio.gather(
                 _format(), _suggest()
             )
 
@@ -1040,13 +1045,13 @@ RESPONSE STYLE:
                 not any_errors_post
                 and raw_results_post
                 and rich_message.strip()
-                and llm_summary.strip()
-                and rich_message.strip() != llm_summary.strip()
+                and display_summary.strip()
+                and rich_message.strip() != display_summary.strip()
             )
 
             formatted_response = {
                 "success": True,
-                "summary": llm_summary if show_summary else "",
+                "summary": display_summary if show_summary else "",
                 "message": rich_message,
                 "query": query,
                 "tools_used": list(set(tools_used_post)),
