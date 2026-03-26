@@ -531,9 +531,16 @@ GENE IDENTIFIERS:
 - Treat ambiguous English words like impact, set, met, or clock as genes only when they are clearly used as literal gene symbols.
 
 SURVIVAL ROUTING:
-- **Prefer `tcga_survival_analysis` for all survival questions** — it returns Kaplan-Meier sample data that generates plots. Use it whenever the user asks about survival outcome for a gene in any cohort (e.g. "does high ESR1 expression predict survival in breast cancer?").
-- Use `overall_survival_per_cancer` ONLY when the user explicitly asks for a CPTAC-specific result, a multi-cohort CPTAC overview, or when protein-level (RPPA) survival from CPTAC is specifically requested. Its available cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC.
-- Never call `overall_survival_per_cancer` for unsupported cohorts, pan-cancer queries, or omics types (methylation, miRNA, SCNA).
+CPTAC cohorts (RNA + protein only): BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC.
+
+Decision rules — apply the first matching rule:
+1. User specifies a cohort NOT in the CPTAC list above (e.g. ACC, KIPAN, MESO, SKCM) → call `tcga_survival_analysis` only.
+2. User specifies an omics type not in CPTAC (methylation, miRNA, SCNA, copy number) → call `tcga_survival_analysis` only.
+3. User explicitly restricts to TCGA → call `tcga_survival_analysis` only.
+4. User explicitly restricts to CPTAC → call `overall_survival_per_cancer` only.
+5. No cohort specified, or cohort is in the CPTAC list, and omics is RNA/protein/unspecified → call BOTH `tcga_survival_analysis` AND `overall_survival_per_cancer` (they cover complementary datasets and together give a complete picture).
+
+If neither dataset is likely to have data (e.g. unsupported omics + unsupported cohort), call the closest matching tool and let it return the error naturally.
 
 SPECIAL MODES:
 - If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.
