@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useContext, createContext } from "react"
+import { useState, useEffect, useContext, createContext, useCallback } from "react"
 import { toolsAPI } from "@/lib/api"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -27,6 +27,8 @@ import {
     Network,
     FlaskConical,
     Library,
+    Copy,
+    Check,
 } from "lucide-react"
 
 interface ToolParameter {
@@ -536,25 +538,46 @@ const JsonTreeViewer = ({ data }: { data: unknown }) => {
     })() : data
 
     const [expandCtx, setExpandCtx] = useState<{ gen: number; forced: boolean | null }>({ gen: 0, forced: null })
+    const [copied, setCopied] = useState(false)
 
-    const expandAll  = () => setExpandCtx(c => ({ gen: c.gen + 1, forced: true }))
+    const expandAll   = () => setExpandCtx(c => ({ gen: c.gen + 1, forced: true }))
     const collapseAll = () => setExpandCtx(c => ({ gen: c.gen + 1, forced: false }))
+
+    const handleCopy = useCallback(() => {
+        const text = JSON.stringify(parsed, null, 2)
+        navigator.clipboard.writeText(text).then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+        })
+    }, [parsed])
 
     return (
         <div className="bg-gray-50 dark:bg-gray-900 border border-border rounded-lg overflow-hidden text-xs font-mono">
-            <div className="flex items-center justify-end gap-1 px-3 py-1.5 border-b border-border bg-muted/40">
+            <div className="flex items-center justify-between gap-1 px-3 py-1.5 border-b border-border bg-muted/40">
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={expandAll}
+                        className="px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                    >
+                        Expand all
+                    </button>
+                    <span className="text-border">|</span>
+                    <button
+                        onClick={collapseAll}
+                        className="px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                    >
+                        Collapse all
+                    </button>
+                </div>
                 <button
-                    onClick={expandAll}
-                    className="px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                    onClick={handleCopy}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                    title="Copy JSON"
                 >
-                    Expand all
-                </button>
-                <span className="text-border">|</span>
-                <button
-                    onClick={collapseAll}
-                    className="px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                >
-                    Collapse all
+                    {copied
+                        ? <><Check className="h-3 w-3 text-green-500" /><span className="text-green-500">Copied</span></>
+                        : <><Copy className="h-3 w-3" />Copy</>
+                    }
                 </button>
             </div>
             <div className="p-4 overflow-x-auto leading-relaxed">
@@ -963,7 +986,12 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     const [selectedToolId, setSelectedToolId] = useState<string | null>(null)
 
     useEffect(() => {
-        if (resetKey !== undefined) setSelectedToolId(null)
+        if (resetKey !== undefined) {
+            setSelectedToolId(null)
+            setResult(null)
+            setArgs({})
+            setError(null)
+        }
     }, [resetKey])
 
     const [args, setArgs] = useState<Record<string, any>>({})
