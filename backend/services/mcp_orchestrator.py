@@ -2825,17 +2825,23 @@ Please provide a clear, informative response about this gene. Include the key de
                     md = [f"## {section_title}", ""]
                     # Bar chart across all cohorts (samples not available in mode 3)
                     cohort_fig = _generate_tcga_cohort_bar_static(all_results, g, omics_label)
+                    has_cohort_plot = False
                     if cohort_fig:
                         viz_id = _uuid.uuid4().hex
                         _visualizations.append({"type": "static_plot", "id": viz_id, "title": cohort_fig["title"], **{k: cohort_fig[k] for k in ("png_b64", "svg", "csv")}})
                         md.append(f"[PLOT:{viz_id}]")
                         md.append("")
-                    sorted_results = sorted(all_results, key=lambda r: float(r.get("pvalue") or 1.0))
-                    md.extend(["| Cohort | Cancer | HR | p-value | N | Significant |", "|---|---|---|---|---|---|"])
-                    for res in sorted_results:
-                        c = res.get("cohort", ""); hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
-                        c_full = _TCGA_COHORT_NAMES.get(c, c)
-                        md.append(f"| {c} | {c_full} | {f'{hr:.4f}' if hr is not None else '—'} | {f'{pval:.4e}' if pval is not None else '—'} | {n_tot if n_tot is not None else '—'} | {'✓' if pval is not None and pval < 0.05 else ''} |")
+                        has_cohort_plot = True
+                    # Only show table as fallback if plot could not be generated
+                    if not has_cohort_plot:
+                        sorted_results = sorted(all_results, key=lambda r: float(r.get("pvalue") or 1.0))
+                        md.extend(["| Cohort | Cancer | HR | p-value | N | Significant |", "|---|---|---|---|---|---|"])
+                        for res in sorted_results:
+                            c = res.get("cohort", ""); hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
+                            c_full = _TCGA_COHORT_NAMES.get(c, c)
+                            md.append(f"| {c} | {c_full} | {f'{hr:.4f}' if hr is not None else '—'} | {f'{pval:.4e}' if pval is not None else '—'} | {n_tot if n_tot is not None else '—'} | {'✓' if pval is not None and pval < 0.05 else ''} |")
+                    else:
+                        sorted_results = sorted(all_results, key=lambda r: float(r.get("pvalue") or 1.0))
                     md.append("\n> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
                     # KM plots for significant cohorts when samples are available
                     for res in [r for r in sorted_results if (r.get("pvalue") or 1.0) < 0.05][:5]:
