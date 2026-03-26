@@ -32,6 +32,8 @@ export default function Home() {
     const [guestBannerDismissed, setGuestBannerDismissed] = useState(false)
     const [mobileNavOpen, setMobileNavOpen] = useState(false)
     const [pendingSearchTarget, setPendingSearchTarget] = useState<SearchJumpTarget | null>(null)
+    const [toolsResetKey, setToolsResetKey] = useState(0)
+    const [chatFocusKey, setChatFocusKey] = useState(0)
     const [mountedViews, setMountedViews] = useState<Record<View, boolean>>({
         chat: true,
         tools: false,
@@ -123,6 +125,8 @@ export default function Home() {
     }, [])
 
     const handleViewChange = useCallback((view: View) => {
+        if (view === "tools") setToolsResetKey((k) => k + 1)
+        if (view === "chat") setChatFocusKey((k) => k + 1)
         startTransition(() => {
             setCurrentView(view)
             setMountedViews((prev) => (prev[view] ? prev : { ...prev, [view]: true }))
@@ -238,11 +242,12 @@ export default function Home() {
                         onSearchTargetHandled={(requestKey) => {
                             setPendingSearchTarget((prev) => prev?.requestKey === requestKey ? null : prev)
                         }}
+                        focusKey={chatFocusKey}
                     />
                 </div>
                 {mountedViews.tools && (
                     <div className="w-full h-full" style={currentView !== "tools" ? { visibility: "hidden", pointerEvents: "none", position: "absolute", top: 0, left: 0 } : {}}>
-                        <ToolExplorer />
+                        <ToolExplorer resetKey={toolsResetKey} />
                     </div>
                 )}
                 {mountedViews.usecases && (

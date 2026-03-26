@@ -1473,6 +1473,7 @@ interface ChatInterfaceProps {
     onInitialQueryConsumed?: () => void
     pendingSearchTarget?: { sessionId: string; messageId: number; requestKey: string } | null
     onSearchTargetHandled?: (requestKey: string) => void
+    focusKey?: number
 }
 
 function extractMarkdownImages(markdown: string): string[] {
@@ -1498,11 +1499,13 @@ export const ChatInterface = memo(function ChatInterface({
     onInitialQueryConsumed,
     pendingSearchTarget,
     onSearchTargetHandled,
+    focusKey,
 }: ChatInterfaceProps) {
     const { isGuest } = useAuth()
     const [messages, setMessages] = useState<ChatMessage[]>([])
     const [input, setInput] = useState("")
     const inputRef = useRef("")
+    const chatInputRef = useRef<HTMLInputElement>(null)
     const [isLoading, setIsLoading] = useState(false)
     const [streamStatus, setStreamStatus] = useState<string | null>(null)
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -1604,6 +1607,11 @@ export const ChatInterface = memo(function ChatInterface({
             loadSessionHistory(sessionId)
         }
     }, [sessionId, isGuest])
+
+    // Focus input when the Chat nav item is clicked
+    useEffect(() => {
+        if (focusKey !== undefined) chatInputRef.current?.focus()
+    }, [focusKey])
 
     // Pre-fill input when launched from Use Cases panel
     useEffect(() => {
@@ -2454,6 +2462,7 @@ export const ChatInterface = memo(function ChatInterface({
             <div className="border-t border-border p-3 md:p-6">
                 <div className="max-w-4xl mx-auto flex gap-2 relative">
                     <Input
+                        ref={chatInputRef}
                         placeholder="Ask about genes, datasets, or analyses..."
                         value={input}
                         onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value }}

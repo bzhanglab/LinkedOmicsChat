@@ -48,6 +48,7 @@ interface ToolSchema {
 
 interface ToolExplorerProps {
     className?: string
+    resetKey?: number
 }
 
 /** Strip markdown syntax for plain-text card previews */
@@ -957,9 +958,14 @@ function EnumSelect({ name, description, required, options, value, onChange, get
 // Module-level cache — survives re-mounts so Tools tab is instant after first load
 let _toolsCache: Record<string, ToolSchema> | null = null
 
-export default function ToolExplorer({ className = "" }: ToolExplorerProps) {
+export default function ToolExplorer({ className = "", resetKey }: ToolExplorerProps) {
     const [tools, setTools] = useState<Record<string, ToolSchema> | null>(_toolsCache)
     const [selectedToolId, setSelectedToolId] = useState<string | null>(null)
+
+    useEffect(() => {
+        if (resetKey !== undefined) setSelectedToolId(null)
+    }, [resetKey])
+
     const [args, setArgs] = useState<Record<string, any>>({})
     const [result, setResult] = useState<any>(null)
     const [loading, setLoading] = useState(false)
