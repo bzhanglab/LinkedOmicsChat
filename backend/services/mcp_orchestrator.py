@@ -937,6 +937,106 @@ def _generate_tcga_omics_heatmap_static(results: list, gene: str, cohort: str) -
         return None
 
 
+def _generate_tcga_cohort_bar_static(results: list, gene: str, omics_label: str) -> Optional[dict]:
+    """Generate a horizontal bar chart of log2(HR) per TCGA cohort for mode 3 (all cohorts).
+
+    Args:
+        results: [{cohort, hr, pvalue, n}, ...]
+        gene: gene symbol
+        omics_label: human-readable omics type label
+    Returns:
+        dict with png_b64, svg, csv, title — or None on failure
+    """
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        entries = []
+        for res in results:
+            hr = res.get("hr")
+            pval = res.get("fdr") or res.get("pvalue")
+            cohort = res.get("cohort", "")
+            n = res.get("n")
+            if hr is None or hr <= 0 or not cohort:
+                continue
+            full_name = _TCGA_COHORT_NAMES.get(cohort, cohort)
+            label = f"{cohort} — {full_name}" if full_name != cohort else cohort
+            entries.append({
+                "label": label,
+                "cohort": cohort,
+                "log2hr": math.log2(hr),
+                "hr": hr,
+                "pval": pval,
+                "n": n,
+                "sig": pval is not None and pval < 0.05,
+            })
+        if not entries:
+            return None
+
+        entries.sort(key=lambda e: e["log2hr"])
+        title = f"{gene} {omics_label} Survival — all TCGA cohorts"
+
+        fig, ax = plt.subplots(figsize=(8, max(3.5, len(entries) * 0.38 + 1.2)))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        y_pos = list(range(len(entries)))
+        colors = ["#c0392b" if e["log2hr"] > 0 else "#2980b9" for e in entries]
+        edge_colors = ["#8e1a0e" if e["sig"] else "#aaaaaa" for e in entries]
+        lw = [1.5 if e["sig"] else 0.6 for e in entries]
+
+        bars = ax.barh(y_pos, [e["log2hr"] for e in entries],
+                       color=colors, edgecolor=edge_colors, linewidth=lw, height=0.65)
+
+        # Annotate significant bars with p-value
+        for bar, entry in zip(bars, entries):
+            if entry["sig"] and entry["pval"] is not None:
+                x_off = 0.04 if entry["log2hr"] >= 0 else -0.04
+                ha = "left" if entry["log2hr"] >= 0 else "right"
+                ax.text(entry["log2hr"] + x_off, bar.get_y() + bar.get_height() / 2,
+                        f"p={entry['pval']:.1e} *", va="center", ha=ha,
+                        fontsize=7, color="#333333")
+
+        ax.axvline(0, color="#555555", linewidth=0.9)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels([e["label"] for e in entries], fontsize=8)
+        ax.set_xlabel("log₂(Hazard Ratio)\n← Protective  |  Harmful →", fontsize=9)
+        ax.set_title(title, fontsize=11, pad=8)
+        ax.text(0.99, 0.01, "* p < 0.05  |  bold border = significant",
+                transform=ax.transAxes, fontsize=7.5, color="#666666", ha="right", va="bottom")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(axis="x", color="#eeeeee", linewidth=0.7)
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["cohort", "cancer", "hr", "log2_hr", "pvalue", "n", "significant"])
+        for e in entries:
+            writer.writerow([e["cohort"], _TCGA_COHORT_NAMES.get(e["cohort"], e["cohort"]),
+                             round(e["hr"], 6), round(e["log2hr"], 6),
+                             f"{e['pval']:.4e}" if e["pval"] is not None else "",
+                             e["n"] or "", "yes" if e["sig"] else "no"])
+
+        return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
+
+    except Exception as e:
+        logger.warning(f"[TCGA cohort bar] Failed to generate: {e}")
+        return None
+
+
 def _generate_funmap_network_static(neighborhood: list, gene: str) -> Optional[dict]:
     """Generate a spring-layout network graph for FunMap functional partners.
 
@@ -2722,18 +2822,26 @@ Please provide a clear, informative response about this gene. Include the key de
                 elif mode == 3 and not cohort_key_k:
                     omics_label = _OMICS_LABEL_PRE.get(omics_query, omics_query)
                     section_title = f"TCGA Survival Analysis — {g} ({omics_label}, all cohorts)"
-                    md = [f"## {section_title}", "", "| Cohort | Cancer | HR | p-value | N | Significant |", "|---|---|---|---|---|---|"]
+                    md = [f"## {section_title}", ""]
+                    # Bar chart across all cohorts (samples not available in mode 3)
+                    cohort_fig = _generate_tcga_cohort_bar_static(all_results, g, omics_label)
+                    if cohort_fig:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({"type": "static_plot", "id": viz_id, "title": cohort_fig["title"], **{k: cohort_fig[k] for k in ("png_b64", "svg", "csv")}})
+                        md.append(f"[PLOT:{viz_id}]")
+                        md.append("")
                     sorted_results = sorted(all_results, key=lambda r: float(r.get("pvalue") or 1.0))
+                    md.extend(["| Cohort | Cancer | HR | p-value | N | Significant |", "|---|---|---|---|---|---|"])
                     for res in sorted_results:
                         c = res.get("cohort", ""); hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
                         c_full = _TCGA_COHORT_NAMES.get(c, c)
                         md.append(f"| {c} | {c_full} | {f'{hr:.4f}' if hr is not None else '—'} | {f'{pval:.4e}' if pval is not None else '—'} | {n_tot if n_tot is not None else '—'} | {'✓' if pval is not None and pval < 0.05 else ''} |")
                     md.append("\n> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                    # KM plots for significant cohorts when samples are available
                     for res in [r for r in sorted_results if (r.get("pvalue") or 1.0) < 0.05][:5]:
                         c = res.get("cohort", "")
                         fig_dict = _generate_km_static(res.get("samples") or [], g, c, omics_query, res.get("hr"), res.get("pvalue"), res.get("n"))
                         if fig_dict:
-                            c_full = _TCGA_COHORT_NAMES.get(c, c)
                             viz_id = _uuid.uuid4().hex
                             _visualizations.append({"type": "static_plot", "id": viz_id, "title": fig_dict["title"], **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")}})
                             md.append(f"\n[PLOT:{viz_id}]")
