@@ -1,6 +1,7 @@
 "use client"
-import { useRef, useState, useEffect, useMemo } from "react"
-import { Download, Table } from "lucide-react"
+import { useRef, useState, useEffect, useMemo, useCallback } from "react"
+import { createPortal } from "react-dom"
+import { Download, Table, Maximize2, X } from "lucide-react"
 import type { AnyVisualization, StaticVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
 
@@ -87,6 +88,21 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
     )
     const [fetchError, setFetchError] = useState(false)
     const [showAtRisk, setShowAtRisk] = useState(false)
+    const [lightboxOpen, setLightboxOpen] = useState(false)
+
+    const openLightbox  = useCallback(() => setLightboxOpen(true),  [])
+    const closeLightbox = useCallback(() => setLightboxOpen(false), [])
+
+    useEffect(() => {
+        if (!lightboxOpen) return
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeLightbox() }
+        document.addEventListener("keydown", onKey)
+        document.body.style.overflow = "hidden"
+        return () => {
+            document.removeEventListener("keydown", onKey)
+            document.body.style.overflow = ""
+        }
+    }, [lightboxOpen, closeLightbox])
 
     const atRiskData = useMemo(() => {
         if (!resolvedViz?.csv) return null
@@ -132,15 +148,47 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
             {isVisible && (
                 resolvedViz ? (
                     <div className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden">
-                        {/* Plot image */}
-                        <div className="p-2 flex justify-center">
+                        {/* Plot image — click to expand */}
+                        <div
+                            className="relative p-2 flex justify-center cursor-zoom-in group"
+                            onClick={openLightbox}
+                        >
                             <img
                                 src={`data:image/png;base64,${resolvedViz.png_b64}`}
                                 alt={resolvedViz.title}
                                 className="max-w-full h-auto"
                                 style={{ maxHeight: "420px" }}
                             />
+                            <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 text-white rounded p-1">
+                                <Maximize2 className="h-3.5 w-3.5" />
+                            </div>
                         </div>
+
+                        {/* Lightbox */}
+                        {lightboxOpen && typeof document !== "undefined" && createPortal(
+                            <div
+                                className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+                                onClick={closeLightbox}
+                            >
+                                <div
+                                    className="relative max-w-[95vw] max-h-[95vh] overflow-auto rounded-lg bg-white dark:bg-gray-950 p-2 shadow-2xl"
+                                    onClick={e => e.stopPropagation()}
+                                >
+                                    <button
+                                        onClick={closeLightbox}
+                                        className="absolute top-2 right-2 z-10 bg-black/50 hover:bg-black/70 text-white rounded p-1 transition-colors"
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                    <img
+                                        src={`data:image/png;base64,${resolvedViz.png_b64}`}
+                                        alt={resolvedViz.title}
+                                        className="max-w-full h-auto block"
+                                    />
+                                </div>
+                            </div>,
+                            document.body
+                        )}
 
                         {/* Download bar */}
                         <div className="flex items-center gap-2 px-3 py-2 border-t border-border bg-muted/30">
