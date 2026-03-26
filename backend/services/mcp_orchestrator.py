@@ -620,8 +620,8 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
                 Patch(facecolor="#2980b9", label="Lower in tumor"),
                 Patch(facecolor="#dddddd", label="Not significant / no data"),
             ]
-        ax.legend(handles=legend_els, loc="upper left", fontsize=7.5,
-                  framealpha=0.9, bbox_to_anchor=(0.0, 1.42), ncol=3)
+        ax.legend(handles=legend_els, loc="upper center", fontsize=7.5,
+                  framealpha=0.9, bbox_to_anchor=(0.5, -0.22), ncol=3)
 
         ax.set_xlim(-0.55, n_cols - 0.45)
         ax.set_ylim(-0.55, 1.55)
@@ -630,10 +630,10 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
         ax.set_yticks([0, 1])
         ax.set_yticklabels(["Protein", "RNA"], fontsize=9)
         ax.tick_params(length=0)
-        ax.set_title(title, fontsize=11, pad=28)
+        ax.set_title(title, fontsize=11, pad=8)
         for sp in ax.spines.values():
             sp.set_visible(False)
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0.12, 1, 1])
 
         png_buf = io.BytesIO()
         fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
