@@ -2852,8 +2852,8 @@ Please provide a clear, informative response about this gene. Include the key de
                     cohort_display = f"{cohort} — {cohort_full}" if cohort_full and cohort_full != cohort else cohort
                     section_title = f"TCGA Survival Analysis — {g} ({cohort_display})" if cohort_display else f"TCGA Survival Analysis — {g}"
                     md = [f"## {section_title}"]
-                    # Mode 2: multiple omics results for the same cohort → show summary heatmap
-                    if len(all_results) > 1:
+                    # Mode 2: cohort + gene, all omics → show summary omics bar chart
+                    if mode == 2:
                         omics_fig = _generate_tcga_omics_heatmap_static(all_results, g, cohort)
                         if omics_fig:
                             viz_id = _uuid.uuid4().hex
