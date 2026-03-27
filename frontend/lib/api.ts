@@ -202,7 +202,16 @@ export interface StaticVisualization {
     csv?: string      // CSV text for download
 }
 
-export type AnyVisualization = StaticVisualization
+export interface NetworkVisualization {
+    type: "network_plot"
+    id: string
+    title: string
+    nodes?: Array<{ name: string; value: string }>  // absent for historical messages — loaded on demand
+    edges?: Array<{ source: string; target: string }>
+    csv?: string      // edge list CSV for download
+}
+
+export type AnyVisualization = StaticVisualization | NetworkVisualization
 
 export interface ChatMessage {
     role: "user" | "assistant" | "system"

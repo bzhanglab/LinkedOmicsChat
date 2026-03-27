@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useContext, createContext, useCallback } from "react"
 import { toolsAPI } from "@/lib/api"
+import type { NetworkVisualization } from "@/lib/api"
+import { NetworkPlot } from "@/components/NetworkPlot"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
@@ -590,16 +592,22 @@ const JsonTreeViewer = ({ data }: { data: unknown }) => {
 }
 
 const ResultRenderer = ({ result }: { result: any }) => {
-    const [viewMode, setViewMode] = useState<'table' | 'json' | 'image' | 'enrichment'>('table')
+    const [viewMode, setViewMode] = useState<'table' | 'json' | 'image' | 'enrichment' | 'network'>('table')
 
     // Detect GO enrichment data (webgestalt output)
     const isEnrichmentData = Array.isArray(result) && result.length > 0 &&
         result[0] && typeof result[0] === 'object' &&
         'geneSet' in result[0] && 'FDR' in result[0] && 'enrichmentRatio' in result[0]
 
+    // Detect funmap network data (nodes + edges)
+    const isFunmapData = result && typeof result === 'object' && !Array.isArray(result) &&
+        Array.isArray(result.nodes) && Array.isArray(result.edges) &&
+        (result.nodes.length === 0 || (typeof result.nodes[0] === 'object' && 'name' in result.nodes[0])) &&
+        (result.edges.length === 0 || (typeof result.edges[0] === 'object' && 'source' in result.edges[0]))
+
     // Detect if valid table data
-    const isTableData = !isEnrichmentData && Array.isArray(result) && result.length > 0 && typeof result[0] === 'object'
-    const isMultiTableData = result && typeof result === 'object' && !Array.isArray(result) &&
+    const isTableData = !isEnrichmentData && !isFunmapData && Array.isArray(result) && result.length > 0 && typeof result[0] === 'object'
+    const isMultiTableData = !isFunmapData && result && typeof result === 'object' && !Array.isArray(result) &&
         Object.values(result).every(val => Array.isArray(val) && (val.length === 0 || typeof val[0] === 'object'))
 
     // Detect if flat Key-Value object (e.g. get_target result)
@@ -608,21 +616,22 @@ const ResultRenderer = ({ result }: { result: any }) => {
         Object.values(result).every(val => typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean')
 
     // Detect if object with array values (e.g. funmap_neighborhood)
-    const isListDictData = result && typeof result === 'object' && !Array.isArray(result) && !result.parts &&
+    const isListDictData = !isFunmapData && result && typeof result === 'object' && !Array.isArray(result) && !result.parts &&
         Object.values(result).every(val => Array.isArray(val) && (val.length === 0 || typeof val[0] === 'string' || typeof val[0] === 'number'))
 
     // Detect if image data (Standard MCP format with parts)
     const isImageData = result && typeof result === 'object' && result.parts && Array.isArray(result.parts) &&
         result.parts.some((p: any) => p.type === 'image')
 
-    const hasData = isEnrichmentData || isTableData || isMultiTableData || isImageData || isKeyValueData || isListDictData
+    const hasData = isEnrichmentData || isFunmapData || isTableData || isMultiTableData || isImageData || isKeyValueData || isListDictData
 
     // Auto-switch to best view mode
     useEffect(() => {
         if (isImageData) setViewMode('image')
         else if (isEnrichmentData) setViewMode('enrichment')
+        else if (isFunmapData) setViewMode('network')
         else if (isTableData || isMultiTableData || isKeyValueData || isListDictData) setViewMode('table')
-    }, [isImageData, isEnrichmentData, isTableData, isMultiTableData, isKeyValueData, isListDictData])
+    }, [isImageData, isEnrichmentData, isFunmapData, isTableData, isMultiTableData, isKeyValueData, isListDictData])
 
 
     if (!hasData) {
@@ -643,6 +652,18 @@ const ResultRenderer = ({ result }: { result: any }) => {
                         >
                             <Zap className="h-3 w-3" />
                             Enrichment
+                        </button>
+                    )}
+                    {isFunmapData && (
+                        <button
+                            onClick={() => setViewMode('network')}
+                            className={`px-3 py-1 text-xs font-medium rounded-md flex items-center gap-1 ${viewMode === 'network'
+                                ? 'bg-white dark:bg-gray-700 text-teal-600 dark:text-teal-400 shadow-sm'
+                                : 'text-gray-500 dark:text-gray-400 hover:text-gray-900'
+                                }`}
+                        >
+                            <Network className="h-3 w-3" />
+                            Network
                         </button>
                     )}
                     {(isTableData || isMultiTableData || isKeyValueData || isListDictData) && (
@@ -686,6 +707,18 @@ const ResultRenderer = ({ result }: { result: any }) => {
                 <JsonTreeViewer data={result} />
             ) : viewMode === 'enrichment' && isEnrichmentData ? (
                 <EnrichmentRenderer data={result} />
+            ) : viewMode === 'network' && isFunmapData ? (
+                <NetworkPlot
+                    visualization={{
+                        type: "network_plot",
+                        id: "__tool_explorer_preview__",
+                        title: result.nodes.find((n: any) => parseFloat(n.value) === 0)?.name
+                            ? `FunMap neighborhood \u2014 ${result.nodes.find((n: any) => parseFloat(n.value) === 0).name}`
+                            : "FunMap Network",
+                        nodes: result.nodes,
+                        edges: result.edges,
+                    } as NetworkVisualization}
+                />
             ) : viewMode === 'image' ? (
                 <div>
                     {result.parts.filter((p: any) => p.type === 'image').map((part: any, i: number) => (

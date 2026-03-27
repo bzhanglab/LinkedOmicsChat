@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { chatAPI, type ChatMessage, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
 import { StaticPlot } from "@/components/StaticPlot"
+import { NetworkPlot } from "@/components/NetworkPlot"
 import { useAuth } from "@/components/AuthContext"
 import { EnrichmentRenderer } from "./ToolExplorer"
 import axios from "axios"
@@ -98,6 +99,7 @@ const markdownComponents = {
 }
 
 const PLOT_MARKER_RE = /^\[PLOT:([^\]]+)\]$/
+const NETWORK_MARKER_RE = /^\[NETWORK:([^\]]+)\]$/
 
 const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
     const handleCopyTable = useCallback((tableContent: string) => {
@@ -113,15 +115,18 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
         content.replace(/^>[ \t]*.*(Source:|source:).*$/gm, "").replace(/\n{3,}/g, "\n\n").trim()
     , [content])
 
-    // Split content on [PLOT:id] markers so plots render inline with the text.
+    // Split content on [PLOT:id] and [NETWORK:id] markers so they render inline.
     const parts = useMemo(() => {
-        const segments: { type: "text" | "plot"; value: string }[] = []
+        const segments: { type: "text" | "plot" | "network"; value: string }[] = []
         let buf: string[] = []
         for (const line of processedContent.split("\n")) {
-            const m = line.trim().match(PLOT_MARKER_RE)
-            if (m) {
+            const trimmed = line.trim()
+            const pm = trimmed.match(PLOT_MARKER_RE)
+            const nm = trimmed.match(NETWORK_MARKER_RE)
+            if (pm || nm) {
                 if (buf.length) { segments.push({ type: "text", value: buf.join("\n") }); buf = [] }
-                segments.push({ type: "plot", value: m[1] })
+                if (pm) segments.push({ type: "plot", value: pm[1] })
+                else if (nm) segments.push({ type: "network", value: nm[1] })
             } else {
                 buf.push(line)
             }
@@ -141,12 +146,16 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
 
     return (
         <div className="prose prose-sm dark:prose-invert max-w-none">
-            {parts.map((part, i) =>
-                part.type === "plot" ? (
-                    vizMap[part.value]
-                        ? <StaticPlot key={i} visualization={vizMap[part.value]} />
-                        : null
-                ) : (
+            {parts.map((part, i) => {
+                if (part.type === "plot") {
+                    const viz = vizMap[part.value]
+                    return viz?.type === "static_plot" ? <StaticPlot key={i} visualization={viz} /> : null
+                }
+                if (part.type === "network") {
+                    const viz = vizMap[part.value]
+                    return viz?.type === "network_plot" ? <NetworkPlot key={i} visualization={viz} /> : null
+                }
+                return (
                     <ReactMarkdown
                         key={i}
                         remarkPlugins={[remarkGfm, remarkMath]}
@@ -157,7 +166,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
                         {part.value}
                     </ReactMarkdown>
                 )
-            )}
+            })}
         </div>
     )
 })
@@ -166,11 +175,15 @@ const AssistantPlainText = memo(function AssistantPlainText({ content }: { conte
     return <p className="text-sm whitespace-pre-wrap text-foreground">{content}</p>
 })
 
-// Helper: Extract gene names from markdown headers (e.g., "## Cancer expression - NFAT1")
+// Helper: Extract gene names from our tool-output section headers only.
+// Matches patterns like "## Cancer expression - TP53" or "## Survival association — BRCA1".
+// Restricted to known section prefixes to avoid picking up LLM-generated prose headers
+// that mention partner genes (e.g. "## Immune function - HACD4").
+const TOOL_SECTION_RE = /##\s+(?:Cancer expression|Overall survival|Survival association|Cis.correlations?|Trans.correlations?|TCGA survival|Clinical trial|FunMap neighborhood)\s*[-—]\s*([A-Z][A-Z0-9]{1,9})\b/gi
+
 function extractGeneNames(markdown: string): string[] {
     if (!markdown) return []
-    const genePattern = /##\s+[^-]+-\s+([A-Z0-9]+)/g
-    const matches = Array.from(markdown.matchAll(genePattern))
+    const matches = Array.from(markdown.matchAll(TOOL_SECTION_RE))
     const genes = matches.map(m => m[1]).filter(Boolean)
     return [...new Set(genes)] // unique
 }
@@ -726,13 +739,19 @@ const MessagesPane = memo(function MessagesPane({
                                                 )
                                             )}
                                             {(() => {
-                                                const inlined = new Set((message.content || "").match(/\[PLOT:([^\]]+)\]/g)?.map(m => m.slice(6, -1)) ?? [])
+                                                const content = message.content || ""
+                                                const inlined = new Set([
+                                                    ...(content.match(/\[PLOT:([^\]]+)\]/g)?.map(m => m.slice(6, -1)) ?? []),
+                                                    ...(content.match(/\[NETWORK:([^\]]+)\]/g)?.map(m => m.slice(9, -1)) ?? []),
+                                                ])
                                                 const remaining = (message.visualizations || []).filter(v => !inlined.has(v.id))
                                                 return remaining.length > 0 ? (
                                                     <div className="mt-4 space-y-4">
-                                                        {remaining.map((viz) => (
-                                                            <StaticPlot key={viz.id} visualization={viz} />
-                                                        ))}
+                                                        {remaining.map((viz) =>
+                                                            viz.type === "network_plot"
+                                                                ? <NetworkPlot key={viz.id} visualization={viz} />
+                                                                : <StaticPlot key={viz.id} visualization={viz} />
+                                                        )}
                                                     </div>
                                                 ) : null
                                             })()}
