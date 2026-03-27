@@ -659,141 +659,150 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
 
 
 def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
-    """Generate a heatmap for cis-correlations across cohorts and molecular pair types.
+    """Generate a single grouped horizontal bar chart for cis-correlations.
+
+    Data format: {cohort: [{x: mol1, y: mol2, val: float, pval: float}, ...]}
+    Each pair appears twice (both directions); we deduplicate by canonical sorted key.
+    Layout: y-axis = omics pairs, grouped bars = one bar per cancer cohort per pair.
 
     Args:
-        data: {cohort: [record, ...]}  — field names auto-detected from records
+        data: {cohort: [record, ...]}
         gene: gene symbol for title
     Returns:
         dict with png_b64, svg, csv, title — or None on failure
     """
     try:
-        import io, base64, csv as _csv, math
+        import io, base64, csv as _csv
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.colors as mcolors
         import numpy as np
 
-        # Auto-detect which fields hold pair-type, correlation value, and p-value
-        # by inspecting available records.
-        _PAIR_CANDIDATES = ("pair", "datatype_pair", "type", "omics_pair", "layer", "name", "label", "category", "data_type", "omics", "datatype", "comparison")
-        _VAL_CANDIDATES  = ("val", "value", "correlation", "r", "cor", "rho")
-        _PVAL_CANDIDATES = ("pval", "pvalue", "p_value", "p", "padj", "fdr")
+        # ── 1. Parse records into canonical (pair_label → {cohort: (val, pval)}) ──
+        pair_data: dict = {}   # {pair_label: {cohort: (val, pval)}}
+        cohort_set: set = set()
 
-        def _detect_field(rec: dict, candidates: tuple) -> Optional[str]:
-            for c in candidates:
-                if c in rec:
-                    return c
-            return None
-
-        pair_field = val_field = pval_field = None
-        first_rec: Optional[dict] = None
-        for records in data.values():
-            if isinstance(records, list):
-                for rec in records:
-                    if isinstance(rec, dict) and len(rec) >= 2:
-                        if first_rec is None:
-                            first_rec = rec
-                        pair_field = pair_field or _detect_field(rec, _PAIR_CANDIDATES)
-                        val_field  = val_field  or _detect_field(rec, _VAL_CANDIDATES)
-                        pval_field = pval_field or _detect_field(rec, _PVAL_CANDIDATES)
-                        if pair_field and val_field:
-                            break
-            if pair_field and val_field:
-                break
-
-        # Fallback: if pair_field still not found but we have a record,
-        # pick the field whose values look like molecular-layer labels
-        # (non-numeric strings) that isn't the val/pval field.
-        if not pair_field and first_rec and val_field:
-            known = {val_field, pval_field}
-            for k, v in first_rec.items():
-                if k in known:
-                    continue
-                v_str = str(v)
-                try:
-                    float(v_str)  # skip purely numeric fields
-                except ValueError:
-                    pair_field = k
-                    break
-
-        if not pair_field or not val_field:
-            logger.warning(f"[Cis-correlation heatmap] Could not detect field names in records. "
-                           f"Available keys: {list(first_rec.keys()) if first_rec else 'none'}. "
-                           f"pair_field={pair_field}, val_field={val_field}")
-            return None
-
-        # Collect all pair types and cohorts
-        all_pairs: set = set()
-        for records in data.values():
-            if isinstance(records, list):
-                for rec in records:
-                    if isinstance(rec, dict):
-                        v = rec.get(pair_field, "")
-                        if v:
-                            all_pairs.add(str(v))
-        cohorts = sorted(data.keys())
-        pairs = sorted(all_pairs)
-        if not cohorts or not pairs:
-            return None
-
-        logger.debug(f"[Cis-correlation heatmap] detected fields: pair={pair_field!r} val={val_field!r} pval={pval_field!r}, cohorts={cohorts}, pairs={pairs}")
-
-        # Build correlation and significance matrices
-        corr_matrix = np.full((len(cohorts), len(pairs)), np.nan)
-        sig_matrix = np.zeros((len(cohorts), len(pairs)), dtype=bool)
-
-        for ci, cohort in enumerate(cohorts):
-            for rec in (data.get(cohort) or []):
+        for cohort, records in data.items():
+            if not isinstance(records, list):
+                continue
+            cohort_set.add(cohort)
+            seen_pairs: set = set()
+            for rec in records:
                 if not isinstance(rec, dict):
                     continue
-                pair = str(rec.get(pair_field, ""))
-                if pair not in pairs:
+                x = str(rec.get("x", "")).strip()
+                y = str(rec.get("y", "")).strip()
+                if not x or not y:
                     continue
-                pi = pairs.index(pair)
                 try:
-                    corr_matrix[ci, pi] = float(rec[val_field])
-                    if pval_field and pval_field in rec:
-                        pval = float(rec[pval_field])
-                        sig_matrix[ci, pi] = pval < 0.05
+                    val = float(rec.get("val", rec.get("value", rec.get("correlation", "nan"))))
+                    pval = float(rec.get("pval", rec.get("pvalue", rec.get("p_value", "1"))))
                 except (ValueError, TypeError):
-                    pass
+                    continue
+                parts = sorted([x, y])
+                label = f"{parts[0]} ↔ {parts[1]}"
+                if label in seen_pairs:
+                    continue
+                seen_pairs.add(label)
+                if label not in pair_data:
+                    pair_data[label] = {}
+                pair_data[label][cohort] = (val, pval)
 
+        if not pair_data or not cohort_set:
+            return None
+
+        cohorts = sorted(cohort_set)
+        pairs = sorted(pair_data.keys())
+        n_pairs = len(pairs)
+        n_cohorts = len(cohorts)
         title = f"{gene} Cis-Correlations"
 
-        fig_h = max(3.5, len(cohorts) * 0.45 + 1.5)
-        fig_w = max(4.5, len(pairs) * 1.4 + 1.5)
+        # ── 2. Grouped horizontal bar chart ──
+        # Fixed color map for known cancer cohorts; fallback palette for unknown ones
+        COHORT_COLORS = {
+            "BRCA":  "#fd8cd5",
+            "CCRCC": "#ed7711",
+            "COAD":  "#0728e4",
+            "GBM":   "#62666b",
+            "HCC":   "#117c21",
+            "HNSCC": "#89263b",
+            "LSCC":  "#cb4763",
+            "LUAD":  "#d3d3d3",
+            "OV":    "#107d9d",
+            "PDAC":  "#b80ec4",
+            "UCEC":  "#f04688",
+        }
+        fallback = ["#2980b9", "#27ae60", "#e67e22", "#8e44ad", "#16a085",
+                    "#f39c12", "#1abc9c", "#e74c3c", "#9b59b6", "#34495e"]
+        fi = 0
+        cohort_colors: dict = {}
+        for c in cohorts:
+            if c in COHORT_COLORS:
+                cohort_colors[c] = COHORT_COLORS[c]
+            else:
+                cohort_colors[c] = fallback[fi % len(fallback)]
+                fi += 1
+
+        bar_h = 0.8 / n_cohorts   # height per bar within a group
+
+        fig_w = 9.0
+        fig_h = max(3.5, n_pairs * (0.28 * n_cohorts + 0.6))
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
         fig.patch.set_facecolor("white")
-        ax.set_facecolor("#f5f5f5")
+        ax.set_facecolor("white")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-        vmax = max(0.6, float(np.nanmax(np.abs(corr_matrix)))) if not np.all(np.isnan(corr_matrix)) else 1.0
-        cmap = plt.get_cmap("RdBu_r")
-        norm = mcolors.Normalize(vmin=-vmax, vmax=vmax)
+        offsets = np.linspace(-(n_cohorts - 1) / 2 * bar_h,
+                               (n_cohorts - 1) / 2 * bar_h,
+                               n_cohorts)
 
-        im = ax.imshow(corr_matrix, cmap=cmap, norm=norm, aspect="auto")
+        # y positions for pair group label ticks
+        ytick_pos = []
 
-        # Annotate cells
-        for ci in range(len(cohorts)):
-            for pi in range(len(pairs)):
-                val = corr_matrix[ci, pi]
-                if not np.isnan(val):
-                    marker = "*" if sig_matrix[ci, pi] else ""
-                    ax.text(pi, ci, f"{val:.2f}{marker}", ha="center", va="center",
-                            fontsize=8, color="white" if abs(val) > vmax * 0.6 else "#222222")
+        for pi, pair_label in enumerate(pairs):
+            group_center = pi
+            for ci, cohort in enumerate(cohorts):
+                entry = pair_data[pair_label].get(cohort)
+                ypos = group_center + offsets[ci]
+                if entry is None:
+                    continue
+                v, p = entry
+                color = cohort_colors[cohort]
+                alpha = 1.0 if p < 0.05 else 0.35
+                ax.barh(ypos, v, height=bar_h * 0.85,
+                        color=color, alpha=alpha, edgecolor="none")
+                # Cohort label just inside the bar's base (left of axis for pos, right for neg)
+                label_x = 0.02 if v >= 0 else -0.02
+                label_ha = "left" if v >= 0 else "right"
+                ax.text(label_x, ypos, cohort, ha=label_ha, va="center",
+                        fontsize=6.5, color="white" if abs(v) > 0.15 else "#333333",
+                        fontweight="bold", clip_on=True)
+                # Significance asterisk beyond the bar tip
+                if p < 0.05:
+                    tip_x = v + (0.02 if v >= 0 else -0.02)
+                    ax.text(tip_x, ypos, "*", ha=label_ha, va="center",
+                            fontsize=9, color="#333333")
 
-        ax.set_xticks(range(len(pairs)))
-        ax.set_xticklabels(pairs, fontsize=9, rotation=20, ha="right")
-        ax.set_yticks(range(len(cohorts)))
-        ax.set_yticklabels(cohorts, fontsize=9)
-        ax.set_title(title, fontsize=11, pad=8)
-        ax.text(0.5, -0.15, "* p < 0.05", transform=ax.transAxes,
-                fontsize=8, color="#666666", ha="center")
+            ytick_pos.append(group_center)
 
-        cbar = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.8)
-        cbar.set_label("Correlation", fontsize=9)
-        cbar.ax.tick_params(labelsize=8)
+        ax.axvline(0, color="#666666", linewidth=0.8, linestyle="--")
+        ax.set_yticks(ytick_pos)
+        ax.set_yticklabels(pairs, fontsize=9)
+        ax.set_xlim(-1.15, 1.15)
+        ax.set_xlabel("Pearson r", fontsize=9)
+        ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
+        ax.tick_params(axis="x", labelsize=8)
+
+        # Legend: significance guide only (cohort labels are inline)
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor="#888888", alpha=1.0,  label="p < 0.05  (*)"),
+            Patch(facecolor="#888888", alpha=0.35, label="p ≥ 0.05 (ns)"),
+        ]
+        ax.legend(handles=legend_elements, loc="lower center",
+                  bbox_to_anchor=(0.5, -0.08), ncol=2, fontsize=7.5, frameon=False)
+
         fig.tight_layout()
 
         png_buf = io.BytesIO()
@@ -807,28 +816,21 @@ def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
         svg_str = svg_buf.read().decode()
         plt.close(fig)
 
-        # CSV: flat table preserving all original fields from every record
-        all_keys: list = []
-        for records in data.values():
-            if isinstance(records, list):
-                for rec in records:
-                    if isinstance(rec, dict):
-                        for k in rec:
-                            if k not in all_keys:
-                                all_keys.append(k)
-                        break
+        # ── 3. CSV: deduplicated flat table ──
         csv_buf = io.StringIO()
         writer = _csv.writer(csv_buf)
-        writer.writerow(["cohort"] + all_keys)
-        for cohort in cohorts:
-            for rec in (data.get(cohort) or []):
-                if isinstance(rec, dict):
-                    writer.writerow([cohort] + [rec.get(k, "") for k in all_keys])
+        writer.writerow(["cohort", "pair", "pearson_r", "pval", "significant"])
+        for pair_label in pairs:
+            for cohort in cohorts:
+                entry = pair_data[pair_label].get(cohort)
+                if entry:
+                    v, p = entry
+                    writer.writerow([cohort, pair_label, f"{v:.4f}", f"{p:.4g}", "yes" if p < 0.05 else "no"])
 
         return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
 
     except Exception as e:
-        logger.warning(f"[Cis-correlation heatmap] Failed to generate: {e}")
+        logger.warning(f"[Cis-correlation] Failed to generate: {e}")
         return None
 
 
@@ -1037,11 +1039,12 @@ def _generate_tcga_cohort_bar_static(results: list, gene: str, omics_label: str)
         return None
 
 
-def _generate_funmap_network_static(neighborhood: list, gene: str) -> Optional[dict]:
+def _generate_funmap_network_static(nodes: list, edges: list, gene: str) -> Optional[dict]:
     """Generate a spring-layout network graph for FunMap functional partners.
 
     Args:
-        neighborhood: list of gene symbol strings
+        nodes: list of dicts with "name" and "value" keys from the API
+        edges: list of dicts with "source" and "target" keys from the API
         gene: query gene symbol (center node)
     Returns:
         dict with png_b64, svg, csv, title — or None on failure
@@ -1053,32 +1056,46 @@ def _generate_funmap_network_static(neighborhood: list, gene: str) -> Optional[d
         import matplotlib.pyplot as plt
         import networkx as nx
 
-        neighbors = [n for n in neighborhood if n != gene][:40]
+        # Build node set (cap at 50 neighbors for readability)
+        all_names = [n["name"] for n in nodes if isinstance(n, dict) and n.get("name")]
+        neighbors = [n for n in all_names if n != gene][:50]
+        shown_nodes = set(neighbors) | {gene}
+
         if not neighbors:
             return None
 
         title = f"{gene} Functional Network — FunMap"
 
         G = nx.Graph()
-        G.add_node(gene)
-        for n in neighbors:
-            G.add_node(n)
-            G.add_edge(gene, n)
+        for name in shown_nodes:
+            G.add_node(name)
 
-        pos = nx.spring_layout(G, seed=42, k=2.0 / (len(neighbors) ** 0.5))
+        # Use actual edges from the API; fall back to star topology if none match
+        edge_count = 0
+        for e in edges:
+            src = e.get("source", "")
+            tgt = e.get("target", "")
+            if src in shown_nodes and tgt in shown_nodes:
+                G.add_edge(src, tgt)
+                edge_count += 1
+        if edge_count == 0:
+            for n in neighbors:
+                G.add_edge(gene, n)
 
-        fig_side = max(6.5, min(11, 5 + len(neighbors) * 0.15))
+        pos = nx.spring_layout(G, seed=42, k=2.2 / max(len(neighbors) ** 0.5, 1))
+
+        fig_side = max(7, min(12, 5.5 + len(neighbors) * 0.15))
         fig, ax = plt.subplots(figsize=(fig_side, fig_side))
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
-        nx.draw_networkx_edges(G, pos, ax=ax, edge_color="#cccccc", width=1.0, alpha=0.8)
+        nx.draw_networkx_edges(G, pos, ax=ax, edge_color="#cccccc", width=0.8, alpha=0.7)
         nx.draw_networkx_nodes(G, pos, ax=ax,
                                nodelist=[gene],
-                               node_color="#c0392b", node_size=600, alpha=0.95)
+                               node_color="#c0392b", node_size=700, alpha=0.95)
         nx.draw_networkx_nodes(G, pos, ax=ax,
                                nodelist=neighbors,
-                               node_color="#2980b9", node_size=220, alpha=0.75)
+                               node_color="#2980b9", node_size=240, alpha=0.75)
         nx.draw_networkx_labels(G, pos, ax=ax,
                                 labels={gene: gene},
                                 font_size=10, font_weight="bold", font_color="white")
@@ -1088,7 +1105,7 @@ def _generate_funmap_network_static(neighborhood: list, gene: str) -> Optional[d
 
         ax.set_title(title, fontsize=11, pad=8)
         ax.text(0.5, -0.02,
-                f"{len(neighbors)} functional partners shown  ·  Center node = {gene}",
+                f"{len(neighbors)} nodes · {G.number_of_edges()} edges  ·  Center node = {gene}",
                 transform=ax.transAxes, fontsize=8.5, color="#666666", ha="center")
         ax.axis("off")
         fig.tight_layout()
@@ -1104,11 +1121,18 @@ def _generate_funmap_network_static(neighborhood: list, gene: str) -> Optional[d
         svg_str = svg_buf.read().decode()
         plt.close(fig)
 
+        # CSV: full edge list from API (filtered to shown nodes)
         csv_buf = io.StringIO()
         writer = _csv.writer(csv_buf)
         writer.writerow(["source", "target"])
-        for n in neighbors:
-            writer.writerow([gene, n])
+        for e in edges:
+            src = e.get("source", "")
+            tgt = e.get("target", "")
+            if src in shown_nodes and tgt in shown_nodes:
+                writer.writerow([src, tgt])
+        if edge_count == 0:
+            for n in neighbors:
+                writer.writerow([gene, n])
 
         return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title}
 
@@ -2495,26 +2519,44 @@ Please provide a clear, informative response about this gene. Include the key de
             # Tool-specific formatting for dict outputs
             if tool_id.endswith("funmap_neighborhood"):
                 neigh = []
+                api_nodes = []
+                api_edges = []
                 if isinstance(parsed, dict):
                     neigh = parsed.get("neighborhood") or []
+                    api_nodes = parsed.get("nodes") or []
+                    api_edges = parsed.get("edges") or []
 
-                funmap_title = f"FunMap neighborhood - {gene_name}" if gene_name else "FunMap neighborhood"
+                funmap_title = f"FunMap neighborhood — {gene_name}" if gene_name else "FunMap neighborhood"
                 md = [
                     f"## {funmap_title}",
                     f"**Nodes found:** {len(neigh)}",
                     "",
                 ]
-                fig_dict = _generate_funmap_network_static(neigh, gene_name or "Gene")
-                if fig_dict:
+
+                if api_nodes:
+                    # Build CSV edge list for download
+                    import io as _io, csv as _csv_mod
+                    shown = set(n["name"] for n in api_nodes[:51] if isinstance(n, dict) and n.get("name"))
+                    csv_buf = _io.StringIO()
+                    _csv_writer = _csv_mod.writer(csv_buf)
+                    _csv_writer.writerow(["source", "target"])
+                    for e in api_edges:
+                        src, tgt = e.get("source", ""), e.get("target", "")
+                        if src in shown and tgt in shown:
+                            _csv_writer.writerow([src, tgt])
+
                     viz_id = _uuid.uuid4().hex
                     _visualizations.append({
-                        "type": "static_plot",
+                        "type": "network_plot",
                         "id": viz_id,
-                        "title": fig_dict["title"],
-                        **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                        "title": funmap_title,
+                        "nodes": api_nodes,
+                        "edges": api_edges,
+                        "csv": csv_buf.getvalue(),
                     })
-                    md.append(f"[PLOT:{viz_id}]")
+                    md.append(f"[NETWORK:{viz_id}]")
                     md.append("")
+
                 if neigh:
                     chunks = [neigh[i:i + 5] for i in range(0, len(neigh), 5)]
                     for chunk in chunks:
@@ -2974,14 +3016,39 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         import os, json as _json, base64 as _b64
         plot_dir = session_plot_dir(session_id)
         for viz in visualizations:
-            if viz.get("type") != "static_plot":
-                continue
+            viz_type = viz.get("type")
             viz_id = viz.get("id")
-            if not viz_id:
+            if not viz_id or viz_type not in ("static_plot", "network_plot"):
                 continue
             safe_viz_id = os.path.basename(str(viz_id))
-            # Save title sidecar so the API can return it for lazy-loaded plots
-            title = viz.get("title")
+            title = viz.get("title", "")
+
+            if viz_type == "network_plot":
+                # Persist nodes + edges in the JSON sidecar so the API can serve them
+                try:
+                    with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
+                        _json.dump({
+                            "type": "network_plot",
+                            "title": title,
+                            "nodes": viz.get("nodes", []),
+                            "edges": viz.get("edges", []),
+                        }, f)
+                except Exception:
+                    pass
+                csv = viz.get("csv")
+                if csv:
+                    try:
+                        with open(plot_dir / f"{safe_viz_id}.csv", "w", encoding="utf-8") as f:
+                            f.write(csv)
+                    except Exception:
+                        pass
+                try:
+                    write_visualization_index(safe_viz_id, session_id, title)
+                except Exception:
+                    pass
+                continue
+
+            # static_plot
             if title:
                 try:
                     with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
@@ -3010,7 +3077,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                 except Exception:
                     pass
             try:
-                write_visualization_index(safe_viz_id, session_id, title or "")
+                write_visualization_index(safe_viz_id, session_id, title)
             except Exception:
                 pass
 
@@ -3026,7 +3093,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         for viz in visualizations:
             if not isinstance(viz, dict):
                 continue
-            if viz.get("type") != "static_plot":
+            if viz.get("type") not in ("static_plot", "network_plot"):
                 continue
             viz_id = viz.get("id")
             if isinstance(viz_id, str) and viz_id.strip():
@@ -3054,7 +3121,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             return response
         slim = dict(response)
         slim["visualizations"] = [
-            {k: v for k, v in viz.items() if k not in ("png_b64", "svg", "csv")}
+            {k: v for k, v in viz.items() if k not in ("png_b64", "svg", "csv", "nodes", "edges")}
             for viz in vizs
         ]
         return slim
