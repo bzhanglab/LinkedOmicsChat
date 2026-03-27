@@ -23,8 +23,6 @@ import requests
 from mcp.server.fastmcp import FastMCP, Image
 from PIL import Image as PILImage
 from linkedomics_tcga_params import (
-    TCGACohort,
-    TCGAOmics,
     detect_tcga_survival_mode,
     normalize_tcga_cohort,
     normalize_tcga_omics,
@@ -59,7 +57,7 @@ targets = get_target_json()
 
 # Add an addition tool
 @mcp.tool()
-def funmap_neighborhood(protein: str) -> dict[str, list[str]]:
+def funmap_neighborhood(protein: str) -> dict:
     """Retrieve the functional neighborhood of a protein in the FunMap network.
 
     FunMap is a functional network where proteins are connected if a connection is predicted by a
@@ -83,8 +81,13 @@ def funmap_neighborhood(protein: str) -> dict[str, list[str]]:
         protein (str): The gene symbol of the protein of interest (e.g., "ESR1", "TP53").
 
     Returns:
-        dict[str, list[str]]: A dictionary with a "neighborhood" key containing a list of gene symbols.
-                              These genes are predicted to have a strong functional relationship with the input protein.
+        dict: A dictionary with:
+            - "nodes" (list[dict]): Each node has "name" (gene symbol) and "value" (score string).
+              The score is a p-value derived from the difference in average protein abundance
+              between tumor and normal samples using the Wilcoxon rank-sum test, based on data
+              from 5 cohorts: CCRCC, HCC, HNSCC, LSCC, and LUAD.
+            - "edges" (list[dict]): Each edge has "source" and "target" gene symbols representing functional connections.
+            - "neighborhood" (list[str]): Flat list of neighbor gene symbols for quick reference.
     """
     req = requests.get(
         f"https://funmap.linkedomics.org/data/dag/gene/{protein.upper()}.json",
@@ -92,9 +95,13 @@ def funmap_neighborhood(protein: str) -> dict[str, list[str]]:
     )
     if req.status_code != 200:
         print(f"Got status code: {req.status_code}")
-        return {"neighborhood": []}  # Could not find protein
+        return {"nodes": [], "edges": [], "neighborhood": []}  # Could not find protein
 
-    return {"neighborhood": [node["name"] for node in req.json()["nodes"]]}
+    data = req.json()
+    nodes = data.get("nodes", [])
+    edges = data.get("edges", [])
+    neighborhood = [node["name"] for node in nodes if node.get("name") != protein.upper()]
+    return {"nodes": nodes, "edges": edges, "neighborhood": neighborhood}
 
 
 @mcp.tool()
@@ -802,9 +809,9 @@ def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
 
 @mcp.tool()
 def tcga_survival_analysis(
-    cohort: Optional[TCGACohort] = None,
+    cohort: Optional[str] = None,
     gene: Optional[str] = None,
-    omics: Optional[TCGAOmics] = None,
+    omics: Optional[str] = None
 ) -> dict:
     """Perform survival analysis using TCGA multi-omics data via the LinkedOmics API.
 
@@ -829,12 +836,65 @@ def tcga_survival_analysis(
         omics (str, optional): Omics type — one of: Methylation, RNAseq, RPPA, SCNA, miRNASeq.
 
     Returns:
-        - dataset (str): Always "TCGA".
-        - mode (int): Detected query mode (1–4).
-        - query (dict): Echo of input parameters used.
-        - n_results (int): Number of result items returned.
-        - results (list): List of survival result objects. Fields vary by mode — keys provided in the request are omitted from each result item. Mode 1: hr, pvalue, n, samples. Mode 2: omics, hr, pvalue, n, samples. Mode 3: cohort, hr, pvalue, n. Mode 4: gene, hr, pvalue, fdr, n.
-        - status (str): Present only on error; value is "error" with a message field explaining the failure.
+        dict:
+            A dictionary containing survival results from the TCGA backend.
+
+            The response always has the form:
+
+                {
+                    "dataset": "TCGA",
+                    "mode": mode,
+                    "query": params,
+                    "n_results": len(results),
+                    "results": [...]
+                }
+
+            `results` is always a list of gene-level result objects.
+
+            Common fields that may appear in each result item:
+            - cohort
+            - omics
+            - gene
+            - hr
+            - pvalue
+            - fdr
+            - n
+            - samples
+
+            Returned fields depend on query mode because keys already provided
+            in the request are removed from each result item.
+
+            Mode 1 (`cohort + gene + omics`)
+            - Returns one detailed single-gene result.
+            - Result items typically contain:
+            hr, pvalue, n, samples
+
+            Mode 2 (`cohort + gene`)
+            - Returns one detailed single-gene result per available omics type.
+            - Result items typically contain:
+            omics, hr, pvalue, n, samples
+
+            Mode 3 (`gene + omics`)
+            - Returns one result per cohort.
+            - Result items typically contain:
+            cohort, hr, pvalue, n
+            - `fdr` is removed for this mode.
+
+            Mode 4 (`cohort + omics`)
+            - Returns one result per gene for the requested cohort and omics.
+            - Result items typically contain:
+            gene, hr, pvalue, fdr, n
+
+            On request failure, the function returns:
+
+                {
+                    "status": "error",
+                    "dataset": "TCGA",
+                    "mode": mode,
+                    "query": params,
+                    "message": "...",
+                    "results": []
+                }
 
 
     Notes:
