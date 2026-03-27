@@ -51,6 +51,10 @@ yarn-error.log*
 # Backup files
 *.bak
 
+# MCP server data files
+backend/mcp_servers/drugtargets/
+backend/mcp_servers/drugtargets.tgz
+
 # Generated data files (created on-demand)
 data/*
 !data/.gitkeep
