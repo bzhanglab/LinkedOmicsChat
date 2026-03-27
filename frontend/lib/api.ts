@@ -211,7 +211,23 @@ export interface NetworkVisualization {
     csv?: string      // edge list CSV for download
 }
 
-export type AnyVisualization = StaticVisualization | NetworkVisualization
+export interface DrugTargetVisualization {
+    type: "drug_target_grid"
+    id: string
+    title: string
+    gene: string
+    tier?: string
+    family?: string
+    drugs?: string
+    drug_tiers?: string
+    features: Array<{ label: string; field: string }>
+    cohorts: string[]
+    presence: boolean[][]
+    plot_map: Record<string, Record<string, string[]>>
+    hyper_sites?: Array<{ site: string; cohorts: string[] }>
+}
+
+export type AnyVisualization = StaticVisualization | NetworkVisualization | DrugTargetVisualization
 
 export interface ChatMessage {
     role: "user" | "assistant" | "system"

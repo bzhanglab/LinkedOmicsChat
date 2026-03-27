@@ -33,6 +33,153 @@ from linkedomics_tcga_params import (
 mcp = FastMCP("linkedomics_mcp", json_response=True)
 
 
+def _parse_target_html(html: str) -> dict[str, Any]:
+    """Extract all data sections from a drugtarget HTML page."""
+    result: dict[str, Any] = {}
+
+    # tn is split across 4 concat groups:
+    #   1 = cell line dependency
+    #   2 = increased in tumor, summary
+    #   3 = increased in tumor, protein
+    #   4 = increased in tumor, phospho sites
+    tn_match = re.search(
+        r"const tn = (\[.*?\])\.concat\((.*?)\)\.concat\((.*?)\)\.concat\((.*?)\);",
+        html, re.DOTALL,
+    )
+    def _plot_ids_for(row: dict) -> list[str]:
+        """Extract plot_id(s) from a data row, filtering out None / 'NA'."""
+        pid = row.get("plot_id")
+        if not pid or pid == "NA":
+            return []
+        return pid if isinstance(pid, list) else [pid]
+
+    # plot_map: feature_field → cohort → [plot_id, ...]  (used by the interactive grid)
+    plot_map: dict[str, dict[str, list[str]]] = {}
+
+    if tn_match:
+        def _positive_cohorts(raw: str) -> list[str]:
+            return [r["cohort"] for r in json.loads(raw) if r.get("value") == 1]
+
+        cl_rows = json.loads(tn_match.group(1))
+        dep = [r["cohort"] for r in cl_rows if r.get("value") == 1]
+        result["cell_line_dependency"] = (
+            f"Dependent cell lines: {', '.join(dep)}" if dep
+            else "No evidence of cell line dependency"
+        )
+        for r in cl_rows:
+            pids = _plot_ids_for(r)
+            if r.get("value") == 1 and pids:
+                plot_map.setdefault("cell_line_dependency", {})[r["cohort"]] = pids
+
+        summary = _positive_cohorts(tn_match.group(2))
+        result["tumor_increase_summary"] = (
+            f"Increased in tumor (summary): {', '.join(summary)}" if summary
+            else "No evidence of tumor increase"
+        )
+
+        prot_rows = json.loads(tn_match.group(3))
+        prot = [r["cohort"] for r in prot_rows if r.get("value") == 1]
+        result["tumor_overexpression"] = (
+            f"Overexpressed in {', '.join(prot)}" if prot
+            else "No evidence of tumor overexpression"
+        )
+        # "Increased in tumor, summary" row clicks show the protein-level boxplots
+        for r in prot_rows:
+            pids = _plot_ids_for(r)
+            if r.get("value") == 1 and pids:
+                plot_map.setdefault("tumor_increase_summary", {})[r["cohort"]] = pids
+
+        site_rows = json.loads(tn_match.group(4))
+        sites: dict[str, list[str]] = {}
+        for s in site_rows:
+            if s.get("value") == 1:
+                sites.setdefault(s["site"], []).append(s["cohort"])
+        result["hyperactivated_sites"] = (
+            [{"site": site, "cohorts": cohorts} for site, cohorts in sites.items()]
+            if sites else "No evidence of hyperactivated sites"
+        )
+        # Phospho sites: key is "phospho_{site}" so grid can look up per (site, cohort)
+        for r in site_rows:
+            pids = _plot_ids_for(r)
+            if r.get("value") == 1 and pids:
+                plot_map.setdefault(f"phospho_{r['site']}", {})[r["cohort"]] = pids
+
+    # Standalone array variables
+    var_data: dict[str, list] = {}
+    for name, val in re.findall(r"(?:const|var|let)\s+(\w+)\s*=\s*(\[[\s\S]*?\]);", html):
+        if name in ("mut", "meth", "cnv", "tsg", "neo", "fus", "taa"):
+            try:
+                var_data[name] = json.loads(val)
+            except Exception:
+                pass
+
+    def _cohort_list(rows: list, label: str, absent: str) -> str:
+        cohorts = [r["cohort"] for r in rows if r.get("value") == 1]
+        return f"{label}: {', '.join(cohorts)}" if cohorts else absent
+
+    _STANDALONE: list[tuple[str, str, str, str]] = [
+        ("mut",  "mutation_cis_effect",     "Mutation cis effect in",       "No evidence of mutation cis effect"),
+        ("meth", "methylation_driver",      "Methylation driver in",        "No evidence of methylation driver"),
+        ("cnv",  "cnv_driver",              "CNV driver in",                "No evidence of CNV driver"),
+        ("tsg",  "tsg_dependency",          "TSG-associated dependency in", "No evidence of TSG-associated dependency"),
+        ("taa",  "tumor_associated_antigen","Tumor-associated antigen in",  "No evidence of tumor-associated antigen"),
+    ]
+    for varname, field, label_prefix, absent_msg in _STANDALONE:
+        if varname not in var_data:
+            continue
+        result[field] = _cohort_list(var_data[varname], label_prefix, absent_msg)
+        for r in var_data[varname]:
+            pids = _plot_ids_for(r)
+            if r.get("value") == 1 and pids:
+                plot_map.setdefault(field, {})[r["cohort"]] = pids
+
+    result["_plot_map"] = plot_map
+
+    if "neo" in var_data:
+        neo_entries = []
+        for row in var_data["neo"]:
+            if row.get("value") == 1:
+                entry: dict[str, Any] = {"cohort": row["cohort"]}
+                try:
+                    table = json.loads(row.get("neo_mut_table", "[]"))
+                    entry["neoepitopes"] = [
+                        {
+                            "protein_change": t.get("Protein Change"),
+                            "neoepitope": t.get("Neoepitope"),
+                            "hla_type": t.get("HLA Type"),
+                            "binding_affinity_nM": t.get("NetMHCpan Binding Affinity nM"),
+                        }
+                        for t in table
+                    ]
+                except Exception:
+                    pass
+                neo_entries.append(entry)
+        result["neoantigen_mutations"] = neo_entries if neo_entries else "No neoantigen mutations identified"
+
+    if "fus" in var_data:
+        fus_entries = []
+        for row in var_data["fus"]:
+            if row.get("value") == 1:
+                entry = {"cohort": row["cohort"]}
+                try:
+                    table = json.loads(row.get("neo_fus_table", "[]"))
+                    entry["fusion_neoepitopes"] = [
+                        {
+                            "fusion": t.get("Fusion"),
+                            "neoepitope": t.get("Neoepitope"),
+                            "hla_type": t.get("HLA Type"),
+                            "binding_affinity_nM": t.get("NetMHCpan Binding Affinity nM"),
+                        }
+                        for t in table
+                    ]
+                except Exception:
+                    pass
+                fus_entries.append(entry)
+        result["neoantigen_fusions"] = fus_entries if fus_entries else "No fusion neoantigens identified"
+
+    return result
+
+
 def get_target_json() -> dict[str, dict[str, str]]:
     """Get the target JSON data from the LinkedOmics API."""
     json_req = requests.get("https://targets.linkedomics.org/index.json", timeout=5000)
@@ -108,12 +255,22 @@ def funmap_neighborhood(protein: str) -> dict:
 def get_target(protein: str) -> dict[str, Any]:
     """Retrieve clinical targeting data, oncology tiers, and tumor dependency for a gene.
 
-    This tool integrates data from multiple sources to provide a snapshot of a gene's clinical potential:
-    - **Drug Targets**: List of approved or experimental drugs.
-    - **Tiers**: Clinical relevance levels (T1: FDA-approved oncology targets, T2: FDA-approved for other indications, T3: Clinical trials, T4: Pre-clinical/Druggable, T5: Surface proteins).
-    - **Cell Line Dependency**: Indicates if the gene is essential for cancer cell survival (from Project Achilles/DepMap).
-    - **Tumor Overexpression**: Summary of whether the protein is frequently overexpressed in cancer cohorts.
-    - **Hyperactivated Sites**: Specific phosphorylation sites showing increased activity in tumors.
+    This tool integrates data from multiple sources to provide a comprehensive snapshot of a gene's
+    clinical and therapeutic potential:
+    - **Tier / Drugs**: Clinical relevance tier (T1: FDA-approved oncology, T2: FDA-approved other
+      indication, T3: clinical trials, T4: pre-clinical/druggable, T5: surface proteins) and
+      associated drug names.
+    - **Cell Line Dependency**: Whether the gene is essential for cancer cell survival (DepMap/Achilles).
+    - **Tumor Increase Summary**: Whether the gene is broadly increased in tumor vs. normal.
+    - **Tumor Overexpression (protein)**: Specific cohorts where the protein is overexpressed.
+    - **Hyperactivated Phospho Sites**: Phosphorylation sites with elevated activity in tumors.
+    - **Methylation Driver**: Cohorts where the gene acts as a methylation driver.
+    - **CNV Driver**: Cohorts where somatic copy-number variation drives expression.
+    - **TSG Dependency**: Cohorts showing TSG-associated dependency.
+    - **Tumor-Associated Antigen**: Cohorts where the protein is a tumor-associated antigen.
+    - **Neoantigen Mutations**: Somatic mutations generating neoantigens, with peptide, HLA type,
+      and NetMHCpan binding affinity details.
+    - **Neoantigen Fusions**: Gene fusions generating neoantigens, with same detail level.
 
     Use this tool when asking whether a gene is a therapeutic target.
 
@@ -122,12 +279,13 @@ def get_target(protein: str) -> dict[str, Any]:
     - "Does TP53 show dependency in any cancer cell lines, suggesting it's essential for survival?"
     - "What are the hyperactivated phosphorylation sites for EGFR across different cancers?"
     - "Which tier does the gene BRCA1 fall into for drug development?"
+    - "Does EGFR generate neoantigens in any cancer type?"
 
     Args:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: A result dictionary containing tier, family, drugs, dependency, and overexpression summaries.
+        dict[str, Any]: A result dictionary with all available targeting and tumor biology fields.
     """
     global targets
 
@@ -136,76 +294,19 @@ def get_target(protein: str) -> dict[str, Any]:
 
     base = targets[protein.upper()]
 
-    protein_html_req = requests.get(
-        f"https://targets.linkedomics.org/{protein.upper()}/",
-        timeout=1000,
-    )
-    if protein_html_req.status_code != 200:
-        return {"result": base}
-
-    protein_html = protein_html_req.text
-
-    # extract the const tn = variable using regex
-    tn_match = re.search(
-        r"const tn = (\[.*\])\.concat\((.*)\)\.concat\((.*)\)\.concat\((.*)\);",
-        protein_html,
-    )
-
-    # TN Groups
-    # Group 1: cell line dependency
-    # Group 2: tumor overexpression summary
-    # Group 3: Protein Overexpressed
-    # Group 4: Site hyper activation
-
-    dependent_cell_lines = []
-
-    tn_overexpressed = []
-
-    hyperactivated_sites = {}
-
-    if tn_match:
-        cl = json.loads(tn_match.group(1))
-
-        for row in cl:
-            cohort = row["cohort"]
-            if row["value"] == 1:
-                dependent_cell_lines.append(cohort)
-
-        tn = json.loads(tn_match.group(3))
-
-        for row in tn:
-            cohort = row["cohort"]
-            if row["value"] == 1:
-                tn_overexpressed.append(cohort)
-
-        site_info = json.loads(tn_match.group(4))
-
-        for site in site_info:
-            if site["value"] == 1:
-                if site["site"] not in hyperactivated_sites:
-                    hyperactivated_sites[site["site"]] = [site["cohort"]]
-                else:
-                    hyperactivated_sites[site["site"]].append(site["cohort"])
-
-    if len(dependent_cell_lines) == 0:
-        base["cell_line_dependency"] = "No evidence of cell line dependency"
-    else:
-        base["cell_line_dependency"] = (
-            f"Dependent cell lines: {', '.join(dependent_cell_lines)}"
+    html: str | None = None
+    try:
+        req = requests.get(
+            f"https://targets.linkedomics.org/{protein.upper()}/",
+            timeout=10,
         )
+        if req.status_code == 200:
+            html = req.text
+    except Exception:
+        pass
 
-    if len(tn_overexpressed) == 0:
-        base["tumor_overexpression"] = "No evidence of tumor overexpression"
-    else:
-        base["tumor_overexpression"] = f"Overexpressed in {', '.join(tn_overexpressed)}"
-    if len(hyperactivated_sites) == 0:
-        base["hyperactivated_sites"] = "No evidence of hyperactivated sites"
-    else:
-        base["hyperactivated_sites"] = []
-        for site, cohorts in hyperactivated_sites.items():
-            base["hyperactivated_sites"].append(
-                {site: f"Hyperactivated in {', '.join(cohorts)}"}
-            )
+    if html:
+        base.update(_parse_target_html(html))
 
     return {"result": base}
 
@@ -214,12 +315,10 @@ def get_target(protein: str) -> dict[str, Any]:
 def batch_get_target(proteins: list[str]) -> dict[str, Any]:
     """Retrieve clinical targeting data, oncology tiers, and tumor dependency for multiple genes.
 
-    This tool integrates data from multiple sources to provide a snapshot of a gene's clinical potential:
-    - **Drug Targets**: List of approved or experimental drugs.
-    - **Tiers**: Clinical relevance levels (T1: FDA-approved oncology targets, T2: FDA-approved for other indications, T3: Clinical trials, T4: Pre-clinical/Druggable, T5: Surface proteins).
-    - **Cell Line Dependency**: Indicates if the gene is essential for cancer cell survival (from Project Achilles/DepMap).
-    - **Tumor Overexpression**: Summary of whether the protein is frequently overexpressed in cancer cohorts.
-    - **Hyperactivated Sites**: Specific phosphorylation sites showing increased activity in tumors.
+    This tool integrates data from multiple sources to provide a comprehensive snapshot of each gene's
+    clinical and therapeutic potential, including tier, drugs, cell line dependency, tumor overexpression,
+    hyperactivated phospho sites, methylation/CNV drivers, TSG dependency, tumor-associated antigens,
+    and neoantigen mutations/fusions.
 
     Use this tool when asking whether a list of genes contains a therapeutic target.
 

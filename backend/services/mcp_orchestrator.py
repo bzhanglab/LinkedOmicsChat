@@ -2677,30 +2677,57 @@ Please provide a clear, informative response about this gene. Include the key de
                         entries.append((gene_name or "Gene", r))
                 if not entries:
                     continue
+                _GRID_FEATURES = [
+                    ("Gene dependency in cell line", "cell_line_dependency"),
+                    ("Increased in tumor, summary",  "tumor_increase_summary"),
+                    ("Mutation cis effect",           "mutation_cis_effect"),
+                    ("Methylation driver",            "methylation_driver"),
+                    ("CNV driver",                    "cnv_driver"),
+                    ("TSG associated dependency",     "tsg_dependency"),
+                    ("Neoantigen, somatic mutation",  "neoantigen_mutations"),
+                    ("Neoantigen, fusion",            "neoantigen_fusions"),
+                    ("Tumor associated antigen",      "tumor_associated_antigen"),
+                ]
+                _GRID_COHORTS = ["BRCA", "CCRCC", "COAD", "GBM", "HNSCC", "LSCC", "LUAD", "OV", "PDAC", "UCEC"]
+
+                import re as _re2
+                def _cohorts_in(val) -> set:
+                    if not val or (isinstance(val, str) and val.startswith("No evidence")):
+                        return set()
+                    if isinstance(val, list):
+                        return {e["cohort"] for e in val if isinstance(e, dict) and "cohort" in e}
+                    return {c for c in _GRID_COHORTS if _re2.search(rf'\b{_re2.escape(c)}\b', str(val))}
+
                 for g_sym, r in entries:
                     title = f"Drug target profile — {g_sym}"
                     md = [f"## {title}", ""]
-                    tier = r.get("tier", ""); family = r.get("family", "")
-                    if tier:
-                        md.append(f"**Tier:** {tier}")
-                    if family:
-                        md.append(f"**Family:** {family}")
-                    drugs_raw = r.get("drugs", "")
-                    if drugs_raw and str(drugs_raw).strip() not in ("", "nan", "None"):
-                        md.append(f"\n**Drugs:** {drugs_raw}")
-                    dep = r.get("cell_line_dependency", "")
-                    if dep:
-                        md.append(f"\n**Cell line dependency:** {dep}")
-                    overexp = r.get("tumor_overexpression", "")
-                    if overexp:
-                        md.append(f"\n**Tumor overexpression:** {overexp}")
-                    sites = r.get("hyperactivated_sites", "")
-                    if sites and sites != "No evidence of hyperactivated sites":
-                        if isinstance(sites, list):
-                            site_strs = [f"{list(s.keys())[0]}: {list(s.values())[0]}" for s in sites if isinstance(s, dict)]
-                            md.append(f"\n**Hyperactivated sites:** {'; '.join(site_strs)}")
-                        else:
-                            md.append(f"\n**Hyperactivated sites:** {sites}")
+
+                    presence = [
+                        [c in _cohorts_in(r.get(field, "")) for c in _GRID_COHORTS]
+                        for _, field in _GRID_FEATURES
+                    ]
+
+                    hyper_raw = r.get("hyperactivated_sites", "")
+                    hyper_sites = hyper_raw if isinstance(hyper_raw, list) else []
+
+                    viz_id = _uuid.uuid4().hex
+                    _visualizations.append({
+                        "type": "drug_target_grid",
+                        "id": viz_id,
+                        "title": title,
+                        "gene": g_sym,
+                        "tier": r.get("tier", ""),
+                        "family": r.get("Family", "") or r.get("family", ""),
+                        "drugs": r.get("drugs", ""),
+                        "drug_tiers": r.get("drug_tiers", ""),
+                        "features": [{"label": lbl, "field": fld} for lbl, fld in _GRID_FEATURES],
+                        "cohorts": _GRID_COHORTS,
+                        "presence": presence,
+                        "plot_map": r.get("_plot_map", {}),
+                        "hyper_sites": hyper_sites,
+                    })
+                    md.append(f"\n[PLOT:{viz_id}]")
+                    md.append("")
                     md.append("\n> **Source:** [LinkedOmics Targets](#source:targets)")
                     sections.append("\n".join(md) + "\n")
                 if len(sections) > _sections_before:
@@ -3041,10 +3068,19 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         for viz in visualizations:
             viz_type = viz.get("type")
             viz_id = viz.get("id")
-            if not viz_id or viz_type not in ("static_plot", "network_plot"):
+            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid"):
                 continue
             safe_viz_id = os.path.basename(str(viz_id))
             title = viz.get("title", "")
+
+            if viz_type == "drug_target_grid":
+                try:
+                    with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
+                        _json.dump({k: viz[k] for k in viz if k != "id"}, f)
+                    write_visualization_index(safe_viz_id, session_id, title)
+                except Exception:
+                    pass
+                continue
 
             if viz_type == "network_plot":
                 # Persist nodes + edges in the JSON sidecar so the API can serve them

@@ -638,6 +638,24 @@ async def search_messages(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/drugtargets/{gene}/{plot_id}")
+async def proxy_drugtarget_image(gene: str, plot_id: str):
+    """Proxy a drug-target boxplot PNG from targets.linkedomics.org."""
+    import re, httpx
+    from fastapi.responses import Response
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", gene) or not re.fullmatch(r"[A-Za-z0-9_\-]+", plot_id):
+        raise HTTPException(status_code=400, detail="Invalid gene or plot_id")
+    url = f"https://targets.linkedomics.org/{gene}/{plot_id}.png"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url)
+            if r.status_code == 200:
+                return Response(content=r.content, media_type="image/png")
+    except Exception:
+        pass
+    raise HTTPException(status_code=404, detail="Plot not found")
+
+
 @router.get("/visualizations/{viz_id}/png")
 async def get_visualization_png(viz_id: str):
     """Serve a plot PNG directly (no auth — IDs are random UUIDs, used by shared session pages)."""
@@ -664,6 +682,10 @@ async def get_visualization(viz_id: str):
     if json_path and json_path.exists():
         with open(json_path, encoding="utf-8") as f:
             json_data = _json.load(f)
+
+    # Drug target grid: all data stored in JSON sidecar
+    if json_data.get("type") == "drug_target_grid":
+        return {"id": viz_id, **json_data}
 
     # Network plot: nodes + edges stored in JSON sidecar
     if json_data.get("type") == "network_plot":
