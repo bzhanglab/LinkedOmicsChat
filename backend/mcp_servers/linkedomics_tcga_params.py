@@ -40,15 +40,42 @@ TCGA_COHORT_DESCRIPTIONS = {
 }
 
 TCGA_OMICS_ALIASES = {
+    # Methylation
     "methylation": "Methylation",
+    "dna methylation": "Methylation",
+    "dna_methylation": "Methylation",
+    # RNAseq
     "rnaseq": "RNAseq",
     "rna_seq": "RNAseq",
     "rna-seq": "RNAseq",
+    "rna": "RNAseq",
+    "mrna": "RNAseq",
+    "mrna expression": "RNAseq",
+    "rna expression": "RNAseq",
+    "gene expression": "RNAseq",
+    "expression": "RNAseq",
+    "transcript": "RNAseq",
+    "transcriptomics": "RNAseq",
+    # RPPA
     "rppa": "RPPA",
+    "protein": "RPPA",
+    "protein expression": "RPPA",
+    "protein level": "RPPA",
+    "proteomics": "RPPA",
+    # SCNA
     "scna": "SCNA",
+    "cna": "SCNA",
+    "copy number": "SCNA",
+    "copy_number": "SCNA",
+    "copy number alteration": "SCNA",
+    "somatic copy number": "SCNA",
+    # miRNASeq
     "mirnaseq": "miRNASeq",
     "mirna_seq": "miRNASeq",
     "mirna-seq": "miRNASeq",
+    "mirna": "miRNASeq",
+    "microrna": "miRNASeq",
+    "mirna expression": "miRNASeq",
 }
 
 TCGA_OMICS_DESCRIPTIONS = {
