@@ -1,7 +1,7 @@
 "use client"
 import { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { Download, Table, Maximize2, X } from "lucide-react"
+import { Download, Table, Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react"
 import type { AnyVisualization, StaticVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
 
@@ -89,9 +89,12 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
     const [fetchError, setFetchError] = useState(false)
     const [showAtRisk, setShowAtRisk] = useState(false)
     const [lightboxOpen, setLightboxOpen] = useState(false)
+    const [zoom, setZoom] = useState(1)
 
-    const openLightbox  = useCallback(() => setLightboxOpen(true),  [])
+    const openLightbox  = useCallback(() => { setLightboxOpen(true); setZoom(1) }, [])
     const closeLightbox = useCallback(() => setLightboxOpen(false), [])
+
+    const clampZoom = (z: number) => Math.min(5, Math.max(0.5, z))
 
     useEffect(() => {
         if (!lightboxOpen) return
@@ -167,24 +170,38 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
                         {/* Lightbox */}
                         {lightboxOpen && typeof document !== "undefined" && createPortal(
                             <div
-                                className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+                                className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm"
                                 onClick={closeLightbox}
                             >
                                 <div
-                                    className="relative max-w-[95vw] max-h-[95vh] overflow-auto rounded-lg bg-white dark:bg-gray-950 p-2 shadow-2xl"
+                                    className="relative rounded-lg bg-white dark:bg-gray-950 shadow-2xl flex flex-col"
+                                    style={{ maxWidth: "95vw", maxHeight: "95vh" }}
                                     onClick={e => e.stopPropagation()}
                                 >
-                                    <button
-                                        onClick={closeLightbox}
-                                        className="absolute top-2 right-2 z-10 bg-black/50 hover:bg-black/70 text-white rounded p-1 transition-colors"
+                                    {/* Lightbox toolbar */}
+                                    <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/30 rounded-t-lg flex-shrink-0">
+                                        <span className="text-xs text-muted-foreground flex-1 truncate px-1">{resolvedViz.title}</span>
+                                        <button onClick={() => setZoom(z => clampZoom(z * 1.25))} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Zoom in"><ZoomIn className="h-3.5 w-3.5" /></button>
+                                        <button onClick={() => setZoom(z => clampZoom(z / 1.25))} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Zoom out"><ZoomOut className="h-3.5 w-3.5" /></button>
+                                        <button onClick={() => setZoom(1)} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Reset zoom"><RotateCcw className="h-3.5 w-3.5" /></button>
+                                        <button onClick={closeLightbox} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Close"><X className="h-3.5 w-3.5" /></button>
+                                    </div>
+                                    {/* Scrollable image area */}
+                                    <div
+                                        className="overflow-auto p-3"
+                                        style={{ maxHeight: "calc(95vh - 36px)" }}
+                                        onWheel={e => {
+                                            e.preventDefault()
+                                            setZoom(z => clampZoom(z * (e.deltaY < 0 ? 1.1 : 0.9)))
+                                        }}
                                     >
-                                        <X className="h-4 w-4" />
-                                    </button>
-                                    <img
-                                        src={`data:image/png;base64,${resolvedViz.png_b64}`}
-                                        alt={resolvedViz.title}
-                                        className="max-w-full h-auto block"
-                                    />
+                                        <img
+                                            src={`data:image/png;base64,${resolvedViz.png_b64}`}
+                                            alt={resolvedViz.title}
+                                            style={{ width: `${zoom * 100}%`, minWidth: "100%", display: "block", height: "auto" }}
+                                            draggable={false}
+                                        />
+                                    </div>
                                 </div>
                             </div>,
                             document.body
