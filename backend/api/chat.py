@@ -526,6 +526,46 @@ async def get_chat_message(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _search_excerpt(q_lower: str, text: str, window: int = 120) -> str:
+    """Return a snippet of text centered on the first occurrence of q_lower."""
+    idx = text.lower().find(q_lower)
+    if idx == -1:
+        return text[:200]
+    start = max(0, idx - window)
+    end = min(len(text), idx + len(q_lower) + window)
+    return ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
+
+
+def _build_result(q_lower: str, msg, sess) -> dict | None:
+    """
+    Return a search result dict only if q_lower appears in the user query or the
+    assistant's plain-text message — not in raw JSON structure, base64 blobs, etc.
+    """
+    resp = msg.response or {}
+    response_text = resp.get("message") or ""
+
+    in_query    = q_lower in (msg.query or "").lower()
+    in_response = q_lower in response_text.lower()
+
+    if not in_query and not in_response:
+        return None   # DB matched JSON junk — discard
+
+    # Prefer showing context from wherever the match actually lives
+    if in_query:
+        excerpt = _search_excerpt(q_lower, msg.query or "")
+    else:
+        excerpt = _search_excerpt(q_lower, response_text)
+
+    return {
+        "message_id":    msg.id,
+        "session_id":    sess.id,
+        "session_title": sess.title or "Untitled",
+        "query":         msg.query,
+        "excerpt":       excerpt,
+        "timestamp":     msg.timestamp,
+    }
+
+
 @router.get("/search")
 async def search_messages(
     q: str = Query(..., min_length=1, max_length=200),
@@ -534,12 +574,15 @@ async def search_messages(
 ):
     """
     Search across all chat sessions for a user.
-    Searches both user queries and assistant responses.
-    Returns up to `limit` results with session title, excerpt, and timestamp.
+    Searches user queries and assistant response text (not raw JSON metadata).
+    Returns up to `limit` results with a contextual excerpt around the match.
     """
     try:
+        q_lower = q.strip().lower()
         term = f"%{q}%"
         results = []
+        # Fetch more rows than needed to account for post-filtering of JSON false positives
+        db_limit = limit * 5
 
         if settings.DATABASE_URL.startswith("sqlite"):
             db = SessionLocal()
@@ -552,23 +595,18 @@ async def search_messages(
                         or_(
                             DBChatMessage.query.ilike(term),
                             cast(DBChatMessage.response, SAText).ilike(term),
-                        )
+                        ),
                     )
                     .order_by(DBChatMessage.timestamp.desc())
-                    .limit(limit)
+                    .limit(db_limit)
                     .all()
                 )
                 for msg, sess in rows:
-                    resp = msg.response or {}
-                    excerpt = (resp.get("message") or msg.query or "")[:200]
-                    results.append({
-                        "message_id": msg.id,
-                        "session_id": sess.id,
-                        "session_title": sess.title or "Untitled",
-                        "query": msg.query,
-                        "excerpt": excerpt,
-                        "timestamp": msg.timestamp,
-                    })
+                    row = _build_result(q_lower, msg, sess)
+                    if row:
+                        results.append(row)
+                    if len(results) >= limit:
+                        break
             finally:
                 db.close()
         else:
@@ -581,22 +619,17 @@ async def search_messages(
                         or_(
                             DBChatMessage.query.ilike(term),
                             cast(DBChatMessage.response, SAText).ilike(term),
-                        )
+                        ),
                     )
                     .order_by(DBChatMessage.timestamp.desc())
-                    .limit(limit)
+                    .limit(db_limit)
                 )
                 for msg, sess in res.all():
-                    resp = msg.response or {}
-                    excerpt = (resp.get("message") or msg.query or "")[:200]
-                    results.append({
-                        "message_id": msg.id,
-                        "session_id": sess.id,
-                        "session_title": sess.title or "Untitled",
-                        "query": msg.query,
-                        "excerpt": excerpt,
-                        "timestamp": msg.timestamp,
-                    })
+                    row = _build_result(q_lower, msg, sess)
+                    if row:
+                        results.append(row)
+                    if len(results) >= limit:
+                        break
 
         return {"results": results, "query": q, "count": len(results)}
 
@@ -618,32 +651,54 @@ async def get_visualization_png(viz_id: str):
 
 @router.get("/visualizations/{viz_id}")
 async def get_visualization(viz_id: str):
-    """Return saved plot data (png_b64, svg, csv) for a visualization ID. No auth required — IDs are random UUIDs."""
+    """Return saved plot data for a visualization ID. No auth required — IDs are random UUIDs."""
     import base64 as _b64
     import json as _json
 
     paths = resolve_visualization_paths(viz_id)
-    png_path = paths.get("png") if paths else None
+    if not paths:
+        raise HTTPException(status_code=404, detail="Visualization not found")
+
+    json_path = paths.get("json")
+    json_data: dict = {}
+    if json_path and json_path.exists():
+        with open(json_path, encoding="utf-8") as f:
+            json_data = _json.load(f)
+
+    # Network plot: nodes + edges stored in JSON sidecar
+    if json_data.get("type") == "network_plot":
+        csv = ""
+        csv_path = paths.get("csv")
+        if csv_path and csv_path.exists():
+            with open(csv_path, encoding="utf-8") as f:
+                csv = f.read()
+        return {
+            "type": "network_plot",
+            "id": viz_id,
+            "title": json_data.get("title", ""),
+            "nodes": json_data.get("nodes", []),
+            "edges": json_data.get("edges", []),
+            "csv": csv,
+        }
+
+    # Static plot: PNG required
+    png_path = paths.get("png")
     if not png_path or not png_path.exists():
         raise HTTPException(status_code=404, detail="Visualization not found")
 
     with open(png_path, "rb") as f:
         png_b64 = _b64.b64encode(f.read()).decode()
 
-    title = ""
-    json_path = paths.get("json") if paths else None
-    if json_path and json_path.exists():
-        with open(json_path, encoding="utf-8") as f:
-            title = _json.load(f).get("title", "")
+    title = json_data.get("title", "")
 
     svg = ""
-    svg_path = paths.get("svg") if paths else None
+    svg_path = paths.get("svg")
     if svg_path and svg_path.exists():
         with open(svg_path, encoding="utf-8") as f:
             svg = f.read()
 
     csv = ""
-    csv_path = paths.get("csv") if paths else None
+    csv_path = paths.get("csv")
     if csv_path and csv_path.exists():
         with open(csv_path, encoding="utf-8") as f:
             csv = f.read()
