@@ -25,6 +25,28 @@ from services.mcp_aggregator import MCPAggregator
 
 logger = logging.getLogger(__name__)
 
+# Per-cohort brand colors (CPTAC/LinkedOmics palette)
+_COHORT_COLORS: dict[str, str] = {
+    "BRCA":  "#fd8cd5",
+    "CCRCC": "#ed7711",
+    "COAD":  "#0728e4",
+    "GBM":   "#62666b",
+    "HCC":   "#117c21",
+    "HNSCC": "#89263b",
+    "LSCC":  "#cb4763",
+    "LUAD":  "#d3d3d3",
+    "OV":    "#107d9d",
+    "PDAC":  "#b80ec4",
+    "UCEC":  "#f04688",
+}
+_COHORT_COLOR_FALLBACK = [
+    "#2980b9", "#27ae60", "#e67e22", "#8e44ad", "#16a085",
+    "#f39c12", "#1abc9c", "#e74c3c", "#9b59b6", "#34495e",
+]
+
+def _cohort_color(cohort: str, fallback_index: int = 0) -> str:
+    return _COHORT_COLORS.get(cohort, _COHORT_COLOR_FALLBACK[fallback_index % len(_COHORT_COLOR_FALLBACK)])
+
 # Full names for TCGA cohort abbreviations
 _TCGA_COHORT_NAMES: dict[str, str] = {
     "ACC":     "Adrenocortical Carcinoma",
@@ -116,7 +138,8 @@ def _generate_km_static(samples: list, gene: str, cohort: str, omics: str,
             )
             kmf.plot_survival_function(
                 ax=ax,
-                ci_show=False,
+                ci_show=True,
+                ci_alpha=0.12,
                 color=COLORS[label],
                 linewidth=2,
             )
@@ -254,14 +277,21 @@ def _generate_volcano_static(
                        c="#cccccc", s=12, alpha=0.4, linewidths=0, rasterized=True)
 
         # Significant harmful (red) and protective (blue)
+        # Point size scales with |log2(HR)| so effect size is visible at a glance.
+        max_abs_x = max((abs(p[0]) for p in sig_pts), default=1.0) or 1.0
+        def _sig_size(x: float) -> float:
+            return 15 + 55 * (abs(x) / max_abs_x)
+
         harmful  = [p for p in sig_pts if p[4]]
         protect  = [p for p in sig_pts if not p[4]]
         if harmful:
             ax.scatter([p[0] for p in harmful], [p[1] for p in harmful],
-                       c="#c0392b", s=20, alpha=0.85, linewidths=0, label="Harmful (sig.)")
+                       c="#c0392b", s=[_sig_size(p[0]) for p in harmful],
+                       alpha=0.85, linewidths=0, label="Harmful (sig.)")
         if protect:
             ax.scatter([p[0] for p in protect], [p[1] for p in protect],
-                       c="#2980b9", s=20, alpha=0.85, linewidths=0, label="Protective (sig.)")
+                       c="#2980b9", s=[_sig_size(p[0]) for p in protect],
+                       alpha=0.85, linewidths=0, label="Protective (sig.)")
 
         # FDR threshold line
         threshold_y = -math.log10(sig_threshold)
@@ -400,8 +430,8 @@ def _generate_enrichment_static(rows: list, title: str) -> Optional[dict]:
         overlaps = []
         neglog_fdr = []
         for entry in display_rows:
-            label = textwrap.fill(entry["description"], width=34)
-            if entry["gene_set"]:
+            label = textwrap.fill(entry["description"], width=48)
+            if entry["gene_set"] and entry["gene_set"] not in entry["description"]:
                 label = f"{label}\n{entry['gene_set']}"
             labels.append(label)
             ratios.append(entry["ratio"])
@@ -568,18 +598,30 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
         n_cols = len(cancers)
         tile_colors, tile_annots = [], []
         csv_rows = []  # flat: one row per (layer, cancer)
+
+        # First pass: collect all significant p-values to set adaptive intensity scale
+        all_sig_pvals = []
+        for _, layer_data in layers:
+            for cancer in cancers:
+                msg = layer_data.get(cancer, "Data unavailable")
+                _, pval, sig = _parse_entry(msg)
+                if sig and pval and pval > 0:
+                    all_sig_pvals.append(-math.log10(pval))
+        max_neglog_p = max(all_sig_pvals) if all_sig_pvals else 6.0
+        max_neglog_p = max(max_neglog_p, 1.5)  # avoid division by near-zero
+
         for layer_name, layer_data in layers:
             row_c, row_a = [], []
             for cancer in cancers:
                 msg = layer_data.get(cancer, "Data unavailable")
                 direction, pval, sig = _parse_entry(msg)
                 if sig and pval and pval > 0:
-                    intensity = min(1.0, -math.log10(pval) / 6)
+                    intensity = min(1.0, -math.log10(pval) / max_neglog_p)
                     if direction > 0:
                         color = (1.0, 1.0 - intensity * 0.75, 1.0 - intensity * 0.75)
                     else:
                         color = (1.0 - intensity * 0.75, 1.0 - intensity * 0.75, 1.0)
-                    annot = f"{pval:.0e}" if pval < 0.001 else f"{pval:.3f}"
+                    annot = f"p={pval:.1e}" if pval < 0.001 else f"p={pval:.3f}"
                 else:
                     color = (0.88, 0.88, 0.88)
                     annot = "N.S." if not sig else ""
@@ -718,30 +760,7 @@ def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
         title = f"{gene} Cis-Correlations"
 
         # ── 2. Grouped horizontal bar chart ──
-        # Fixed color map for known cancer cohorts; fallback palette for unknown ones
-        COHORT_COLORS = {
-            "BRCA":  "#fd8cd5",
-            "CCRCC": "#ed7711",
-            "COAD":  "#0728e4",
-            "GBM":   "#62666b",
-            "HCC":   "#117c21",
-            "HNSCC": "#89263b",
-            "LSCC":  "#cb4763",
-            "LUAD":  "#d3d3d3",
-            "OV":    "#107d9d",
-            "PDAC":  "#b80ec4",
-            "UCEC":  "#f04688",
-        }
-        fallback = ["#2980b9", "#27ae60", "#e67e22", "#8e44ad", "#16a085",
-                    "#f39c12", "#1abc9c", "#e74c3c", "#9b59b6", "#34495e"]
-        fi = 0
-        cohort_colors: dict = {}
-        for c in cohorts:
-            if c in COHORT_COLORS:
-                cohort_colors[c] = COHORT_COLORS[c]
-            else:
-                cohort_colors[c] = fallback[fi % len(fallback)]
-                fi += 1
+        cohort_colors = {c: _cohort_color(c, i) for i, c in enumerate(cohorts)}
 
         bar_h = 0.8 / n_cohorts   # height per bar within a group
 
@@ -985,12 +1004,16 @@ def _generate_tcga_cohort_bar_static(results: list, gene: str, omics_label: str)
         ax.set_facecolor("white")
 
         y_pos = list(range(len(entries)))
-        colors = ["#c0392b" if e["log2hr"] > 0 else "#2980b9" for e in entries]
-        edge_colors = ["#8e1a0e" if e["sig"] else "#aaaaaa" for e in entries]
-        lw = [1.5 if e["sig"] else 0.6 for e in entries]
+        # Use per-cohort brand colors; alpha encodes significance
+        bar_colors = [_cohort_color(e["cohort"], i) for i, e in enumerate(entries)]
+        alphas = [1.0 if e["sig"] else 0.45 for e in entries]
+        edge_colors = ["#333333" if e["sig"] else "#aaaaaa" for e in entries]
+        lw = [1.2 if e["sig"] else 0.5 for e in entries]
 
         bars = ax.barh(y_pos, [e["log2hr"] for e in entries],
-                       color=colors, edgecolor=edge_colors, linewidth=lw, height=0.65)
+                       color=bar_colors, edgecolor=edge_colors, linewidth=lw, height=0.65)
+        for bar, alpha in zip(bars, alphas):
+            bar.set_alpha(alpha)
 
         # Annotate significant bars with p-value
         for bar, entry in zip(bars, entries):
