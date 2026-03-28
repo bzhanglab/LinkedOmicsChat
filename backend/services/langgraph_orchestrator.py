@@ -305,8 +305,16 @@ _TOOL_SOURCE_KEY: dict = {
     "get_trans_correlations":      "linkedomics",
     "overall_survival_per_cancer": "linkedomics",
     "tcga_survival_analysis":      "linkedomics",
-    "clinical_trial_information":  "trials",
-    "funmap_neighborhood":         "funmap",
+    "clinical_trial_information":       "trials",
+    "batch_clinical_trial_information": "trials",
+    "get_study_info":                   "trials",
+    "gene_set_trial_information":       "trials",
+    "filter_clinical_trials":           "trials",
+    "meta_analysis_predictive_genes":   "trials",
+    "get_study_predictive_genes":           "trials",
+    "get_study_predictive_gene_sets":       "trials",
+    "meta_analysis_predictive_gene_sets":   "trials",
+    "funmap_neighborhood":              "funmap",
     "get_target":                  "targets",
     "search_targets":              "targets",
     "rank_targets":                "targets",
@@ -336,11 +344,27 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
         "get_target":                  lambda g: f"https://targets.linkedomics.org/{g}/",
         "search_targets":              lambda _: "https://targets.linkedomics.org",
         "rank_targets":                lambda _: "https://targets.linkedomics.org",
-        "clinical_trial_information":  lambda g: f"https://trials.linkedomics.org/api/table/gene/{g}",
-        "webgestalt":                  lambda _: "https://www.webgestalt.org",
-        "search_literature":           lambda _: "https://pubmed.ncbi.nlm.nih.gov",
-        "search_pubmed":               lambda _: "https://pubmed.ncbi.nlm.nih.gov",
+        "clinical_trial_information":       lambda g: f"https://trials.linkedomics.org/api/table/gene/{g}",
+        "batch_clinical_trial_information": lambda _: "https://trials.linkedomics.org",
+        "filter_clinical_trials":               lambda _: "https://trials.linkedomics.org/api/filter",
+        "meta_analysis_predictive_genes":       lambda _: "https://trials.linkedomics.org/api/table/treatment_gene",
+        "meta_analysis_predictive_gene_sets":   lambda _: "https://trials.linkedomics.org/api/table/treatment_gene_set",
+        "webgestalt":                       lambda _: "https://www.webgestalt.org",
+        "search_literature":                lambda _: "https://pubmed.ncbi.nlm.nih.gov",
+        "search_pubmed":                    lambda _: "https://pubmed.ncbi.nlm.nih.gov",
     }
+    # Tools that need the full args dict rather than the extracted gene string
+    _ARGS_TEMPLATES: Dict[str, Any] = {
+        "get_study_info":                   lambda a: f"https://trials.linkedomics.org/api/info/{a.get('study_id','')}",
+        "gene_set_trial_information":       lambda a: f"https://trials.linkedomics.org/api/table/gene_set/{a.get('gene_set','')}",
+        "get_study_predictive_genes":       lambda a: f"https://trials.linkedomics.org/api/table/study/gene/{a.get('study_id','')}",
+        "get_study_predictive_gene_sets":   lambda a: f"https://trials.linkedomics.org/api/table/study/gene_set/{a.get('study_id','')}",
+    }
+    if bare_tool_name in _ARGS_TEMPLATES:
+        try:
+            return _ARGS_TEMPLATES[bare_tool_name](args)
+        except Exception:
+            return None
     builder = _TEMPLATES.get(bare_tool_name)
     if not builder:
         return None
@@ -518,7 +542,15 @@ PLANNING RULES:
 - Do not proactively chain extra analyses. Do NOT mention or suggest follow-up questions in your response — these are handled separately. Only call additional tools when the user explicitly asks.
 - For survival questions: call only survival tools (`overall_survival_per_cancer`, `tcga_survival_analysis`). Do NOT call `cancer_gene_expression` or `clinical_trial_information` unless the user explicitly asks about expression levels or drugs/treatments.
 - For expression questions: call only expression tools (`cancer_gene_expression`). Do NOT call survival or clinical trial tools unless explicitly asked.
-- `clinical_trial_information` is only relevant when the user asks about drugs, treatments, or clinical trials — never call it for survival or expression queries.
+- Clinical trial tools are only relevant when the user asks about drugs, treatments, or clinical trials — never call them for survival or expression queries. Use the right tool for the question:
+  - Gene → drug sensitivity/resistance: `clinical_trial_information`
+  - Pathway → drug sensitivity/resistance: `gene_set_trial_information`
+  - Study details/abstract: `get_study_info`
+  - Which studies exist for a drug/cancer: `filter_clinical_trials`
+  - Top gene biomarkers across studies: `meta_analysis_predictive_genes`
+  - Top pathway biomarkers across studies: `meta_analysis_predictive_gene_sets`
+  - Gene rankings within one study: `get_study_predictive_genes`
+  - Pathway rankings within one study: `get_study_predictive_gene_sets`
 - If the user refers to "it", "this", or "the gene", resolve that to the active gene: '{active_gene}'.
 - For platform questions like "what can you analyze?", "what cancer types are available?", or "what data do you have access to?", answer from the AVAILABLE DATA section and do not treat the active gene as the target.
 
