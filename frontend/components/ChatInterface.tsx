@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
+import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
 import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -281,49 +281,104 @@ function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void
             const [copied, setCopied] = useState(false)
 
             const handleCopy = () => {
-                // Extract table content as TSV
-                const table = node
-                const rows: string[][] = []
-
-                // Parse table structure from children
-                const tableContent = String(children)
-                const lines = tableContent.split('\n').filter(l => l.trim())
-
-                // Simple TSV conversion (can be enhanced)
-                const tsv = lines.map(line =>
-                    line.split('|').map(cell => cell.trim()).filter(Boolean).join('\t')
-                ).join('\n')
-
-                onCopyTable(tsv)
+                // Read all rows from HAST so copy always gets everything regardless of page
+                const allRows: string[][] = []
+                node?.children?.forEach((section: any) => {
+                    section?.children?.forEach((row: any) => {
+                        if (row.tagName !== 'tr') return
+                        allRows.push(
+                            row.children
+                                .filter((c: any) => c.tagName === 'th' || c.tagName === 'td')
+                                .map((c: any) => c.children?.[0]?.value ?? '')
+                        )
+                    })
+                })
+                onCopyTable(allRows.map(r => r.join('\t')).join('\n'))
                 setCopied(true)
                 setTimeout(() => setCopied(false), 2000)
             }
 
             return (
-                <div className="relative group my-4">
+                <div className="relative group my-4 rounded-lg border border-border overflow-hidden">
                     <button
                         onClick={handleCopy}
-                        className="absolute -top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background border border-border rounded px-2 py-1 text-xs flex items-center gap-1 hover:bg-accent z-10"
+                        className="absolute top-1.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background border border-border rounded px-2 py-1 text-xs flex items-center gap-1 hover:bg-accent z-10"
                         title="Copy table as TSV"
                     >
                         {copied ? (
-                            <>
-                                <Check className="w-3 h-3" />
-                                Copied!
-                            </>
+                            <><Check className="w-3 h-3" />Copied!</>
                         ) : (
-                            <>
-                                <Copy className="w-3 h-3" />
-                                Copy
-                            </>
+                            <><Copy className="w-3 h-3" />Copy</>
                         )}
                     </button>
-                    <table className="w-full border-collapse" {...props}>
-                        {children}
-                    </table>
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-sm" {...props}>
+                            {children}
+                        </table>
+                    </div>
                 </div>
             )
         },
+        thead: ({ node, children, ...props }: any) => (
+            <thead className="bg-muted/60 border-b border-border" {...props}>
+                {children}
+            </thead>
+        ),
+        tbody: ({ node, children, ...props }: any) => {
+            const PAGE_SIZE = 10
+            const [page, setPage] = useState(0)
+
+            const allRows = React.Children.toArray(children)
+            const totalRows = allRows.length
+            const needsPagination = totalRows > PAGE_SIZE
+            const pageCount = Math.ceil(totalRows / PAGE_SIZE)
+            const visibleRows = needsPagination
+                ? allRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+                : allRows
+
+            const btnClass = "px-1.5 py-0.5 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+
+            return (
+                <>
+                    <tbody className="divide-y divide-border" {...props}>
+                        {visibleRows}
+                    </tbody>
+                    {needsPagination && (
+                        <tfoot className="border-t border-border bg-muted/30">
+                            <tr>
+                                <td colSpan={999} className="px-3 py-2">
+                                    <div className="flex items-center justify-between text-xs text-muted-foreground select-none">
+                                        <span>Rows {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalRows)} of {totalRows}</span>
+                                        <div className="flex items-center gap-1">
+                                            <button onClick={() => setPage(0)} disabled={page === 0} className={btnClass}>«</button>
+                                            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className={btnClass}>‹ Prev</button>
+                                            <span className="px-2">Page {page + 1} / {pageCount}</span>
+                                            <button onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page === pageCount - 1} className={btnClass}>Next ›</button>
+                                            <button onClick={() => setPage(pageCount - 1)} disabled={page === pageCount - 1} className={btnClass}>»</button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    )}
+                </>
+            )
+        },
+        tr: ({ node, children, ...props }: any) => (
+            <tr className="hover:bg-muted/30 transition-colors" {...props}>
+                {children}
+            </tr>
+        ),
+        th: ({ node, children, ...props }: any) => (
+            <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap" {...props}>
+                {children}
+            </th>
+        ),
+        td: ({ node, children, ...props }: any) => (
+            <td className="px-3 py-2 text-sm text-foreground align-top" {...props}>
+                {children}
+            </td>
+        ),
         blockquote: ({ node, children, ...props }: any) => {
             // Suppress inline source attribution blockquotes — sources are shown
             // as a consolidated footer below the message instead.
