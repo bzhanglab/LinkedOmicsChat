@@ -3800,6 +3800,12 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     .all()
                 )
 
+                # Compute viz IDs before the bulk delete (instances become inaccessible after)
+                removed_viz_ids = (
+                    self._extract_visualization_ids_from_messages(deleted_messages)
+                    - self._extract_visualization_ids_from_messages(remaining_messages)
+                )
+
                 deleted_turns = (
                     db.query(DBChatMessage)
                     .filter(DBChatMessage.session_id == session_id, DBChatMessage.id >= message_id)
@@ -3814,10 +3820,6 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
 
                 db.commit()
                 remaining_turns = len(remaining_messages)
-                removed_viz_ids = (
-                    self._extract_visualization_ids_from_messages(deleted_messages)
-                    - self._extract_visualization_ids_from_messages(remaining_messages)
-                )
             finally:
                 db.close()
         else:
@@ -3852,6 +3854,14 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                 )
                 deleted_messages = list(result.scalars().all())
 
+                # Compute viz IDs BEFORE the bulk delete. SQLAlchemy's default
+                # synchronize_session="evaluate" marks matching ORM instances as
+                # "deleted" after the DELETE executes, making .response inaccessible.
+                removed_viz_ids = (
+                    self._extract_visualization_ids_from_messages(deleted_messages)
+                    - self._extract_visualization_ids_from_messages(remaining_messages)
+                )
+
                 delete_result = await db.execute(
                     delete(DBChatMessage).where(
                         DBChatMessage.session_id == session_id,
@@ -3868,10 +3878,6 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
 
                 await db.commit()
                 remaining_turns = len(remaining_messages)
-                removed_viz_ids = (
-                    self._extract_visualization_ids_from_messages(deleted_messages)
-                    - self._extract_visualization_ids_from_messages(remaining_messages)
-                )
 
         for viz_id in removed_viz_ids:
             delete_visualization_artifacts(viz_id)
