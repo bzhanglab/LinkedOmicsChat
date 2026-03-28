@@ -31,6 +31,7 @@ import {
     Library,
     Copy,
     Check,
+    ClipboardList,
 } from "lucide-react"
 
 interface ToolParameter {
@@ -837,7 +838,14 @@ const CATEGORIES: CategoryDef[] = [
         icon: Pill,
         color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
         borderColor: "border-amber-400 dark:border-amber-500",
-        tools: ["get_target", "batch_get_target", "search_targets", "rank_targets", "clinical_trial_information", "batch_clinical_trial_information"],
+        tools: ["get_target", "batch_get_target", "search_targets", "rank_targets"],
+    },
+    {
+        label: "Clinical Trials",
+        icon: ClipboardList,
+        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
+        borderColor: "border-violet-400 dark:border-violet-500",
+        tools: ["clinical_trial_information", "batch_clinical_trial_information", "get_study_info", "gene_set_trial_information", "filter_clinical_trials", "meta_analysis_predictive_genes", "meta_analysis_predictive_gene_sets", "get_study_predictive_genes", "get_study_predictive_gene_sets"],
     },
     {
         label: "Functional Networks",
