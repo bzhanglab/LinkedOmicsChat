@@ -211,6 +211,13 @@ export interface NetworkVisualization {
     csv?: string      // edge list CSV for download
 }
 
+export interface DrugDetail {
+    name: string
+    tier: string
+    databases: Array<{ name: string; url: string }>
+    indication: { name: string; url: string } | null
+}
+
 export interface DrugTargetVisualization {
     type: "drug_target_grid"
     id: string
@@ -220,14 +227,35 @@ export interface DrugTargetVisualization {
     family?: string
     drugs?: string
     drug_tiers?: string
-    features: Array<{ label: string; field: string }>
+    drug_details?: DrugDetail[]
+    features: Array<{ label: string; field: string; expandable?: boolean; parent_field?: string }>
     cohorts: string[]
     presence: boolean[][]
     plot_map: Record<string, Record<string, string[]>>
+    table_map?: Record<string, Record<string, Record<string, string | number | null>[]>>
     hyper_sites?: Array<{ site: string; cohorts: string[] }>
+    protein_cohorts?: string[]
 }
 
-export type AnyVisualization = StaticVisualization | NetworkVisualization | DrugTargetVisualization
+export interface TargetSearchVisualization {
+    type: "target_search_table"
+    id: string
+    title: string
+    total: number
+    genes: Array<{
+        gene: string
+        tier: string
+        family: string
+        drugs: string
+        antigen: string
+        count?: number
+        lo_score?: number
+    }>
+    description?: string
+    score_label?: string
+}
+
+export type AnyVisualization = StaticVisualization | NetworkVisualization | DrugTargetVisualization | TargetSearchVisualization
 
 export interface ChatMessage {
     role: "user" | "assistant" | "system"
