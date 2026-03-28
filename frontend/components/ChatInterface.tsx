@@ -1128,7 +1128,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
 
         if (msg.role !== "assistant") continue
 
-        // Fetch missing PNG data for static plots (stripped before DB save)
+        // Fetch full data for all viz types that were stripped before DB save
         if (msg.visualizations && msg.visualizations.length > 0) {
             await Promise.all(
                 msg.visualizations.map(async (viz) => {
@@ -1140,11 +1140,14 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                         } catch {
                             // leave png_b64 empty — plot will be skipped
                         }
-                    } else if (viz.type === "drug_target_grid" && viz.id && !(viz as any).features) {
-                        try {
-                            const data = await chatAPI.getVisualization(viz.id)
-                            Object.assign(viz, data)
-                        } catch { /* leave as-is */ }
+                    } else if ((viz.type === "drug_target_grid" && !(viz as any).features) ||
+                               (viz.type === "target_search_table" && !(viz as any).genes?.length)) {
+                        if (viz.id) {
+                            try {
+                                const data = await chatAPI.getVisualization(viz.id)
+                                Object.assign(viz, data)
+                            } catch { /* leave as-is */ }
+                        }
                     }
                 })
             )
@@ -1195,6 +1198,135 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             return `<div style="margin:16px 0;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">${v.title ? `<p style="font-size:12px;color:#888;margin:8px 12px 4px;">${escapeHtml(v.title)}</p>` : ""}<div style="padding:8px;text-align:center;"><img src="data:image/png;base64,${v.png_b64}" alt="${escapeHtml(v.title || "")}" style="max-width:100%;height:auto;" /></div>${atRiskHtml ? `<div style="padding:8px 12px 12px;border-top:1px solid #e5e7eb;background:#fafafa;">${atRiskHtml}</div>` : ""}</div>`
         }
 
+        const TIER_LABELS_EXP: Record<string, string> = {
+            T1: "Approved oncology", T2: "Approved non-oncology",
+            T3: "Investigational", T4: "Pre-clinical", T5: "Surface protein",
+        }
+        const TIER_BADGE_BG: Record<string, string> = {
+            T1: "#dcfce7", T2: "#dbeafe", T3: "#fef9c3", T4: "#ffedd5", T5: "#f3f4f6",
+        }
+        const TIER_BADGE_COLOR: Record<string, string> = {
+            T1: "#166534", T2: "#1e40af", T3: "#854d0e", T4: "#7c2d12", T5: "#374151",
+        }
+        const thS = `padding:6px 10px;text-align:left;font-size:11px;font-weight:600;background:#f1f5f9;color:#374151;border-bottom:2px solid #e2e8f0;white-space:nowrap;`
+        const tdS = `padding:5px 10px;font-size:12px;border-bottom:1px solid #f1f5f9;vertical-align:top;`
+        const tdCS = `padding:5px 10px;font-size:12px;border-bottom:1px solid #f1f5f9;text-align:center;vertical-align:top;`
+        const rowEven = `background:#fff;`
+        const rowOdd = `background:#f8fafc;`
+
+        const drugTargetGridHtml = (viz: AnyVisualization): string => {
+            if (viz.type !== "drug_target_grid") return ""
+            const v = viz as any
+            if (!v.gene) return ""
+            const tierBg = v.tier ? (TIER_BADGE_BG[v.tier] ?? "#f3f4f6") : ""
+            const tierFg = v.tier ? (TIER_BADGE_COLOR[v.tier] ?? "#374151") : ""
+            const tierBadge = v.tier && v.tier !== "NA"
+                ? `<span style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;background:${tierBg};color:${tierFg};margin-left:6px;">${v.tier} · ${TIER_LABELS_EXP[v.tier] ?? v.tier}</span>`
+                : ""
+            const familyBadge = v.family && v.family !== "NA" && v.family !== "Other"
+                ? `<span style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;background:#f1f5f9;color:#475569;margin-left:4px;">${escapeHtml(v.family)}</span>`
+                : ""
+            let html = `<div style="margin:16px 0;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+            html += `<div style="padding:10px 14px;background:linear-gradient(to right,#f0fdfa,#ecfdf5);border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:4px;flex-wrap:wrap;"><span style="font-size:15px;font-weight:700;color:#0f766e;">${escapeHtml(v.gene)}</span>${tierBadge}${familyBadge}</div>`
+
+            // Drug details tables
+            const drugDetails: any[] = v.drug_details || []
+            const grouped: Record<string, any[]> = {}
+            for (const d of drugDetails) {
+                if (!d.name || d.name === "NA") continue
+                if (!grouped[d.tier]) grouped[d.tier] = []
+                grouped[d.tier].push(d)
+            }
+            for (const tier of ["T1","T2","T3","T4","T5"]) {
+                const drugs = grouped[tier]
+                if (!drugs?.length) continue
+                const tLabel = TIER_LABELS_EXP[tier] ?? tier
+                const hBg = TIER_BADGE_BG[tier] ?? "#f3f4f6"
+                const hFg = TIER_BADGE_COLOR[tier] ?? "#374151"
+                html += `<div style="padding:10px 14px;">`
+                html += `<div style="display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${hBg};color:${hFg};margin-bottom:6px;">${tier} · ${escapeHtml(tLabel)}</div>`
+                html += `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">`
+                html += `<thead><tr><th style="${thS}">Name</th><th style="${thS}">Database</th><th style="${thS}">Indication</th></tr></thead><tbody>`
+                drugs.forEach((d, i) => {
+                    const rowBg = i % 2 === 0 ? rowEven : rowOdd
+                    const dbLinks = (d.databases || []).map((db: any) => db.url ? `<a href="${escapeHtml(db.url)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(db.name)}</a>` : escapeHtml(db.name)).join(", ") || "—"
+                    const indLink = d.indication ? (d.indication.url ? `<a href="${escapeHtml(d.indication.url)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(d.indication.name)}</a>` : escapeHtml(d.indication.name)) : "—"
+                    html += `<tr style="${rowBg}"><td style="${tdS}font-weight:500;">${escapeHtml(d.name)}</td><td style="${tdS}">${dbLinks}</td><td style="${tdS}">${indLink}</td></tr>`
+                })
+                html += `</tbody></table></div>`
+            }
+
+            // Presence matrix
+            if (v.features?.length && v.cohorts?.length && v.presence?.length) {
+                html += `<div style="padding:10px 14px;border-top:1px solid #e2e8f0;overflow-x:auto;">`
+                html += `<div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Omics Presence</div>`
+                html += `<table style="border-collapse:collapse;font-size:11px;">`
+                html += `<thead><tr><th style="${thS}min-width:160px;"></th>${(v.cohorts as string[]).map((c: string) => `<th style="${thS}text-align:center;min-width:36px;">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>`
+                for (let ri = 0; ri < v.features.length; ri++) {
+                    const feat = v.features[ri]
+                    if (feat.parent_field) continue
+                    const rowBg = ri % 2 === 0 ? rowEven : rowOdd
+                    html += `<tr style="${rowBg}"><td style="${tdS}white-space:nowrap;font-weight:500;">${escapeHtml(feat.label)}</td>`
+                    for (let ci = 0; ci < v.cohorts.length; ci++) {
+                        const present = v.presence[ri]?.[ci]
+                        html += `<td style="${tdCS}background:${present ? "#0d9488" : "transparent"};color:${present ? "#fff" : "#d1d5db"};">${present ? "✓" : "·"}</td>`
+                    }
+                    html += `</tr>`
+                }
+                html += `</tbody></table></div>`
+            }
+            html += `</div>`
+            return html
+        }
+
+        const targetSearchTableHtml = (viz: AnyVisualization): string => {
+            if (viz.type !== "target_search_table") return ""
+            const v = viz as any
+            const genes: any[] = v.genes || []
+            if (!genes.length) return ""
+            const hasLoScore = genes.some((g: any) => g.lo_score != null)
+            let html = `<div style="margin:16px 0;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+            html += `<div style="padding:10px 14px;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-weight:700;font-size:13px;color:#0f172a;">${escapeHtml(v.title || "Target search results")}</div>`
+            html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
+            html += `<thead><tr>`
+            html += `<th style="${thS}">Gene</th>`
+            html += `<th style="${thS}">Tier</th>`
+            html += `<th style="${thS}">Family</th>`
+            html += `<th style="${thS}">Drugs</th>`
+            html += `<th style="${thS}">Antigen</th>`
+            if (hasLoScore) html += `<th style="${thS}text-align:center;">Score</th>`
+            html += `<th style="${thS}text-align:center;">${escapeHtml(v.score_label || "Score")}</th>`
+            html += `</tr></thead><tbody>`
+            genes.forEach((g, i) => {
+                const rowBg = i % 2 === 0 ? rowEven : rowOdd
+                const tb = g.tier && g.tier !== "NA" ? TIER_BADGE_BG[g.tier] ?? "#f3f4f6" : ""
+                const tf = g.tier && g.tier !== "NA" ? TIER_BADGE_COLOR[g.tier] ?? "#374151" : ""
+                const tierCell = g.tier && g.tier !== "NA"
+                    ? `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;background:${tb};color:${tf};">${g.tier} · ${TIER_LABELS_EXP[g.tier] ?? g.tier}</span>`
+                    : "—"
+                html += `<tr style="${rowBg}">`
+                html += `<td style="${tdS}font-weight:600;color:#0f766e;">${escapeHtml(g.gene)}</td>`
+                html += `<td style="${tdS}">${tierCell}</td>`
+                html += `<td style="${tdS}">${escapeHtml(g.family || "—")}</td>`
+                html += `<td style="${tdS}max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(g.drugs || "")}">${escapeHtml(g.drugs || "—")}</td>`
+                html += `<td style="${tdCS}">${escapeHtml(g.antigen || "—")}</td>`
+                if (hasLoScore) html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${g.lo_score ?? "—"}</td>`
+                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;font-weight:600;">${g.count ?? "—"}</td>`
+                html += `</tr>`
+            })
+            html += `</tbody></table></div>`
+            if (v.description) html += `<div style="padding:8px 14px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;background:#f8fafc;">${escapeHtml(v.description)}</div>`
+            html += `</div>`
+            return html
+        }
+
+        const vizHtml = (viz: AnyVisualization): string => {
+            if (viz.type === "static_plot") return plotImgHtml(viz)
+            if (viz.type === "drug_target_grid") return drugTargetGridHtml(viz)
+            if (viz.type === "target_search_table") return targetSearchTableHtml(viz)
+            return ""
+        }
+
         // Split content on [PLOT:id] lines — render text segments as markdown, plot segments as images
         const PLOT_RE = /^\[PLOT:([^\]]+)\]$/
         const inlinedIds = new Set<string>()
@@ -1209,7 +1341,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                     textBuf = []
                 }
                 inlinedIds.add(m[1])
-                contentSegments.push(vizMap[m[1]] ? plotImgHtml(vizMap[m[1]]) : "")
+                contentSegments.push(vizMap[m[1]] ? vizHtml(vizMap[m[1]]) : "")
             } else {
                 textBuf.push(line)
             }
@@ -1223,7 +1355,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
         // Trailing plots not referenced inline
         const trailingVizHtml = (msg.visualizations || [])
             .filter(v => !inlinedIds.has(v.id))
-            .map(plotImgHtml)
+            .map(vizHtml)
             .join("\n")
 
         // Summary rendered as formatted markdown at the bottom
@@ -1239,12 +1371,13 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             ? Object.entries(msg.toolSources)
                 .map(([key, url]) => {
                     const source = INLINE_SOURCE_MAP[key]
+                    if (!source) return null  // skip internal tool keys, same as chat UI
                     return {
-                        label: source?.label || key,
-                        url: (url as string) || source?.url || "",
+                        label: source.label,
+                        url: (url as string) || source.url || "",
                     }
                 })
-                .filter((source) => !!source.url)
+                .filter((source): source is { label: string; url: string } => source != null && !!source.url)
             : resolveDataSources(msg.toolsUsed || [])
 
         const uniqueSources = sources.filter((source, index, arr) =>
