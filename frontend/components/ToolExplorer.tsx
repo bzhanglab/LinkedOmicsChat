@@ -87,6 +87,7 @@ const InlineText = ({ text }: { text: string }) => {
 
 interface ParsedDoc {
     summary: string
+    summaryItems: string[]
     whenToUse: string[]
     useCases: string[]
     args: { name: string; type: string; desc: string }[]
@@ -97,10 +98,11 @@ interface ParsedDoc {
 
 function parseDocstring(raw: string): ParsedDoc {
     const lines = raw.split('\n')
-    const result: ParsedDoc = { summary: '', whenToUse: [], useCases: [], args: [], returns: [], returnsIntro: '', notes: [] }
+    const result: ParsedDoc = { summary: '', summaryItems: [], whenToUse: [], useCases: [], args: [], returns: [], returnsIntro: '', notes: [] }
 
     let section = 'summary'
     const summaryLines: string[] = []
+    const summaryItemLines: string[] = []
     let currentArg: { name: string; type: string; desc: string } | null = null
     let currentReturn: { name: string; type: string; desc: string } | null = null
 
@@ -119,7 +121,10 @@ function parseDocstring(raw: string): ParsedDoc {
         if (!trimmed) continue
 
         if (section === 'summary') {
-            summaryLines.push(trimmed)
+            if (/^[-*]\s+/.test(trimmed))
+                summaryItemLines.push(trimmed.replace(/^[-*]\s+/, ''))
+            else
+                summaryLines.push(trimmed)
         } else if (section === 'when') {
             const bullet = trimmed.replace(/^[-*]\s*/, '')
             if (bullet) result.whenToUse.push(bullet)
@@ -156,6 +161,7 @@ function parseDocstring(raw: string): ParsedDoc {
     if (currentArg) result.args.push(currentArg)
     if (currentReturn) result.returns.push(currentReturn)
     result.summary = summaryLines.join(' ')
+    result.summaryItems = summaryItemLines
     return result
 }
 
@@ -165,15 +171,29 @@ const ToolDocumentation = ({ description }: { description: string }) => {
     return (
         <div className="space-y-4">
             {/* Summary */}
-            {doc.summary && (
+            {(doc.summary || doc.summaryItems.length > 0) && (
                 <div className="bg-gradient-to-r from-teal-50 to-emerald-50 dark:from-teal-900/20 dark:to-emerald-900/20 border border-teal-200 dark:border-teal-800 rounded-xl p-4">
                     <div className="flex items-start gap-3">
                         <div className="mt-0.5 h-7 w-7 rounded-lg bg-teal-100 dark:bg-teal-900/50 flex items-center justify-center flex-shrink-0">
                             <FileText className="h-4 w-4 text-teal-600 dark:text-teal-400" />
                         </div>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-                            <InlineText text={doc.summary} />
-                        </p>
+                        <div className="flex-1">
+                            {doc.summary && (
+                                <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                                    <InlineText text={doc.summary} />
+                                </p>
+                            )}
+                            {doc.summaryItems.length > 0 && (
+                                <ul className="mt-2 space-y-1">
+                                    {doc.summaryItems.map((item, i) => (
+                                        <li key={i} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                                            <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-teal-500 flex-shrink-0" />
+                                            <InlineText text={item} />
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}
@@ -776,7 +796,7 @@ const ToolCard = ({ id, toolName, schema, Icon, color, onSelect }: {
             </h3>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-            {stripMarkdown(schema.description)}
+            {stripMarkdown(parseDocstring(schema.description).summary) || stripMarkdown(schema.description)}
         </p>
     </button>
 )
