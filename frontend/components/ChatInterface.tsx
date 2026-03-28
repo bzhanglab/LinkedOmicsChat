@@ -100,6 +100,18 @@ const markdownComponents = {
     },
 }
 
+// Strip large binary fields from visualizations before storing in React state.
+// png_b64 / svg / csv are served on-demand by StaticPlot's lazy fetch; no need to keep them in memory.
+const STRIP_VIZ_KEYS = new Set(["png_b64", "svg", "csv", "nodes", "edges"])
+function stripVizBinary(vizs: AnyVisualization[] | undefined): AnyVisualization[] | undefined {
+    if (!vizs?.length) return vizs
+    return vizs.map(v => {
+        const stripped = { ...v } as any
+        for (const k of STRIP_VIZ_KEYS) delete stripped[k]
+        return stripped as AnyVisualization
+    })
+}
+
 const PLOT_MARKER_RE = /^\[PLOT:([^\]]+)\]$/
 const NETWORK_MARKER_RE = /^\[NETWORK:([^\]]+)\]$/
 
@@ -1037,7 +1049,7 @@ function mapHistoryItemToMessages(item: { id: number; query: string; response: a
             timestamp,
             toolSources: resp?.tool_sources && Object.keys(resp.tool_sources).length ? resp.tool_sources : undefined,
             toolsUsed: typeof resp === "string" ? undefined : (resp?.tools_used?.length ? resp.tools_used : undefined),
-            visualizations: typeof resp === "string" ? undefined : (resp?.visualizations?.length ? resp.visualizations as AnyVisualization[] : undefined),
+            visualizations: typeof resp === "string" ? undefined : stripVizBinary(resp?.visualizations?.length ? resp.visualizations as AnyVisualization[] : undefined),
         },
     ]
 }
@@ -1080,7 +1092,7 @@ async function fetchExportMessages(sessionId: string): Promise<ChatMessage[]> {
             msg.toolsUsed = resp?.tools_used?.length ? resp.tools_used : msg.toolsUsed
             msg.toolSources = resp?.tool_sources && Object.keys(resp.tool_sources).length ? resp.tool_sources : msg.toolSources
             msg.visualizations = Array.isArray(resp?.visualizations) && resp.visualizations.length > 0
-                ? resp.visualizations as AnyVisualization[]
+                ? stripVizBinary(resp.visualizations as AnyVisualization[])
                 : msg.visualizations
             msg.hasFullContent = true
             msg.hasVisualizations = Array.isArray(resp?.visualizations) && resp.visualizations.length > 0
@@ -1810,8 +1822,9 @@ export const ChatInterface = memo(function ChatInterface({
                                 : (resp?.papers || resp?.metadata?.papers || undefined)
                         const fullAnalyses =
                             typeof resp === "string" ? undefined : ((resp?.analyses || undefined) as AnalysisResult[] | undefined)
-                        const fullVisualizations =
+                        const fullVisualizations = stripVizBinary(
                             typeof resp === "string" ? undefined : (resp?.visualizations || undefined)
+                        )
 
                         if (fullMessage || fullVisualizations) {
                             workingMessages = workingMessages.map((message, index) =>
@@ -2025,8 +2038,9 @@ export const ChatInterface = memo(function ChatInterface({
                                 : (resp?.papers || resp?.metadata?.papers || undefined)
                         const fullAnalyses =
                             typeof resp === "string" ? undefined : ((resp?.analyses || undefined) as AnalysisResult[] | undefined)
-                        const fullVisualizations =
+                        const fullVisualizations = stripVizBinary(
                             typeof resp === "string" ? undefined : (resp?.visualizations || undefined)
+                        )
 
                         if (fullMessage || fullVisualizations) {
                             setMessages((prev) => {
