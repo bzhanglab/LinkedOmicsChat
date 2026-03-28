@@ -1235,15 +1235,15 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             const groups = Array.from(groupSet).sort()
             const rows = Array.from(byTime.entries()).sort(([a], [b]) => a - b)
             if (!rows.length) return ""
-            const thStyle = `style="text-align:left;padding:4px 8px;font-size:11px;color:#888;border-bottom:1px solid #e5e7eb;background:#f9fafb;"`
-            const tdStyle = (right = false) => `style="padding:3px 8px;font-size:11px;${right ? "text-align:right;" : ""}font-variant-numeric:tabular-nums;"`
+            const thStyle = `style="text-align:left;padding:4px 8px;font-size:12px;font-weight:600;background:hsl(var(--muted));color:hsl(var(--muted-foreground));border-bottom:1px solid hsl(var(--border));white-space:nowrap;text-transform:uppercase;letter-spacing:0.04em;"`
+            const tdStyle = (right = false) => `style="padding:3px 8px;font-size:14px;color:hsl(var(--foreground));${right ? "text-align:right;" : ""}font-variant-numeric:tabular-nums;"`
             const headerCells = [`<th ${thStyle}>Time (days)</th>`, ...groups.map(g => `<th ${thStyle} style="text-align:right;">${escapeHtml(g)}</th>`)]
             const bodyRows = rows.map(([time, vals], i) => {
-                const bg = i % 2 === 0 ? "#fff" : "#f9fafb"
+                const bg = i % 2 === 0 ? "hsl(var(--card))" : "hsl(var(--muted) / 0.4)"
                 const cells = [`<td ${tdStyle()}>${time}</td>`, ...groups.map(g => `<td ${tdStyle(true)}>${vals[g] ?? "—"}</td>`)]
                 return `<tr style="background:${bg};">${cells.join("")}</tr>`
             })
-            return `<div style="margin-top:8px;"><div style="font-size:11px;font-weight:600;color:#888;margin-bottom:4px;">At-risk counts by time (days)</div><div style="max-height:180px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:4px;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${headerCells.join("")}</tr></thead><tbody>${bodyRows.join("")}</tbody></table></div></div>`
+            return `<div style="margin-top:8px;"><div style="font-size:11px;font-weight:600;color:hsl(var(--muted-foreground));margin-bottom:4px;">At-risk counts by time (days)</div><div style="max-height:180px;overflow-y:auto;border:1px solid hsl(var(--border));border-radius:4px;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${headerCells.join("")}</tr></thead><tbody>${bodyRows.join("")}</tbody></table></div></div>`
         }
 
         const plotImgHtml = (viz: AnyVisualization) => {
@@ -1263,11 +1263,11 @@ async function downloadSessionExport(messages: ChatMessage[]) {
         const TIER_BADGE_COLOR: Record<string, string> = {
             T1: "#166534", T2: "#1e40af", T3: "#854d0e", T4: "#7c2d12", T5: "#374151",
         }
-        const thS = `padding:6px 10px;text-align:left;font-size:11px;font-weight:600;background:#f1f5f9;color:#374151;border-bottom:2px solid #e2e8f0;white-space:nowrap;`
-        const tdS = `padding:5px 10px;font-size:12px;border-bottom:1px solid #f1f5f9;vertical-align:top;`
-        const tdCS = `padding:5px 10px;font-size:12px;border-bottom:1px solid #f1f5f9;text-align:center;vertical-align:top;`
-        const rowEven = `background:#fff;`
-        const rowOdd = `background:#f8fafc;`
+        const thS = `padding:6px 10px;text-align:left;font-size:12px;font-weight:600;background:hsl(var(--muted));color:hsl(var(--muted-foreground));border-bottom:2px solid hsl(var(--border));white-space:nowrap;text-transform:uppercase;letter-spacing:0.04em;`
+        const tdS = `padding:5px 10px;font-size:14px;color:hsl(var(--foreground));border-bottom:1px solid hsl(var(--border));vertical-align:top;`
+        const tdCS = `padding:5px 10px;font-size:14px;color:hsl(var(--foreground));border-bottom:1px solid hsl(var(--border));text-align:center;vertical-align:top;`
+        const rowEven = `background:hsl(var(--card));`
+        const rowOdd = `background:hsl(var(--muted) / 0.4);`
 
         const drugTargetGridHtml = (viz: AnyVisualization): string => {
             if (viz.type !== "drug_target_grid") return ""
@@ -1279,10 +1279,10 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                 ? `<span style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;background:${tierBg};color:${tierFg};margin-left:6px;">${v.tier} · ${TIER_LABELS_EXP[v.tier] ?? v.tier}</span>`
                 : ""
             const familyBadge = v.family && v.family !== "NA" && v.family !== "Other"
-                ? `<span style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;background:#f1f5f9;color:#475569;margin-left:4px;">${escapeHtml(v.family)}</span>`
+                ? `<span style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;background:hsl(var(--muted));color:hsl(var(--muted-foreground));margin-left:4px;">${escapeHtml(v.family)}</span>`
                 : ""
-            let html = `<div style="margin:16px 0;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
-            html += `<div style="padding:10px 14px;background:linear-gradient(to right,#f0fdfa,#ecfdf5);border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:4px;flex-wrap:wrap;"><span style="font-size:15px;font-weight:700;color:#0f766e;">${escapeHtml(v.gene)}</span>${tierBadge}${familyBadge}</div>`
+            let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+            html += `<div style="padding:10px 14px;background:hsl(var(--accent));border-bottom:1px solid hsl(var(--border));display:flex;align-items:center;gap:4px;flex-wrap:wrap;"><span style="font-size:15px;font-weight:700;color:hsl(var(--primary));">${escapeHtml(v.gene)}</span>${tierBadge}${familyBadge}</div>`
 
             // Drug details tables
             const drugDetails: any[] = v.drug_details || []
@@ -1300,12 +1300,12 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                 const hFg = TIER_BADGE_COLOR[tier] ?? "#374151"
                 html += `<div style="padding:10px 14px;">`
                 html += `<div style="display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${hBg};color:${hFg};margin-bottom:6px;">${tier} · ${escapeHtml(tLabel)}</div>`
-                html += `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">`
+                html += `<table style="width:100%;border-collapse:collapse;border:1px solid hsl(var(--border));border-radius:6px;overflow:hidden;">`
                 html += `<thead><tr><th style="${thS}">Name</th><th style="${thS}">Database</th><th style="${thS}">Indication</th></tr></thead><tbody>`
                 drugs.forEach((d, i) => {
                     const rowBg = i % 2 === 0 ? rowEven : rowOdd
-                    const dbLinks = (d.databases || []).map((db: any) => db.url ? `<a href="${escapeHtml(db.url)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(db.name)}</a>` : escapeHtml(db.name)).join(", ") || "—"
-                    const indLink = d.indication ? (d.indication.url ? `<a href="${escapeHtml(d.indication.url)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(d.indication.name)}</a>` : escapeHtml(d.indication.name)) : "—"
+                    const dbLinks = (d.databases || []).map((db: any) => db.url ? `<a href="${escapeHtml(db.url)}" style="color:hsl(var(--primary));text-decoration:none;">${escapeHtml(db.name)}</a>` : escapeHtml(db.name)).join(", ") || "—"
+                    const indLink = d.indication ? (d.indication.url ? `<a href="${escapeHtml(d.indication.url)}" style="color:hsl(var(--primary));text-decoration:none;">${escapeHtml(d.indication.name)}</a>` : escapeHtml(d.indication.name)) : "—"
                     html += `<tr style="${rowBg}"><td style="${tdS}font-weight:500;">${escapeHtml(d.name)}</td><td style="${tdS}">${dbLinks}</td><td style="${tdS}">${indLink}</td></tr>`
                 })
                 html += `</tbody></table></div>`
@@ -1313,8 +1313,8 @@ async function downloadSessionExport(messages: ChatMessage[]) {
 
             // Presence matrix
             if (v.features?.length && v.cohorts?.length && v.presence?.length) {
-                html += `<div style="padding:10px 14px;border-top:1px solid #e2e8f0;overflow-x:auto;">`
-                html += `<div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Omics Presence</div>`
+                html += `<div style="padding:10px 14px;border-top:1px solid hsl(var(--border));overflow-x:auto;">`
+                html += `<div style="font-size:11px;font-weight:600;color:hsl(var(--muted-foreground));margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Omics Presence</div>`
                 html += `<table style="border-collapse:collapse;font-size:11px;">`
                 html += `<thead><tr><th style="${thS}min-width:160px;"></th>${(v.cohorts as string[]).map((c: string) => `<th style="${thS}text-align:center;min-width:36px;">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>`
                 for (let ri = 0; ri < v.features.length; ri++) {
@@ -1324,7 +1324,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                     html += `<tr style="${rowBg}"><td style="${tdS}white-space:nowrap;font-weight:500;">${escapeHtml(feat.label)}</td>`
                     for (let ci = 0; ci < v.cohorts.length; ci++) {
                         const present = v.presence[ri]?.[ci]
-                        html += `<td style="${tdCS}background:${present ? "#0d9488" : "transparent"};color:${present ? "#fff" : "#d1d5db"};">${present ? "✓" : "·"}</td>`
+                        html += `<td style="${tdCS}background:${present ? "hsl(var(--primary))" : "transparent"};color:${present ? "hsl(var(--primary-foreground))" : "hsl(var(--border))"};">${present ? "✓" : "·"}</td>`
                     }
                     html += `</tr>`
                 }
@@ -1340,8 +1340,8 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             const genes: any[] = v.genes || []
             if (!genes.length) return ""
             const hasLoScore = genes.some((g: any) => g.lo_score != null)
-            let html = `<div style="margin:16px 0;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
-            html += `<div style="padding:10px 14px;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-weight:700;font-size:13px;color:#0f172a;">${escapeHtml(v.title || "Target search results")}</div>`
+            let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+            html += `<div style="padding:10px 14px;background:hsl(var(--muted));border-bottom:2px solid hsl(var(--border));font-weight:700;font-size:13px;color:hsl(var(--foreground));">${escapeHtml(v.title || "Target search results")}</div>`
             html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
             html += `<thead><tr>`
             html += `<th style="${thS}">Gene</th>`
@@ -1360,7 +1360,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                     ? `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;background:${tb};color:${tf};">${g.tier} · ${TIER_LABELS_EXP[g.tier] ?? g.tier}</span>`
                     : "—"
                 html += `<tr style="${rowBg}">`
-                html += `<td style="${tdS}font-weight:600;color:#0f766e;">${escapeHtml(g.gene)}</td>`
+                html += `<td style="${tdS}font-weight:600;color:hsl(var(--primary));">${escapeHtml(g.gene)}</td>`
                 html += `<td style="${tdS}">${tierCell}</td>`
                 html += `<td style="${tdS}">${escapeHtml(g.family || "—")}</td>`
                 html += `<td style="${tdS}max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(g.drugs || "")}">${escapeHtml(g.drugs || "—")}</td>`
@@ -1370,7 +1370,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                 html += `</tr>`
             })
             html += `</tbody></table></div>`
-            if (v.description) html += `<div style="padding:8px 14px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;background:#f8fafc;">${escapeHtml(v.description)}</div>`
+            if (v.description) html += `<div style="padding:8px 14px;font-size:11px;color:hsl(var(--muted-foreground));border-top:1px solid hsl(var(--border));background:hsl(var(--muted));">${escapeHtml(v.description)}</div>`
             html += `</div>`
             return html
         }
