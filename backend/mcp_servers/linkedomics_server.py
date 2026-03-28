@@ -16,7 +16,7 @@ Representative Questions & Use Cases:
 import json
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 import sys
 
 import requests
@@ -31,6 +31,45 @@ from linkedomics_tcga_params import (
 
 # Create an MCP server
 mcp = FastMCP("linkedomics_mcp", json_response=True)
+
+
+def _parse_drug_details(html: str) -> list[dict[str, Any]]:
+    """Parse drug table rows (name, databases, indication) from the drug card HTML sections."""
+    HEADER_TO_TIER: dict[str, str] = {
+        "approved oncology drugs": "T1",
+        "approved non-oncology drugs": "T2",
+        "investigational drugs": "T3",
+        "pre-clinical": "T4",
+        "surface": "T5",
+    }
+    results: list[dict[str, Any]] = []
+    # Split HTML by drug card h5 headings
+    sections = re.split(r'<h5[^>]*class=["\']mb-0["\'][^>]*>', html)
+    for section in sections[1:]:
+        h5_end = section.find("</h5>")
+        if h5_end == -1:
+            continue
+        title_raw = re.sub(r"<[^>]+>", "", section[:h5_end]).strip().lower().rstrip(":")
+        tier: str | None = None
+        for key, t in HEADER_TO_TIER.items():
+            if key in title_raw:
+                tier = t
+                break
+        if tier is None:
+            continue
+        row_pat = re.compile(r"<tr><td>(.*?)</td><td>(.*?)</td><td>(.*?)</td></tr>", re.DOTALL)
+        for m in row_pat.finditer(section):
+            name_html, db_html, ind_html = m.group(1), m.group(2), m.group(3)
+            name = re.sub(r"<[^>]+>", "", name_html).strip()
+            databases: list[dict[str, str]] = []
+            for link in re.finditer(r"href=['\"]([^'\"]*)['\"][^>]*>([^<]+)<", db_html):
+                databases.append({"name": link.group(2).strip(), "url": link.group(1)})
+            indication: dict[str, str] | None = None
+            ind_link = re.search(r"href=['\"]([^'\"]*)['\"][^>]*>([^<]+)<", ind_html)
+            if ind_link:
+                indication = {"name": ind_link.group(2).strip(), "url": ind_link.group(1)}
+            results.append({"name": name, "tier": tier, "databases": databases, "indication": indication})
+    return results
 
 
 def _parse_target_html(html: str) -> dict[str, Any]:
@@ -83,33 +122,53 @@ def _parse_target_html(html: str) -> dict[str, Any]:
             f"Overexpressed in {', '.join(prot)}" if prot
             else "No evidence of tumor overexpression"
         )
-        # "Increased in tumor, summary" row clicks show the protein-level boxplots
+        # Store protein-level presence as list for orchestrator to build sub-row
+        result["tumor_increase_protein"] = [{"cohort": r["cohort"]} for r in prot_rows if r.get("value") == 1]
+        # Protein plots go under "tumor_increase_protein" (sub-row of the summary)
         for r in prot_rows:
             pids = _plot_ids_for(r)
             if r.get("value") == 1 and pids:
-                plot_map.setdefault("tumor_increase_summary", {})[r["cohort"]] = pids
+                plot_map.setdefault("tumor_increase_protein", {})[r["cohort"]] = pids
 
         site_rows = json.loads(tn_match.group(4))
+        # Collect all unique sites (ordered by first appearance), with positive cohorts per site
+        all_sites_order: list[str] = []
         sites: dict[str, list[str]] = {}
         for s in site_rows:
+            site_key = s["site"]
+            if site_key not in sites:
+                all_sites_order.append(site_key)
+                sites[site_key] = []
             if s.get("value") == 1:
-                sites.setdefault(s["site"], []).append(s["cohort"])
+                sites[site_key].append(s["cohort"])
+        # Include ALL sites (even those with no positive cohorts) so the frontend
+        # can display the full phospho sub-row grid regardless of which cohort was clicked
         result["hyperactivated_sites"] = (
-            [{"site": site, "cohorts": cohorts} for site, cohorts in sites.items()]
-            if sites else "No evidence of hyperactivated sites"
+            [{"site": site, "cohorts": sites[site]} for site in all_sites_order]
+            if all_sites_order else "No evidence of hyperactivated sites"
         )
-        # Phospho sites: key is "phospho_{site}" so grid can look up per (site, cohort)
+        # Store per-site phospho presence as list for orchestrator sub-rows
+        for site_key in all_sites_order:
+            cohort_list = sites[site_key]
+            if cohort_list:
+                result[f"phospho_{site_key}"] = [{"cohort": c} for c in cohort_list]
+        # Phospho plot_map: key is "phospho_{site}" — already consistent with result keys
         for r in site_rows:
             pids = _plot_ids_for(r)
             if r.get("value") == 1 and pids:
                 plot_map.setdefault(f"phospho_{r['site']}", {})[r["cohort"]] = pids
 
-    # Standalone array variables
+    # Standalone array variables — search each by name to avoid cross-variable regex capture
+    # (a greedy-enough tn match can swallow const mut because tn ends with ]); not ];)
     var_data: dict[str, list] = {}
-    for name, val in re.findall(r"(?:const|var|let)\s+(\w+)\s*=\s*(\[[\s\S]*?\]);", html):
-        if name in ("mut", "meth", "cnv", "tsg", "neo", "fus", "taa"):
+    for name in ("mut", "meth", "cnv", "tsg", "neo", "fus", "taa"):
+        m = re.search(
+            rf"(?:const|var|let)\s+{name}\s*=\s*(\[[\s\S]*?\]);",
+            html,
+        )
+        if m:
             try:
-                var_data[name] = json.loads(val)
+                var_data[name] = json.loads(m.group(1))
             except Exception:
                 pass
 
@@ -135,6 +194,9 @@ def _parse_target_html(html: str) -> dict[str, Any]:
 
     result["_plot_map"] = plot_map
 
+    # table_map: feature_field → cohort → list of row dicts (for grid cells that show tables, not plots)
+    table_map: dict[str, dict[str, list[dict]]] = {}
+
     if "neo" in var_data:
         neo_entries = []
         for row in var_data["neo"]:
@@ -142,15 +204,10 @@ def _parse_target_html(html: str) -> dict[str, Any]:
                 entry: dict[str, Any] = {"cohort": row["cohort"]}
                 try:
                     table = json.loads(row.get("neo_mut_table", "[]"))
-                    entry["neoepitopes"] = [
-                        {
-                            "protein_change": t.get("Protein Change"),
-                            "neoepitope": t.get("Neoepitope"),
-                            "hla_type": t.get("HLA Type"),
-                            "binding_affinity_nM": t.get("NetMHCpan Binding Affinity nM"),
-                        }
-                        for t in table
-                    ]
+                    # Pass all columns through as-is
+                    if table:
+                        table_map.setdefault("neoantigen_mutations", {})[row["cohort"]] = table
+                    entry["neoepitopes"] = table
                 except Exception:
                     pass
                 neo_entries.append(entry)
@@ -163,20 +220,17 @@ def _parse_target_html(html: str) -> dict[str, Any]:
                 entry = {"cohort": row["cohort"]}
                 try:
                     table = json.loads(row.get("neo_fus_table", "[]"))
-                    entry["fusion_neoepitopes"] = [
-                        {
-                            "fusion": t.get("Fusion"),
-                            "neoepitope": t.get("Neoepitope"),
-                            "hla_type": t.get("HLA Type"),
-                            "binding_affinity_nM": t.get("NetMHCpan Binding Affinity nM"),
-                        }
-                        for t in table
-                    ]
+                    # Pass all columns through as-is
+                    if table:
+                        table_map.setdefault("neoantigen_fusions", {})[row["cohort"]] = table
+                    entry["fusion_neoepitopes"] = table
                 except Exception:
                     pass
                 fus_entries.append(entry)
         result["neoantigen_fusions"] = fus_entries if fus_entries else "No fusion neoantigens identified"
 
+    result["_table_map"] = table_map
+    result["_drug_details"] = _parse_drug_details(html)
     return result
 
 
@@ -188,13 +242,19 @@ def get_target_json() -> dict[str, dict[str, str]]:
 
     targets = {}
 
-    # make the gene the key
+    # make the gene the key; preserve count as int, stringify everything else
     for entry in targets_orig:
         targets[entry["gene"]] = {}
         for key in entry.keys():
             if key == "gene":
                 continue
-            targets[entry["gene"]][key] = str(entry[key])
+            if key == "count":
+                try:
+                    targets[entry["gene"]][key] = int(entry[key])
+                except (ValueError, TypeError):
+                    targets[entry["gene"]][key] = 0
+            else:
+                targets[entry["gene"]][key] = str(entry[key])
 
     return targets
 
@@ -202,7 +262,181 @@ def get_target_json() -> dict[str, dict[str, str]]:
 targets = get_target_json()
 
 
-# Add an addition tool
+@mcp.tool()
+def search_targets(
+    tier: Optional[Literal["T1", "T2", "T3", "T4", "T5"]] = None,
+    family: Optional[Literal["Kinase", "Enzyme", "GPCR", "oGPCR", "Transporter", "Ion Channel", "Transcription Factor", "Epigenetic", "Nuclear Receptor", "TF-Epigenetic", "Other"]] = None,
+    antigen: Optional[Literal["TSA", "TAA"]] = None,
+    drug_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Search and filter the full LinkedOmics drug target index across all ~19,700 genes.
+
+    This tool queries the in-memory target index to answer population-level discovery questions.
+    Unlike get_target (which retrieves detailed data for a specific known gene), this tool helps
+    identify which genes meet certain therapeutic or biological criteria across all targets.
+    Unlike rank_targets (which scores and ranks druggable targets by attractiveness), this tool
+    performs simple filtering and returns all matches without ranking.
+
+    Use this tool when the query involves:
+    - Discovering which genes belong to a specific tier or protein family
+    - Counting or listing targets by category
+    - Finding genes associated with a specific drug
+    - Identifying tumor-associated or tumor-specific antigens
+    - Comparing numbers of targets across families or tiers
+
+    Do NOT use this tool when the query asks for the "best", "most attractive", "top", or
+    "most promising" targets — use rank_targets instead.
+
+    Use cases:
+    - "Which kinases are FDA-approved oncology targets (T1)?"
+    - "How many T1, T2, T3 targets exist?"
+    - "List all T1 receptor tyrosine kinase targets"
+    - "Which genes are targeted by Imatinib?"
+    - "How many tumor-associated antigens (TAA) are T1 targets?"
+    - "Which enzyme targets have approved oncology drugs?"
+
+    Args:
+        tier (str, optional): Filter by tier — one of "T1", "T2", "T3", "T4", "T5".
+            T1 = FDA-approved oncology, T2 = FDA-approved non-oncology,
+            T3 = investigational/clinical trials, T4 = pre-clinical/druggable,
+            T5 = surface proteins.
+        family (str, optional): Filter by protein family (case-insensitive substring match),
+            e.g. "Kinase", "Receptor", "Enzyme", "GPCR".
+        antigen (str, optional): Filter by antigen annotation (case-insensitive substring match),
+            e.g. "TSA" for tumor-specific antigens, "TAA" for tumor-associated antigens.
+        drug_name (str, optional): Filter to genes targeted by a specific drug
+            (case-insensitive substring match against the drug list).
+
+    Returns:
+        dict with:
+            - "total": int — number of matching genes
+            - "genes": list[dict] — sorted by tier then gene name; each entry has:
+                gene, tier, family, drugs, antigen, count (LinkedOmics evidence score)
+    """
+    results = []
+    for gene, info in targets.items():
+        gene_tier = info.get("tier", "")
+        gene_family = info.get("Family", "") or info.get("family", "")
+        gene_antigen = info.get("antigen", "")
+        gene_drugs = info.get("drugs", "")
+
+        if tier and gene_tier != tier.upper():
+            continue
+        if family and family.lower() not in gene_family.lower():
+            continue
+        if antigen and antigen.lower() not in gene_antigen.lower():
+            continue
+        if drug_name and drug_name.lower() not in gene_drugs.lower():
+            continue
+
+        results.append({
+            "gene": gene,
+            "tier": gene_tier,
+            "family": gene_family,
+            "drugs": gene_drugs,
+            "antigen": gene_antigen,
+            "count": info.get("count", 0),
+        })
+
+    results.sort(key=lambda x: (x["tier"] or "Z", x["gene"]))
+    return {"total": len(results), "genes": results}
+
+
+_TIER_WEIGHT = {"T1": 50, "T2": 30, "T3": 10, "T4": 5, "T5": 2}
+_ANTIGEN_BONUS = {"TSA": 10, "TAA": 5}
+
+
+def _composite_score(info: dict[str, Any]) -> int:
+    tier = info.get("tier", "")
+    drug_tiers_raw = str(info.get("drug_tiers", "") or "")
+    antigen = str(info.get("antigen", "") or "").strip()
+    lo_score = int(info.get("count") or 0)
+
+    tier_w = _TIER_WEIGHT.get(tier, 0)
+
+    # Count T1-approved drugs
+    approved_drug_count = sum(
+        1 for t in drug_tiers_raw.split(";") if t.strip() == "T1"
+    )
+
+    antigen_bonus = _ANTIGEN_BONUS.get(antigen, 2 if antigen else 0)
+
+    return tier_w + approved_drug_count * 5 + antigen_bonus + lo_score * 2
+
+
+@mcp.tool()
+def rank_targets(
+    family: Optional[Literal["Kinase", "Enzyme", "GPCR", "oGPCR", "Transporter", "Ion Channel", "Transcription Factor", "Epigenetic", "Nuclear Receptor", "TF-Epigenetic", "Other"]] = None,
+    antigen: Optional[Literal["TSA", "TAA"]] = None,
+    top_n: int = 50,
+) -> dict[str, Any]:
+    """Rank cancer therapeutic targets by attractiveness using a composite evidence score.
+
+    Scores each druggable target (T1–T3) across four dimensions:
+    - **Tier weight**: T1 (FDA-approved oncology) = 50 pts, T2 (approved non-oncology) = 30 pts,
+      T3 (investigational) = 10 pts.
+    - **Approved drug count**: +5 pts per FDA-approved oncology drug targeting this gene.
+    - **Antigen status**: TSA (tumor-specific antigen) = +10 pts, TAA (tumor-associated antigen) = +5 pts.
+    - **LinkedOmics evidence score**: ×2 pts (proteomic/genomic evidence from CPTAC cohorts).
+
+    Use this tool when the query is about:
+    - Most attractive, promising, or high-priority therapeutic targets
+    - Best-validated or most druggable cancer targets
+    - Ranking targets by clinical or biological evidence
+    - Top targets within a specific protein family
+
+    Use cases:
+    - "What are the most attractive therapeutic targets for cancer?"
+    - "Which kinases are the best validated oncology targets?"
+    - "Rank the top immune checkpoint or GPCR targets for cancer therapy"
+
+    Args:
+        family (str, optional): Restrict to a protein family (case-insensitive substring),
+            e.g. "Kinase", "Receptor", "Enzyme", "GPCR".
+        antigen (str, optional): Restrict to antigen class, e.g. "TSA" or "TAA".
+        top_n (int): Number of top-ranked targets to return (default 50, max 200).
+
+    Returns:
+        dict with:
+            - "total": int — number of candidates scored
+            - "top_n": int — number returned
+            - "genes": list[dict] — ranked entries with gene, tier, family, drugs, antigen,
+              count (composite score), lo_score (raw LinkedOmics score)
+    """
+    top_n = min(int(top_n), 200)
+    candidates = []
+    for gene, info in targets.items():
+        gene_tier = info.get("tier", "")
+        if gene_tier not in ("T1", "T2", "T3"):
+            continue
+        gene_family = info.get("Family", "") or info.get("family", "")
+        gene_antigen = str(info.get("antigen", "") or "")
+        gene_drugs = info.get("drugs", "")
+
+        if family and family.lower() not in gene_family.lower():
+            continue
+        if antigen and antigen.lower() not in gene_antigen.lower():
+            continue
+
+        score = _composite_score(info)
+        candidates.append({
+            "gene": gene,
+            "tier": gene_tier,
+            "family": gene_family,
+            "drugs": gene_drugs,
+            "antigen": gene_antigen,
+            "count": score,
+            "lo_score": int(info.get("count") or 0),
+        })
+
+    candidates.sort(key=lambda x: -x["count"])
+    return {
+        "total": len(candidates),
+        "top_n": top_n,
+        "genes": candidates[:top_n],
+    }
+
+
 @mcp.tool()
 def funmap_neighborhood(protein: str) -> dict:
     """Retrieve the functional neighborhood of a protein in the FunMap network.

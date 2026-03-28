@@ -2702,13 +2702,13 @@ Please provide a clear, informative response about this gene. Include the key de
                     title = f"Drug target profile — {g_sym}"
                     md = [f"## {title}", ""]
 
+                    hyper_raw = r.get("hyperactivated_sites", "")
+                    hyper_sites = hyper_raw if isinstance(hyper_raw, list) else []
+
                     presence = [
                         [c in _cohorts_in(r.get(field, "")) for c in _GRID_COHORTS]
                         for _, field in _GRID_FEATURES
                     ]
-
-                    hyper_raw = r.get("hyperactivated_sites", "")
-                    hyper_sites = hyper_raw if isinstance(hyper_raw, list) else []
 
                     viz_id = _uuid.uuid4().hex
                     _visualizations.append({
@@ -2720,11 +2720,14 @@ Please provide a clear, informative response about this gene. Include the key de
                         "family": r.get("Family", "") or r.get("family", ""),
                         "drugs": r.get("drugs", ""),
                         "drug_tiers": r.get("drug_tiers", ""),
+                        "drug_details": r.get("_drug_details", []),
                         "features": [{"label": lbl, "field": fld} for lbl, fld in _GRID_FEATURES],
                         "cohorts": _GRID_COHORTS,
                         "presence": presence,
                         "plot_map": r.get("_plot_map", {}),
+                        "table_map": r.get("_table_map", {}),
                         "hyper_sites": hyper_sites,
+                        "protein_cohorts": sorted(_cohorts_in(r.get("tumor_increase_protein", "")) & set(_GRID_COHORTS)),
                     })
                     md.append(f"\n[PLOT:{viz_id}]")
                     md.append("")
@@ -2732,6 +2735,64 @@ Please provide a clear, informative response about this gene. Include the key de
                     sections.append("\n".join(md) + "\n")
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("rank_targets"):
+                if not isinstance(parsed, dict):
+                    continue
+                genes = parsed.get("genes", [])
+                total = parsed.get("total", len(genes))
+                top_n = parsed.get("top_n", len(genes))
+                if not genes:
+                    sections.append("_No druggable targets found._\n")
+                    _rendered_tool_ids.add(tool_id)
+                    continue
+                viz_id = _uuid.uuid4().hex
+                description = (
+                    "**How targets are ranked** — Composite score = "
+                    "tier weight (T1 = 50 pts, T2 = 30 pts, T3 = 10 pts) "
+                    "+ approved oncology drug count × 5 pts each "
+                    "+ antigen status (TSA = +10 pts, TAA = +5 pts) "
+                    "+ LinkedOmics proteomic evidence score × 2 pts. "
+                    "The **Score** column shows this composite value. "
+                    f"Showing top {top_n} of {total} druggable targets (T1–T3)."
+                )
+                _visualizations.append({
+                    "type": "target_search_table",
+                    "id": viz_id,
+                    "title": "Top therapeutic targets — ranked by attractiveness",
+                    "total": top_n,
+                    "genes": genes,
+                    "description": description,
+                    "score_label": "Score",
+                })
+                md = [f"\n[PLOT:{viz_id}]", ""]
+                md.append("\n> **Source:** [LinkedOmics Targets](#source:targets)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("search_targets"):
+                if not isinstance(parsed, dict):
+                    continue
+                genes = parsed.get("genes", [])
+                total = parsed.get("total", len(genes))
+                if not genes:
+                    sections.append("_No targets matched the search criteria._\n")
+                    _rendered_tool_ids.add(tool_id)
+                    continue
+                viz_id = _uuid.uuid4().hex
+                _visualizations.append({
+                    "type": "target_search_table",
+                    "id": viz_id,
+                    "title": f"Target search results ({total} genes)",
+                    "total": total,
+                    "genes": genes,
+                })
+                md = [f"\n[PLOT:{viz_id}]", ""]
+                md.append("\n> **Source:** [LinkedOmics Targets](#source:targets)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
                 continue
 
             if tool_id.endswith("clinical_trial_information"):
