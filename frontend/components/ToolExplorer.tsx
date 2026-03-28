@@ -817,7 +817,7 @@ const CATEGORIES: CategoryDef[] = [
         icon: Pill,
         color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
         borderColor: "border-amber-400 dark:border-amber-500",
-        tools: ["get_target", "batch_get_target", "clinical_trial_information", "batch_clinical_trial_information"],
+        tools: ["get_target", "batch_get_target", "search_targets", "rank_targets", "clinical_trial_information", "batch_clinical_trial_information"],
     },
     {
         label: "Functional Networks",
@@ -1065,7 +1065,11 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
         try {
             setExecuting(true)
             setError(null)
-            const res = await toolsAPI.execute(selectedToolId, args)
+            // Strip empty strings so Optional params are sent as absent (None) not ""
+            const cleanArgs = Object.fromEntries(
+                Object.entries(args).filter(([, v]) => v !== "" && v !== null && v !== undefined)
+            )
+            const res = await toolsAPI.execute(selectedToolId, cleanArgs)
 
             // Extract the actual data payload
             let cleanResult = res.result

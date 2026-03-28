@@ -18,6 +18,7 @@ import { chatAPI, type ChatMessage, type Paper, type AnalysisResult, type AnyVis
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
+import { TargetSearchTable } from "@/components/TargetSearchTable"
 import { useAuth } from "@/components/AuthContext"
 import { EnrichmentRenderer } from "./ToolExplorer"
 import axios from "axios"
@@ -152,6 +153,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
                     const viz = vizMap[part.value]
                     if (viz?.type === "static_plot") return <StaticPlot key={i} visualization={viz} />
                     if (viz?.type === "drug_target_grid") return <DrugTargetGrid key={i} visualization={viz} />
+                    if (viz?.type === "target_search_table") return <TargetSearchTable key={i} visualization={viz} />
                     return null
                 }
                 if (part.type === "network") {
