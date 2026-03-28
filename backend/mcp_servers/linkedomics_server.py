@@ -820,26 +820,28 @@ def get_top_n_trials(
     data: list[dict[str, Any]], n: int = 10, sig_threshold: float = 0.05
 ) -> dict[str, Any]:
     """Get the top n trials with the most significant association in both directions."""
-    data = [study for study in data if abs(float(study["fdr"])) < sig_threshold]
+    filtered = [s for s in data if abs(float(s["fdr"])) < sig_threshold]
+    pos = sorted([s for s in filtered if float(s["fdr"]) > 0], key=lambda s: -s["sorted_fdr"])[:n]
+    neg = sorted([s for s in filtered if float(s["fdr"]) < 0], key=lambda s: s["sorted_fdr"])[:n]
 
-    ret_val = {}
-    pos = [study for study in data if float(study["fdr"]) > 0]
-    neg = [study for study in data if float(study["fdr"]) < 0]
-    pos.sort(key=lambda study: -study["sorted_fdr"])
-    neg.sort(key=lambda study: study["sorted_fdr"])
-    pos = pos[:n]
-    neg = neg[:n]
-    ret_val["Top Resistant Associated Studies"] = []
-    for study in pos:
-        ret_val["Top Resistant Associated Studies"].append(
-            {"study": study["series"], "treatment": study["treatment"]}
-        )
-    ret_val["Top Sensitive Associated Studies"] = []
-    for study in neg:
-        ret_val["Top Sensitive Associated Studies"].append(
-            {"study": study["series"], "treatment": study["treatment"]}
-        )
-    return ret_val
+    def _fmt(s: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "series": s["series"],
+            "treatment": s["treatment"],
+            "disease": s.get("disease", ""),
+            "subtype": s.get("subtype", ""),
+            "clinical_trial_id": s.get("clinical_trial_id", ""),
+            "sample_size": s.get("sample_size", ""),
+            "auroc": round(float(s["auroc"]), 3),
+            "fdr": float(s["fdr"]),
+        }
+
+    return {
+        "top_resistant": [_fmt(s) for s in pos],
+        "top_sensitive": [_fmt(s) for s in neg],
+        "total_significant": len(filtered),
+        "total_studies": len(data),
+    }
 
 
 @mcp.tool()
@@ -867,7 +869,9 @@ def clinical_trial_information(protein: str) -> dict[str, Any]:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: Lists of the top 10 sensitive and resistant associated studies/treatments.
+        dict[str, Any]: top_resistant and top_sensitive study lists, each with fields:
+            series, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr.
+            Also includes total_significant and total_studies counts.
     """
     ret_val = {"status": "unavailable", "data": {}}
     req = requests.get(
@@ -904,7 +908,8 @@ def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
         proteins (list[str]): The gene symbols (e.g., ["ESR1", "TP53"]).
 
     Returns:
-        dict[str, Any]: Lists of the top 10 sensitive and resistant associated studies/treatments for each protein.
+        dict[str, Any]: Per-protein results, each with top_resistant and top_sensitive study lists
+            containing fields: series, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr.
     """
     results = {}
     for protein in proteins:
@@ -914,6 +919,325 @@ def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
     return {"status": "available", "data": results}
+
+
+@mcp.tool()
+def get_study_info(study_id: str) -> dict[str, Any]:
+    """Get full details about a specific clinical trial study by its series ID.
+
+    Returns study abstract, sample size, cancer type, treatment, NCT trial ID,
+    PubMed link, and data download URL.
+
+    Use this tool when:
+    - The user asks for details about a specific study (by GSE/study ID)
+    - The user wants the abstract, platform, or download link for a study
+    - Following up on a result from clinical_trial_information to learn more
+
+    Args:
+        study_id (str): Study series ID as returned by clinical_trial_information
+            (e.g., "GSE25066" or "Choueiri_CCR_2016"). The .csv suffix is added automatically.
+
+    Returns:
+        dict: Full study metadata including abstract, sample sizes, NCT ID, PubMed ID, download URL.
+    """
+    sid = study_id.strip()
+    if not sid.endswith(".csv"):
+        sid = sid + ".csv"
+    req = requests.get(f"https://trials.linkedomics.org/api/info/{sid}", timeout=30)
+    if req.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    return {"status": "available", "data": req.json()}
+
+
+@mcp.tool()
+def gene_set_trial_information(gene_set: str) -> dict[str, Any]:
+    """Find clinical trial studies where a gene set or pathway predicts treatment response.
+
+    Use this tool when:
+    - The query involves a pathway or gene signature (e.g., HALLMARK_HYPOXIA, EMT, cell cycle)
+    - The user asks whether a biological process predicts drug sensitivity or resistance
+
+    Use cases:
+    - "Does HALLMARK_ESTROGEN_RESPONSE predict tamoxifen sensitivity?"
+    - "Which trials show hypoxia signature predicting immunotherapy resistance?"
+
+    Args:
+        gene_set (str): Gene set name as used in MSigDB (e.g., "HALLMARK_HYPOXIA").
+            Spaces are converted to underscores automatically.
+
+    Returns:
+        dict: top_resistant and top_sensitive study lists with disease, treatment, AUROC, NCT ID.
+    """
+    gs = gene_set.strip().upper().replace(" ", "_")
+    req = requests.get(f"https://trials.linkedomics.org/api/table/gene_set/{gs}", timeout=30)
+    if req.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    return {"status": "available", "gene_set": gs, "data": get_top_n_trials(req.json())}
+
+
+@mcp.tool()
+def filter_clinical_trials(
+    drugs: Optional[list[str]] = None,
+    cancers: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Find clinical trial studies matching a specific drug and/or cancer type.
+
+    Use this tool when:
+    - The user wants to know which studies exist for a drug/cancer combination
+    - As a discovery step before asking for gene-level analysis
+
+    Use cases:
+    - "Which studies tested nivolumab in melanoma?"
+    - "How many breast cancer tamoxifen studies are in the database?"
+
+    Args:
+        drugs (list[str]): Drug names to filter by (e.g., ["tamoxifen"]).
+        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+
+    Returns:
+        dict: Matching study list, count, and cancer types present.
+    """
+    body: dict[str, Any] = {"drugs": drugs or [], "cancers": cancers or []}
+    req = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
+    if req.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    r = req.json()
+    return {
+        "status": "available",
+        "data": {
+            "study_list": r.get("study_list", []),
+            "study_count": r.get("length", 0),
+            "possible_cancers": r.get("possible_cancers", []),
+            "filters_applied": body,
+        },
+    }
+
+
+@mcp.tool()
+def meta_analysis_predictive_genes(
+    drugs: Optional[list[str]] = None,
+    cancers: Optional[list[str]] = None,
+    top_n: int = 20,
+) -> dict[str, Any]:
+    """Run a meta-analysis to find which genes best predict drug response across clinical studies.
+
+    Filters studies by drug and/or cancer type, then runs a meta-analysis across all matching
+    studies to rank genes by how significantly their expression predicts treatment outcome.
+
+    Use this tool when:
+    - The user asks which genes are the top predictors of response to a treatment
+    - The user wants biomarker discovery across a drug or cancer type
+
+    Use cases:
+    - "Which genes best predict paclitaxel response in breast cancer?"
+    - "What are the top biomarkers for platinum resistance in ovarian cancer?"
+    - "Find the strongest predictors of nivolumab sensitivity across all studies."
+
+    Args:
+        drugs (list[str]): Drug names to filter by (e.g., ["paclitaxel"]).
+        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+        top_n (int): Number of top genes to return (default 20).
+
+    Returns:
+        dict: Ranked gene list with meta-analysis statistics (meta_fdr, avg_auc, datasets, direction).
+            "datasets" = number of studies where the gene was significant.
+            "avg_auc" = average AUROC across studies (>0.5 = sensitive, <0.5 = resistant).
+    """
+    body: dict[str, Any] = {"drugs": drugs or [], "cancers": cancers or []}
+    fr = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
+    if fr.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    study_list = fr.json().get("study_list", [])
+    if not study_list:
+        return {"status": "no_studies", "data": {"filters": body, "study_count": 0}}
+
+    mr = requests.post(
+        "https://trials.linkedomics.org/api/table/treatment_gene",
+        json={"study_list": study_list},
+        timeout=120,
+    )
+    if mr.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    rows = mr.json()
+
+    rows_sorted = sorted(
+        rows, key=lambda r: abs(float(r.get("sorted_fdr", 0))), reverse=True
+    )[:top_n]
+    genes = []
+    for r in rows_sorted:
+        avg_auc = float(r.get("avg_auc", 0.5))
+        genes.append({
+            "gene": r.get("analyte", ""),
+            "datasets": r.get("datasets", 0),
+            "meta_fdr": float(r.get("fdr", 1)),
+            "avg_auc": round(avg_auc, 3),
+            "direction": "sensitive" if avg_auc > 0.5 else "resistant",
+        })
+    return {
+        "status": "available",
+        "data": {
+            "filters": body,
+            "study_count": len(study_list),
+            "study_list": study_list,
+            "top_genes": genes,
+        },
+    }
+
+
+@mcp.tool()
+def meta_analysis_predictive_gene_sets(
+    drugs: Optional[list[str]] = None,
+    cancers: Optional[list[str]] = None,
+    top_n: int = 20,
+) -> dict[str, Any]:
+    """Run a meta-analysis to find which gene sets / pathways best predict drug response across clinical studies.
+
+    Filters studies by drug and/or cancer type, then runs a meta-analysis across all matching
+    studies to rank gene sets by how significantly their activity predicts treatment outcome.
+
+    Use this tool when:
+    - The user asks which pathways are the top predictors of response to a treatment
+    - The user wants pathway-level biomarker discovery across a drug or cancer type
+
+    Use cases:
+    - "Which pathways best predict paclitaxel response in breast cancer?"
+    - "What biological processes predict platinum resistance in ovarian cancer?"
+    - "Find the top pathway predictors of nivolumab sensitivity across all studies."
+
+    Args:
+        drugs (list[str]): Drug names to filter by (e.g., ["paclitaxel"]).
+        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+        top_n (int): Number of top gene sets to return (default 20).
+
+    Returns:
+        dict: Ranked gene set list with meta-analysis statistics (meta_fdr, avg_auc, datasets, direction).
+            "datasets" = number of studies where the gene set was significant.
+            "avg_auc" = average AUROC across studies (>0.5 = resistant, <0.5 = sensitive).
+    """
+    body: dict[str, Any] = {"drugs": drugs or [], "cancers": cancers or []}
+    fr = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
+    if fr.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    study_list = fr.json().get("study_list", [])
+    if not study_list:
+        return {"status": "no_studies", "data": {"filters": body, "study_count": 0}}
+
+    mr = requests.post(
+        "https://trials.linkedomics.org/api/table/treatment_gene_set",
+        json={"study_list": study_list},
+        timeout=120,
+    )
+    if mr.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    rows = mr.json()
+
+    rows_sorted = sorted(
+        rows, key=lambda r: abs(float(r.get("sorted_fdr", 0))), reverse=True
+    )[:top_n]
+    gene_sets = []
+    for r in rows_sorted:
+        avg_auc = float(r.get("avg_auc", 0.5))
+        gene_sets.append({
+            "gene_set": r.get("analyte", ""),
+            "datasets": r.get("datasets", 0),
+            "meta_fdr": float(r.get("fdr", 1)),
+            "avg_auc": round(avg_auc, 3),
+            "direction": "sensitive" if avg_auc < 0.5 else "resistant",
+        })
+    return {
+        "status": "available",
+        "data": {
+            "filters": body,
+            "study_count": len(study_list),
+            "study_list": study_list,
+            "top_gene_sets": gene_sets,
+        },
+    }
+
+
+def _rank_study_analytes(rows: list[dict], top_n: int) -> list[dict]:
+    """Rank analytes (genes or gene sets) from a single-study response by significance."""
+    rows_sorted = sorted(rows, key=lambda r: abs(float(r.get("sorted_fdr", 0))), reverse=True)[:top_n]
+    result = []
+    for r in rows_sorted:
+        auc = float(r.get("auc", 0.5))
+        result.append({
+            "analyte": r.get("analyte", ""),
+            "auc": round(auc, 3),
+            "fdr": float(r.get("fdr", 1)),
+            "direction": "sensitive" if auc < 0.5 else "resistant",
+        })
+    return result
+
+
+@mcp.tool()
+def get_study_predictive_genes(study_id: str, top_n: int = 20) -> dict[str, Any]:
+    """Get the top genes that predict treatment response in a specific clinical study.
+
+    Use this tool when:
+    - The user wants to know which genes are most predictive in a specific study
+    - Following up on a study returned by clinical_trial_information or filter_clinical_trials
+    - The user asks "which genes predict response in study GSE25066?"
+
+    Args:
+        study_id (str): Study series ID (e.g., "GSE25066"). The .csv suffix is added automatically.
+        top_n (int): Number of top genes to return (default 20).
+
+    Returns:
+        dict: Ranked gene list with auc, fdr, and direction (sensitive/resistant).
+            direction="sensitive" means higher expression → better response (auc < 0.5).
+            direction="resistant" means higher expression → worse response (auc > 0.5).
+    """
+    sid = study_id.strip()
+    if not sid.endswith(".csv"):
+        sid = sid + ".csv"
+    req = requests.get(f"https://trials.linkedomics.org/api/table/study/gene/{sid}", timeout=60)
+    if req.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    rows = req.json()
+    return {
+        "status": "available",
+        "study_id": study_id,
+        "data": {
+            "study_id": study_id,
+            "total_genes": len(rows),
+            "top_genes": _rank_study_analytes(rows, top_n),
+        },
+    }
+
+
+@mcp.tool()
+def get_study_predictive_gene_sets(study_id: str, top_n: int = 20) -> dict[str, Any]:
+    """Get the top gene sets / pathways that predict treatment response in a specific clinical study.
+
+    Use this tool when:
+    - The user wants to know which pathways are most predictive in a specific study
+    - The user asks "which pathways predict response in study GSE25066?"
+    - Following up on a study to understand the biological processes driving response
+
+    Args:
+        study_id (str): Study series ID (e.g., "GSE25066"). The .csv suffix is added automatically.
+        top_n (int): Number of top gene sets to return (default 20).
+
+    Returns:
+        dict: Ranked gene set list with auc, fdr, and direction (sensitive/resistant).
+    """
+    sid = study_id.strip()
+    if not sid.endswith(".csv"):
+        sid = sid + ".csv"
+    req = requests.get(f"https://trials.linkedomics.org/api/table/study/gene_set/{sid}", timeout=60)
+    if req.status_code != 200:
+        return {"status": "unavailable", "data": {}}
+    rows = req.json()
+    return {
+        "status": "available",
+        "study_id": study_id,
+        "data": {
+            "study_id": study_id,
+            "total_gene_sets": len(rows),
+            "top_gene_sets": _rank_study_analytes(rows, top_n),
+        },
+    }
 
 
 @mcp.tool()
