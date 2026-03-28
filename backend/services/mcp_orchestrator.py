@@ -700,6 +700,132 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
         return None
 
 
+def _trials_table(studies: list, heading: str) -> list[str]:
+    """Render a list of clinical trial study dicts as a compact markdown table."""
+    lines = [f"### {heading}"]
+    if not studies:
+        lines.append("_No significant results._")
+        return lines
+    lines.append("| Series | Disease | Treatment | AUROC | N |")
+    lines.append("|---|---|---|---|---|")
+    for s in studies:
+        treatment = str(s.get("treatment", "") or "")
+        # Truncate very long treatment strings
+        treatment_display = (treatment[:40] + "…") if len(treatment) > 40 else treatment
+        lines.append(
+            f"| {s.get('series','')} | {s.get('disease','')} "
+            f"| {treatment_display} | {s.get('auroc','')} "
+            f"| {s.get('sample_size','')} |"
+        )
+    return lines
+
+
+def _generate_trials_auroc_chart(data: dict, label: str) -> Optional[dict]:
+    """Generate a horizontal AUROC bar chart for clinical trial associations.
+
+    Shows all significant studies sorted by AUROC with a reference line at 0.5.
+    Bars colored teal (sensitive, AUROC<0.5) or orange (resistant, AUROC>0.5).
+    """
+    try:
+        import io, base64, csv as _csv
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        resistant = data.get("top_resistant", [])
+        sensitive = data.get("top_sensitive", [])
+        if not resistant and not sensitive:
+            return None
+
+        studies = []
+        for s in sensitive:
+            studies.append({
+                "label": f"{s.get('series','')} — {str(s.get('treatment',''))[:28]}",
+                "auroc": float(s.get("auroc", 0.5)),
+                "direction": "sensitive",
+            })
+        for s in resistant:
+            studies.append({
+                "label": f"{s.get('series','')} — {str(s.get('treatment',''))[:28]}",
+                "auroc": float(s.get("auroc", 0.5)),
+                "direction": "resistant",
+            })
+        # Sort by AUROC ascending (sensitive at top, resistant at bottom for horizontal bars)
+        studies.sort(key=lambda x: x["auroc"])
+
+        labels = [s["label"] for s in studies]
+        aurocs = [s["auroc"] for s in studies]
+        colors = ["#3b82f6" if s["direction"] == "sensitive" else "#f97316" for s in studies]
+
+        fig_h = max(3.0, len(studies) * 0.38 + 1.2)
+        fig, ax = plt.subplots(figsize=(8.5, fig_h))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        y_pos = np.arange(len(studies))
+        bars = ax.barh(y_pos, aurocs, height=0.65, color=colors, edgecolor="none")
+
+        # Reference line at AUROC = 0.5
+        ax.axvline(0.5, color="#666666", linewidth=1.0, linestyle="--", label="AUROC = 0.5")
+
+        # AUROC value labels at bar tips
+        for bar, val in zip(bars, aurocs):
+            x_tip = bar.get_width()
+            ax.text(x_tip + 0.008, bar.get_y() + bar.get_height() / 2,
+                    f"{val:.3f}", va="center", ha="left", fontsize=7.5, color="#333333")
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(labels, fontsize=8)
+        ax.set_xlim(0.0, 1.15)
+        ax.set_xlabel("AUROC", fontsize=9)
+        ax.set_title(f"Clinical Trial Associations — {label}", fontsize=11, fontweight="bold", pad=8)
+        ax.tick_params(axis="x", labelsize=8)
+
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor="#3b82f6", label="Sensitive (AUROC < 0.5)"),
+            Patch(facecolor="#f97316", label="Resistant (AUROC > 0.5)"),
+        ]
+        ax.legend(handles=legend_elements, loc="lower right", fontsize=8, frameon=False)
+
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        svg_buf.seek(0)
+        svg_str = svg_buf.read().decode()
+        plt.close(fig)
+
+        # CSV: flat table of all studies
+        rows_out = []
+        for s in studies:
+            rows_out.append({"series": s["label"].split(" — ")[0],
+                             "direction": s["direction"], "auroc": s["auroc"]})
+        csv_buf = io.StringIO()
+        if rows_out:
+            writer = _csv.DictWriter(csv_buf, fieldnames=list(rows_out[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows_out)
+
+        return {
+            "title": f"Clinical Trial Associations — {label}",
+            "png_b64": png_b64,
+            "svg": svg_str,
+            "csv": csv_buf.getvalue(),
+        }
+    except Exception as e:
+        logger.warning(f"[Trials AUROC chart] Failed to generate: {e}")
+        return None
+
+
 def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
     """Generate a single grouped horizontal bar chart for cis-correlations.
 
@@ -2581,9 +2707,10 @@ Please provide a clear, informative response about this gene. Include the key de
                     md.append("")
 
                 if neigh:
-                    chunks = [neigh[i:i + 5] for i in range(0, len(neigh), 5)]
-                    for chunk in chunks:
-                        md.append("- " + ", ".join(f"{g}" for g in chunk))
+                    md.append("| # | Gene |")
+                    md.append("|---|---|")
+                    for i, g in enumerate(neigh, 1):
+                        md.append(f"| {i} | {g} |")
                 else:
                     md.append("\n_No neighborhood found._")
 
@@ -2799,23 +2926,291 @@ Please provide a clear, informative response about this gene. Include the key de
                 if not isinstance(parsed, dict):
                     continue  # skip unrenderable result silently
                 status = parsed.get("status", "unavailable")
-                data = parsed.get("data") or {}
-                trial_title = f"Clinical trial associations - {gene_name}" if gene_name else "Clinical trial associations"
-                md = [f"## {trial_title}", f"**Status:** {status}"]
-                for k, v in data.items():
-                    md.append(f"\n### {k}")
-                    if isinstance(v, list) and v:
-                        for item in v[:10]:
-                            if isinstance(item, dict):
-                                md.append(f"- **{item.get('study','')}** — {item.get('treatment','')}")
-                            else:
-                                md.append(f"- {item}")
+                raw_data = parsed.get("data") or {}
+
+                # Detect batch vs single: batch data is a dict of {protein: result}
+                is_batch = (
+                    tool_id.endswith("batch_clinical_trial_information")
+                    or (isinstance(raw_data, dict) and all(
+                        isinstance(v, dict) and "status" in v
+                        for v in raw_data.values()
+                    ) and raw_data)
+                )
+
+                def _render_single_trial(data: dict, label: str) -> list[str]:
+                    lines: list[str] = []
+                    total_sig = data.get("total_significant", "")
+                    total_all = data.get("total_studies", "")
+                    if total_sig or total_all:
+                        lines.append(f"**Significant studies:** {total_sig} / {total_all}")
+                    lines.append("")
+                    fig_dict = _generate_trials_auroc_chart(data, label)
+                    if fig_dict:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "static_plot",
+                            "id": viz_id,
+                            "title": fig_dict["title"],
+                            **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                        })
+                        lines.append(f"[PLOT:{viz_id}]")
+                        lines.append("")
+                    lines.extend(_trials_table(data.get("top_resistant", []), "Top Resistant Studies (higher expression → worse response)"))
+                    lines.append("")
+                    lines.extend(_trials_table(data.get("top_sensitive", []), "Top Sensitive Studies (higher expression → better response)"))
+                    return lines
+
+                if is_batch:
+                    md = ["## Clinical trial associations — batch"]
+                    if status != "available":
+                        md.append(f"_Status: {status}_")
                     else:
-                        md.append("_No results._")
+                        for protein, result in raw_data.items():
+                            if not isinstance(result, dict) or result.get("status") != "available":
+                                continue
+                            pdata = result.get("data") or {}
+                            md.append(f"\n### {protein}")
+                            md.extend(_render_single_trial(pdata, protein))
+                else:
+                    chart_label = gene_name or "Gene"
+                    md = [f"## Clinical trial associations — {chart_label}"]
+                    if status != "available":
+                        md.append(f"_Status: {status}_")
+                    else:
+                        md.extend(_render_single_trial(raw_data, chart_label))
+
                 md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
                 sections.append("\n".join(md) + "\n")
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("get_study_info"):
+                if not isinstance(parsed, dict):
+                    continue
+                status = parsed.get("status", "unavailable")
+                d = parsed.get("data") or {}
+                if status != "available" or not d:
+                    sections.append("_Study information unavailable._\n")
+                    _rendered_tool_ids.add(tool_id)
+                    continue
+                series = d.get("series", d.get("study_id", ""))
+                md = [f"## Study Details — {series}", ""]
+
+                # Metadata as a compact 2-column table
+                nct = d.get("clinical_trial_id", "")
+                pubmed = d.get("pub_med_id", d.get("pubmed_id", ""))
+                sample_n = d.get("sample_size", "")
+                resp = d.get("responder_size", "")
+                non_resp = d.get("non_responder_size", "")
+                sample_str = f"{sample_n} (R: {resp}, NR: {non_resp})" if resp or non_resp else sample_n
+                download = d.get("download_url", "")
+
+                rows = [
+                    ("Disease",      f"{d.get('disease','')} — {d.get('subtype','')}".rstrip(" —")),
+                    ("Treatment",    d.get("treatment", "")),
+                    ("Response eval", d.get("response_eval", "")),
+                    ("Sample size",  sample_str),
+                    ("NCT Trial ID", nct),
+                    ("PubMed ID",    pubmed),
+                    ("Platform",     d.get("platform", "")),
+                    ("Normalization", d.get("normalization_method", "")),
+                ]
+                if download:
+                    rows.append(("Data download", f"[Download]({download})"))
+
+                md.append("| Field | Value |")
+                md.append("|---|---|")
+                for field, val in rows:
+                    if val and str(val).strip():
+                        md.append(f"| {field} | {val} |")
+
+                abstract = d.get("study_abstract") or d.get("abstract", "")
+                if abstract:
+                    md.append("\n### Abstract")
+                    md.append(abstract)
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("gene_set_trial_information"):
+                if not isinstance(parsed, dict):
+                    continue
+                status = parsed.get("status", "unavailable")
+                gs = parsed.get("gene_set", "")
+                data = parsed.get("data") or {}
+                gs_title = f"Pathway trial associations — {gs}" if gs else "Pathway trial associations"
+                md = [f"## {gs_title}"]
+                if status != "available":
+                    md.append(f"_Status: {status}_")
+                else:
+                    total_sig = data.get("total_significant", "")
+                    total_all = data.get("total_studies", "")
+                    if total_sig or total_all:
+                        md.append(f"**Significant studies:** {total_sig} / {total_all}")
+                    md.append("")
+                    fig_dict = _generate_trials_auroc_chart(data, gs or "Gene Set")
+                    if fig_dict:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "static_plot",
+                            "id": viz_id,
+                            "title": fig_dict["title"],
+                            **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                        })
+                        md.append(f"[PLOT:{viz_id}]")
+                        md.append("")
+                    md.extend(_trials_table(data.get("top_resistant", []), "Top Resistant Studies (higher activity → worse response)"))
+                    md.append("")
+                    md.extend(_trials_table(data.get("top_sensitive", []), "Top Sensitive Studies (higher activity → better response)"))
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("filter_clinical_trials"):
+                if not isinstance(parsed, dict):
+                    continue
+                status = parsed.get("status", "unavailable")
+                d = parsed.get("data") or {}
+                filters = d.get("filters_applied", {})
+                md = ["## Clinical Trial Study Filter"]
+                if status != "available":
+                    md.append(f"_Status: {status}_")
+                else:
+                    drugs_f = filters.get('drugs', [])
+                    cancers_f = filters.get('cancers', [])
+                    md.append(
+                        f"**Drugs:** {', '.join(drugs_f) if drugs_f else 'any'}  "
+                        f"**Cancers:** {', '.join(cancers_f) if cancers_f else 'any'}  "
+                        f"**Matching studies:** {d.get('study_count', 0)}"
+                    )
+                    possible = d.get("possible_cancers", [])
+                    if possible:
+                        md.append(f"**Cancer types present:** {', '.join(str(c) for c in possible)}")
+                    study_list = d.get("study_list", [])
+                    if study_list:
+                        md.append("")
+                        md.append("| # | Study | Series |")
+                        md.append("|---|---|---|")
+                        for i, s in enumerate(study_list, 1):
+                            # Strip .csv suffix; try to split into a readable series name
+                            bare = s.removesuffix(".csv")
+                            # Series is the GSE-style prefix or full name before treatment suffix
+                            md.append(f"| {i} | {bare} | {bare.split('_')[0]} |")
+                    else:
+                        md.append("_No matching studies found._")
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("meta_analysis_predictive_genes"):
+                if not isinstance(parsed, dict):
+                    continue
+                status = parsed.get("status", "unavailable")
+                d = parsed.get("data") or {}
+                filters = d.get("filters", {})
+                md = ["## Meta-analysis: Top Predictive Genes"]
+                if status == "no_studies":
+                    md.append(
+                        f"_No studies found matching filters: "
+                        f"drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}._"
+                    )
+                elif status != "available":
+                    md.append(f"_Status: {status}_")
+                else:
+                    md.append(
+                        f"**Studies analyzed:** {d.get('study_count',0)} | "
+                        f"**Filters:** drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}"
+                    )
+                    md.append("")
+                    genes = d.get("top_genes", [])
+                    if genes:
+                        md.append("| # | Gene | Studies | Avg AUROC | Meta-FDR | Direction |")
+                        md.append("|---|---|---|---|---|---|")
+                        for i, g in enumerate(genes, 1):
+                            md.append(
+                                f"| {i} | {g.get('gene','')} | {g.get('datasets','')} "
+                                f"| {g.get('avg_auc','')} | {g.get('meta_fdr','')} "
+                                f"| {g.get('direction','').capitalize()} |"
+                            )
+                    else:
+                        md.append("_No significant predictive genes found._")
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("meta_analysis_predictive_gene_sets"):
+                if not isinstance(parsed, dict):
+                    continue
+                status = parsed.get("status", "unavailable")
+                d = parsed.get("data") or {}
+                filters = d.get("filters", {})
+                md = ["## Meta-analysis: Top Predictive Pathways"]
+                if status == "no_studies":
+                    md.append(
+                        f"_No studies found matching filters: "
+                        f"drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}._"
+                    )
+                elif status != "available":
+                    md.append(f"_Status: {status}_")
+                else:
+                    md.append(
+                        f"**Studies analyzed:** {d.get('study_count',0)} | "
+                        f"**Filters:** drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}"
+                    )
+                    md.append("")
+                    gene_sets = d.get("top_gene_sets", [])
+                    if gene_sets:
+                        md.append("| # | Pathway / Gene Set | Studies | Avg AUROC | Meta-FDR | Direction |")
+                        md.append("|---|---|---|---|---|---|")
+                        for i, g in enumerate(gene_sets, 1):
+                            md.append(
+                                f"| {i} | {g.get('gene_set','')} | {g.get('datasets','')} "
+                                f"| {g.get('avg_auc','')} | {g.get('meta_fdr','')} "
+                                f"| {g.get('direction','').capitalize()} |"
+                            )
+                    else:
+                        md.append("_No significant predictive pathways found._")
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("get_study_predictive_genes") or tool_id.endswith("get_study_predictive_gene_sets"):
+                if not isinstance(parsed, dict):
+                    continue
+                status = parsed.get("status", "unavailable")
+                d = parsed.get("data") or {}
+                sid = d.get("study_id", parsed.get("study_id", ""))
+                is_gene_sets = tool_id.endswith("get_study_predictive_gene_sets")
+                analyte_label = "Gene Set" if is_gene_sets else "Gene"
+                analyte_key = "top_gene_sets" if is_gene_sets else "top_genes"
+                total_key = "total_gene_sets" if is_gene_sets else "total_genes"
+                title = f"Predictive {analyte_label}s — {sid}" if sid else f"Predictive {analyte_label}s"
+                md = [f"## {title}"]
+                if status != "available":
+                    md.append(f"_Status: {status}_")
+                else:
+                    md.append(f"**Study:** {sid}  **Total {analyte_label.lower()}s tested:** {d.get(total_key, '')}")
+                    md.append("")
+                    analytes = d.get(analyte_key, [])
+                    if analytes:
+                        md.append(f"| # | {analyte_label} | AUROC | FDR | Direction |")
+                        md.append("|---|---|---|---|---|")
+                        for i, g in enumerate(analytes, 1):
+                            md.append(
+                                f"| {i} | {g.get('analyte','')} | {g.get('auc','')} "
+                                f"| {g.get('fdr','')} | {g.get('direction','').capitalize()} |"
+                            )
+                    else:
+                        md.append(f"_No significant predictive {analyte_label.lower()}s found._")
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
                 continue
 
             if tool_id.endswith("get_cis_correlations"):
