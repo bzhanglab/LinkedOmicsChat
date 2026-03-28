@@ -2081,15 +2081,29 @@ export const ChatInterface = memo(function ChatInterface({
     }, [getViewport])
 
     // Scroll to bottom after history finishes loading.
-    // Two rAFs: first lets React paint the messages, second lets the browser
-    // finish layout so scrollHeight is correct.
+    // Observes the scroll *content* element (first child of viewport) with ResizeObserver
+    // for 2 seconds so lazy messages and images that expand after initial render re-trigger scroll.
     const prevHistoryLoadingRef = useRef(false)
     useEffect(() => {
         if (prevHistoryLoadingRef.current && !isHistoryLoading) {
-            requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom()))
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                scrollToBottom()
+                const vp = getViewport()
+                if (!vp) return
+                // The scroll content div is the direct child of the viewport
+                const content = vp.firstElementChild as HTMLElement | null
+                if (!content) return
+                const deadline = Date.now() + 2000
+                const ro = new ResizeObserver(() => {
+                    if (Date.now() > deadline) { ro.disconnect(); return }
+                    scrollToBottom()
+                })
+                ro.observe(content)
+                setTimeout(() => ro.disconnect(), 2000)
+            }))
         }
         prevHistoryLoadingRef.current = isHistoryLoading
-    }, [isHistoryLoading, scrollToBottom])
+    }, [isHistoryLoading, scrollToBottom, getViewport])
 
     // Load ALL remaining history pages at once (used when opening in-session search)
     const loadAllHistory = useCallback(async () => {
