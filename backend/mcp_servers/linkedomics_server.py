@@ -269,13 +269,7 @@ def search_targets(
     antigen: Optional[Literal["TSA", "TAA"]] = None,
     drug_name: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Search and filter the full LinkedOmics drug target index across all ~19,700 genes.
-
-    This tool queries the in-memory target index to answer population-level discovery questions.
-    Unlike get_target (which retrieves detailed data for a specific known gene), this tool helps
-    identify which genes meet certain therapeutic or biological criteria across all targets.
-    Unlike rank_targets (which scores and ranks druggable targets by attractiveness), this tool
-    performs simple filtering and returns all matches without ranking.
+    """Search and filter the full LinkedOmics drug target index across all ~19,700 genes by tier, family, antigen, or drug name.
 
     Use this tool when the query involves:
     - Discovering which genes belong to a specific tier or protein family
@@ -283,9 +277,6 @@ def search_targets(
     - Finding genes associated with a specific drug
     - Identifying tumor-associated or tumor-specific antigens
     - Comparing numbers of targets across families or tiers
-
-    Do NOT use this tool when the query asks for the "best", "most attractive", "top", or
-    "most promising" targets — use rank_targets instead.
 
     Use cases:
     - "Which kinases are FDA-approved oncology targets (T1)?"
@@ -295,23 +286,20 @@ def search_targets(
     - "How many tumor-associated antigens (TAA) are T1 targets?"
     - "Which enzyme targets have approved oncology drugs?"
 
+    Notes:
+    - For ranking by attractiveness, use rank_targets instead.
+    - Results are sorted by tier then gene name alphabetically.
+
     Args:
-        tier (str, optional): Filter by tier — one of "T1", "T2", "T3", "T4", "T5".
-            T1 = FDA-approved oncology, T2 = FDA-approved non-oncology,
-            T3 = investigational/clinical trials, T4 = pre-clinical/druggable,
-            T5 = surface proteins.
-        family (str, optional): Filter by protein family (case-insensitive substring match),
-            e.g. "Kinase", "Receptor", "Enzyme", "GPCR".
-        antigen (str, optional): Filter by antigen annotation (case-insensitive substring match),
-            e.g. "TSA" for tumor-specific antigens, "TAA" for tumor-associated antigens.
-        drug_name (str, optional): Filter to genes targeted by a specific drug
-            (case-insensitive substring match against the drug list).
+        tier (str, optional): Filter by tier — one of T1 (FDA-approved oncology), T2 (approved non-oncology),
+            T3 (investigational), T4 (pre-clinical/druggable), T5 (surface proteins).
+        family (str, optional): Filter by protein family, e.g. "Kinase", "Enzyme", "GPCR".
+        antigen (str, optional): Filter by antigen class — "TSA" (tumor-specific) or "TAA" (tumor-associated).
+        drug_name (str, optional): Filter to genes targeted by a specific drug (substring match).
 
     Returns:
-        dict with:
-            - "total": int — number of matching genes
-            - "genes": list[dict] — sorted by tier then gene name; each entry has:
-                gene, tier, family, drugs, antigen, count (LinkedOmics evidence score)
+        total (int): Number of matching genes.
+        genes (list): Sorted by tier then gene name; each entry has gene, tier, family, drugs, antigen, count (LinkedOmics evidence score).
     """
     results = []
     for gene, info in targets.items():
@@ -370,14 +358,7 @@ def rank_targets(
     antigen: Optional[Literal["TSA", "TAA"]] = None,
     top_n: int = 50,
 ) -> dict[str, Any]:
-    """Rank cancer therapeutic targets by attractiveness using a composite evidence score.
-
-    Scores each druggable target (T1–T3) across four dimensions:
-    - **Tier weight**: T1 (FDA-approved oncology) = 50 pts, T2 (approved non-oncology) = 30 pts,
-      T3 (investigational) = 10 pts.
-    - **Approved drug count**: +5 pts per FDA-approved oncology drug targeting this gene.
-    - **Antigen status**: TSA (tumor-specific antigen) = +10 pts, TAA (tumor-associated antigen) = +5 pts.
-    - **LinkedOmics evidence score**: ×2 pts (proteomic/genomic evidence from CPTAC cohorts).
+    """Rank druggable cancer targets (T1–T3) by therapeutic attractiveness using a composite score.
 
     Use this tool when the query is about:
     - Most attractive, promising, or high-priority therapeutic targets
@@ -390,18 +371,18 @@ def rank_targets(
     - "Which kinases are the best validated oncology targets?"
     - "Rank the top immune checkpoint or GPCR targets for cancer therapy"
 
+    Notes:
+    - Composite score = tier weight (T1=50, T2=30, T3=10) + approved drug count × 5 + antigen bonus (TSA=+10, TAA=+5) + LinkedOmics evidence score × 2.
+    - Only T1–T3 targets are included; T4/T5 are excluded.
+
     Args:
-        family (str, optional): Restrict to a protein family (case-insensitive substring),
-            e.g. "Kinase", "Receptor", "Enzyme", "GPCR".
-        antigen (str, optional): Restrict to antigen class, e.g. "TSA" or "TAA".
+        family (str, optional): Restrict to a protein family, e.g. "Kinase", "Enzyme", "GPCR".
+        antigen (str, optional): Restrict to antigen class — "TSA" (tumor-specific) or "TAA" (tumor-associated).
         top_n (int): Number of top-ranked targets to return (default 50, max 200).
 
     Returns:
-        dict with:
-            - "total": int — number of candidates scored
-            - "top_n": int — number returned
-            - "genes": list[dict] — ranked entries with gene, tier, family, drugs, antigen,
-              count (composite score), lo_score (raw LinkedOmics score)
+        total (int): Number of druggable candidates scored.
+        genes (list): Top-ranked entries sorted by composite score; each has gene, tier, family, drugs, antigen, count (composite score), lo_score (raw LinkedOmics score).
     """
     top_n = min(int(top_n), 200)
     candidates = []
