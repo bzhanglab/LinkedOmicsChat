@@ -683,8 +683,8 @@ async def get_visualization(viz_id: str):
         with open(json_path, encoding="utf-8") as f:
             json_data = _json.load(f)
 
-    # Drug target grid: all data stored in JSON sidecar
-    if json_data.get("type") == "drug_target_grid":
+    # Drug target grid or target search table: all data stored in JSON sidecar
+    if json_data.get("type") in ("drug_target_grid", "target_search_table"):
         return {"id": viz_id, **json_data}
 
     # Network plot: nodes + edges stored in JSON sidecar

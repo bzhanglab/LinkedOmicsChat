@@ -3129,10 +3129,19 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         for viz in visualizations:
             viz_type = viz.get("type")
             viz_id = viz.get("id")
-            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid"):
+            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid", "target_search_table"):
                 continue
             safe_viz_id = os.path.basename(str(viz_id))
             title = viz.get("title", "")
+
+            if viz_type == "target_search_table":
+                try:
+                    with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
+                        _json.dump({k: viz[k] for k in viz if k != "id"}, f)
+                    write_visualization_index(safe_viz_id, session_id, title)
+                except Exception:
+                    pass
+                continue
 
             if viz_type == "drug_target_grid":
                 try:
@@ -3234,16 +3243,29 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
     def _strip_viz_binary(response: Dict[str, Any]) -> Dict[str, Any]:
         """Return a copy of response with visualization binary data removed.
         We keep viz metadata (type, id, title) so the frontend knows plots existed,
-        but strip png_b64 / svg / csv to keep the DB row small.
+        but strip png_b64 / svg / csv / heavy grid data to keep the DB row small.
+        Data is served on-demand from disk via /api/v1/chat/visualizations/{id}.
         """
+        _STATIC_STRIP = frozenset(("png_b64", "svg", "csv", "nodes", "edges"))
+        # Fields to strip from drug_target_grid (full data is in JSON sidecar on disk)
+        _GRID_KEEP = frozenset(("id", "type", "title", "gene", "tier", "family"))
+        # Fields to strip from target_search_table (genes array can be thousands of items)
+        _TABLE_STRIP = frozenset(("genes",))
+
         vizs = response.get("visualizations")
         if not vizs:
             return response
+        slim_vizs = []
+        for viz in vizs:
+            vt = viz.get("type")
+            if vt == "drug_target_grid":
+                slim_vizs.append({k: v for k, v in viz.items() if k in _GRID_KEEP})
+            elif vt == "target_search_table":
+                slim_vizs.append({k: v for k, v in viz.items() if k not in _TABLE_STRIP})
+            else:
+                slim_vizs.append({k: v for k, v in viz.items() if k not in _STATIC_STRIP})
         slim = dict(response)
-        slim["visualizations"] = [
-            {k: v for k, v in viz.items() if k not in ("png_b64", "svg", "csv", "nodes", "edges")}
-            for viz in vizs
-        ]
+        slim["visualizations"] = slim_vizs
         return slim
 
     async def _update_session(
