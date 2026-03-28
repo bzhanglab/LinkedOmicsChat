@@ -70,7 +70,7 @@ export function RightPanel({
           <div>
             <div className="text-sm font-semibold">Context</div>
             <div className="text-xs text-muted-foreground">
-              Session / plots / results
+              Session / visualizations / results
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -107,13 +107,13 @@ export function RightPanel({
         <div className="p-4 space-y-6">
           <div>
             <div className="text-sm font-semibold mb-2">
-              Plots {visualizations.length > 0 ? `(${visualizations.length})` : images.length > 0 ? `(${images.length})` : ""}
+              Visualizations {visualizations.length > 0 ? `(${visualizations.length})` : images.length > 0 ? `(${images.length})` : ""}
             </div>
             {visualizations.length === 0 && images.length === 0 ? (
               <div className="text-xs text-muted-foreground">
                 {hiddenCount > 0
-                  ? `${hiddenCount} plot${hiddenCount > 1 ? 's' : ''} available in history. Click "Load details" in chat to view.`
-                  : "No plots in this session yet."}
+                  ? `${hiddenCount} visualization${hiddenCount > 1 ? 's' : ''} available in history. Click "Load details" in chat to view.`
+                  : "No visualizations in this session yet."}
               </div>
             ) : (
               <div className="space-y-4">
