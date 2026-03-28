@@ -1,7 +1,11 @@
 "use client"
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
 import type { TargetSearchVisualization } from "@/lib/api"
+import { useLazyVisible } from "@/hooks/useLazyVisible"
+import { getAuthToken } from "@/lib/auth"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 
 const TIER_LABELS: Record<string, string> = {
     T1: "Approved oncology",
@@ -29,8 +33,30 @@ interface Props {
 }
 
 export function TargetSearchTable({ visualization }: Props) {
-    const { title, total, genes, description, score_label } = visualization
-    const hasLoScore = genes.some(g => g.lo_score != null)
+    const { ref, isVisible } = useLazyVisible()
+
+    // Genes array is stripped from DB for historical messages; fetch on scroll.
+    const [resolvedViz, setResolvedViz] = useState<TargetSearchVisualization>(visualization)
+    const [fetchError, setFetchError] = useState(false)
+
+    useEffect(() => {
+        if (!isVisible) return
+        if (resolvedViz.genes?.length) return  // already have data
+        if (!visualization.id) return
+        const token = getAuthToken()
+        fetch(`${API_URL}/api/v1/chat/visualizations/${encodeURIComponent(visualization.id)}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+            .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+            .then(data => {
+                if (data?.type === "target_search_table") setResolvedViz({ ...visualization, ...data })
+                else setFetchError(true)
+            })
+            .catch(() => setFetchError(true))
+    }, [isVisible, resolvedViz.genes?.length, visualization])
+
+    const { title, total, genes, description, score_label } = resolvedViz
+    const hasLoScore = (genes ?? []).some(g => g.lo_score != null)
 
     const [page, setPage] = useState(1)
     const [sortKey, setSortKey] = useState<SortKey>("tier")
@@ -38,9 +64,10 @@ export function TargetSearchTable({ visualization }: Props) {
     const [search, setSearch] = useState("")
 
     const filtered = useMemo(() => {
+        const list = genes ?? []
         const q = search.trim().toLowerCase()
-        if (!q) return genes
-        return genes.filter(g =>
+        if (!q) return list
+        return list.filter(g =>
             g.gene.toLowerCase().includes(q) ||
             g.family.toLowerCase().includes(q) ||
             g.tier.toLowerCase().includes(q) ||
@@ -84,8 +111,24 @@ export function TargetSearchTable({ visualization }: Props) {
 
     const thCls = "px-3 py-2 text-left font-semibold text-xs text-foreground whitespace-nowrap select-none"
 
+    if (!isVisible) {
+        return (
+            <div ref={ref} className="rounded-lg border border-border bg-muted/20 my-2 h-32 flex items-center justify-center text-xs text-muted-foreground">
+                {visualization.title}
+            </div>
+        )
+    }
+
+    if (!genes?.length && !fetchError) {
+        return (
+            <div ref={ref} className="rounded-lg border border-border bg-muted/20 my-2 h-32 flex items-center justify-center text-xs text-muted-foreground animate-pulse">
+                Loading {visualization.title}…
+            </div>
+        )
+    }
+
     return (
-        <div className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden shadow-sm my-2">
+        <div ref={ref} className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden shadow-sm my-2">
             {/* Header */}
             <div className="px-3 py-2 border-b border-border bg-muted/30 flex items-center justify-between gap-3 flex-wrap">
                 <span className="text-sm font-semibold">{title}</span>

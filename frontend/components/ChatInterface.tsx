@@ -559,6 +559,7 @@ const MessagesPane = memo(function MessagesPane({
                             ref={el => { messageRefs.current[index] = el }}
                             onMouseEnter={() => setHoveredIndex(index)}
                             onMouseLeave={() => setHoveredIndex(null)}
+                            style={{ contentVisibility: "auto", containIntrinsicSize: "0 200px" }}
                             className={cn(
                                 "flex flex-col gap-1 w-full rounded-lg transition-colors duration-300",
                                 jumpHighlightTurnId != null && message.turnId === jumpHighlightTurnId

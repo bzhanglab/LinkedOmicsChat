@@ -3,6 +3,8 @@ import { useState, useCallback, useEffect, Fragment } from "react"
 import { createPortal } from "react-dom"
 import { X, ChevronDown, ChevronRight } from "lucide-react"
 import type { DrugTargetVisualization, DrugDetail } from "@/lib/api"
+import { useLazyVisible } from "@/hooks/useLazyVisible"
+import { getAuthToken } from "@/lib/auth"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 
@@ -44,7 +46,32 @@ interface Props {
 }
 
 export function DrugTargetGrid({ visualization }: Props) {
-    const { gene, tier, family, drugs, drug_tiers, drug_details, features, cohorts, presence, plot_map, table_map, hyper_sites, protein_cohorts } = visualization
+    const { ref, isVisible } = useLazyVisible()
+
+    // For historical messages, the DB only stores slim metadata (gene, tier, family).
+    // Fetch the full viz from disk when scrolled into view.
+    const [resolvedViz, setResolvedViz] = useState<DrugTargetVisualization>(
+        visualization.features ? visualization : visualization
+    )
+    const [fetchError, setFetchError] = useState(false)
+
+    useEffect(() => {
+        if (!isVisible) return
+        if (resolvedViz.features) return  // already have full data
+        if (!visualization.id) return
+        const token = getAuthToken()
+        fetch(`${API_URL}/api/v1/chat/visualizations/${encodeURIComponent(visualization.id)}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+            .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+            .then(data => {
+                if (data?.type === "drug_target_grid") setResolvedViz({ ...visualization, ...data })
+                else setFetchError(true)
+            })
+            .catch(() => setFetchError(true))
+    }, [isVisible, resolvedViz.features, visualization])
+
+    const { gene, tier, family, drugs, drug_tiers, drug_details, features, cohorts, presence, plot_map, table_map, hyper_sites, protein_cohorts } = resolvedViz
 
     // Whether the "Increased in tumor, summary" sub-rows are expanded
     const [summaryExpanded, setSummaryExpanded] = useState(false)
@@ -126,8 +153,28 @@ export function DrugTargetGrid({ visualization }: Props) {
 
     const hasAnyInteractive = Object.keys(plot_map || {}).length > 0 || Object.keys(table_map || {}).length > 0
 
+    if (!isVisible) {
+        return (
+            <div ref={ref} className="rounded-lg border border-border bg-muted/20 h-32 flex items-center justify-center text-xs text-muted-foreground">
+                Drug target profile: {visualization.gene}
+            </div>
+        )
+    }
+
+    if (!features || !cohorts || !presence) {
+        return fetchError ? (
+            <div ref={ref} className="rounded-lg border border-border bg-muted/20 h-16 flex items-center justify-center text-xs text-muted-foreground">
+                Drug target profile: {gene} (data unavailable)
+            </div>
+        ) : (
+            <div ref={ref} className="rounded-lg border border-border bg-muted/20 h-32 flex items-center justify-center text-xs text-muted-foreground animate-pulse">
+                Loading {visualization.gene}…
+            </div>
+        )
+    }
+
     return (
-        <div className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden">
+        <div ref={ref} className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden">
             {/* Header */}
             <div className="px-3 py-2 border-b border-border bg-muted/30">
                 <div className="flex items-center gap-2 flex-wrap">

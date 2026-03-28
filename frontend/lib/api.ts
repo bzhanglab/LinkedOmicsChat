@@ -228,10 +228,10 @@ export interface DrugTargetVisualization {
     drugs?: string
     drug_tiers?: string
     drug_details?: DrugDetail[]
-    features: Array<{ label: string; field: string; expandable?: boolean; parent_field?: string }>
-    cohorts: string[]
-    presence: boolean[][]
-    plot_map: Record<string, Record<string, string[]>>
+    features?: Array<{ label: string; field: string; expandable?: boolean; parent_field?: string }>
+    cohorts?: string[]
+    presence?: boolean[][]
+    plot_map?: Record<string, Record<string, string[]>>
     table_map?: Record<string, Record<string, Record<string, string | number | null>[]>>
     hyper_sites?: Array<{ site: string; cohorts: string[] }>
     protein_cohorts?: string[]
@@ -242,7 +242,7 @@ export interface TargetSearchVisualization {
     id: string
     title: string
     total: number
-    genes: Array<{
+    genes?: Array<{
         gene: string
         tier: string
         family: string
