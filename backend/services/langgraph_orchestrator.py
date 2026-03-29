@@ -346,9 +346,9 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
         "rank_targets":                lambda _: "https://targets.linkedomics.org",
         "clinical_trial_information":       lambda g: f"https://trials.linkedomics.org/api/table/gene/{g}",
         "batch_clinical_trial_information": lambda _: "https://trials.linkedomics.org",
-        "filter_clinical_trials":               lambda _: "https://trials.linkedomics.org/api/filter",
-        "meta_analysis_predictive_genes":       lambda _: "https://trials.linkedomics.org/api/table/treatment_gene",
-        "meta_analysis_predictive_gene_sets":   lambda _: "https://trials.linkedomics.org/api/table/treatment_gene_set",
+        "filter_clinical_trials":               lambda _: "https://trials.linkedomics.org/treatment_gene/",
+        "meta_analysis_predictive_genes":       lambda _: "https://trials.linkedomics.org/treatment_gene/",
+        "meta_analysis_predictive_gene_sets":   lambda _: "https://trials.linkedomics.org/treatment_gene_set/",
         "webgestalt":                       lambda _: "https://www.webgestalt.org",
         "search_literature":                lambda _: "https://pubmed.ncbi.nlm.nih.gov",
         "search_pubmed":                    lambda _: "https://pubmed.ncbi.nlm.nih.gov",
@@ -551,6 +551,11 @@ PLANNING RULES:
   - Top pathway biomarkers across studies: `meta_analysis_predictive_gene_sets`
   - Gene rankings within one study: `get_study_predictive_genes`
   - Pathway rankings within one study: `get_study_predictive_gene_sets`
+- IMPORTANT — drug name resolution: when the user specifies a broad treatment class, use the `treatment_category` parameter (not `drugs`) in `filter_clinical_trials`, `meta_analysis_predictive_genes`, and `meta_analysis_predictive_gene_sets`. Accepted values: "chemotherapy", "targeted", "combinations". The tool expands these to the correct drug substrings automatically.
+  - "chemotherapy" / "chemo" / "cytotoxic" → treatment_category="chemotherapy"
+  - "targeted therapy" / "targeted" / "immunotherapy" / "checkpoint inhibitor" → treatment_category="targeted"
+  - "combination" / "combo" / "combination therapy" → treatment_category="combinations"
+  - Specific drug name (e.g. "paclitaxel", "nivolumab") → use `drugs=["paclitaxel"]` as before
 - If the user refers to "it", "this", or "the gene", resolve that to the active gene: '{active_gene}'.
 - For platform questions like "what can you analyze?", "what cancer types are available?", or "what data do you have access to?", answer from the AVAILABLE DATA section and do not treat the active gene as the target.
 

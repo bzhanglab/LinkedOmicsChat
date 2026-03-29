@@ -3112,18 +3112,27 @@ Please provide a clear, informative response about this gene. Include the key de
                 status = parsed.get("status", "unavailable")
                 d = parsed.get("data") or {}
                 filters = d.get("filters", {})
+                def _filter_label(f: dict) -> str:
+                    cat = f.get("treatment_category", "")
+                    cancers_f = f.get("cancers", [])
+                    parts = []
+                    if cat:
+                        parts.append(f"treatment={cat}")
+                    elif f.get("drugs"):
+                        parts.append(f"drugs={f['drugs']}")
+                    if cancers_f:
+                        parts.append(f"cancers={cancers_f}")
+                    return ", ".join(parts) if parts else "all studies"
+
                 md = ["## Meta-analysis: Top Predictive Genes"]
                 if status == "no_studies":
-                    md.append(
-                        f"_No studies found matching filters: "
-                        f"drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}._"
-                    )
+                    md.append(f"_No studies found matching filters: {_filter_label(filters)}._")
                 elif status != "available":
                     md.append(f"_Status: {status}_")
                 else:
                     md.append(
                         f"**Studies analyzed:** {d.get('study_count',0)} | "
-                        f"**Filters:** drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}"
+                        f"**Filters:** {_filter_label(filters)}"
                     )
                     md.append("")
                     genes = d.get("top_genes", [])
@@ -3131,9 +3140,10 @@ Please provide a clear, informative response about this gene. Include the key de
                         md.append("| # | Gene | Studies | Avg AUROC | Meta-FDR | Direction |")
                         md.append("|---|---|---|---|---|---|")
                         for i, g in enumerate(genes, 1):
+                            fdr_str = g.get("meta_fdr_sci") or g.get("meta_fdr", "")
                             md.append(
                                 f"| {i} | {g.get('gene','')} | {g.get('datasets','')} "
-                                f"| {g.get('avg_auc','')} | {g.get('meta_fdr','')} "
+                                f"| {g.get('avg_auc','')} | {fdr_str} "
                                 f"| {g.get('direction','').capitalize()} |"
                             )
                     else:
@@ -3151,16 +3161,13 @@ Please provide a clear, informative response about this gene. Include the key de
                 filters = d.get("filters", {})
                 md = ["## Meta-analysis: Top Predictive Pathways"]
                 if status == "no_studies":
-                    md.append(
-                        f"_No studies found matching filters: "
-                        f"drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}._"
-                    )
+                    md.append(f"_No studies found matching filters: {_filter_label(filters)}._")
                 elif status != "available":
                     md.append(f"_Status: {status}_")
                 else:
                     md.append(
                         f"**Studies analyzed:** {d.get('study_count',0)} | "
-                        f"**Filters:** drugs={filters.get('drugs',[])} cancers={filters.get('cancers',[])}"
+                        f"**Filters:** {_filter_label(filters)}"
                     )
                     md.append("")
                     gene_sets = d.get("top_gene_sets", [])
@@ -3168,9 +3175,10 @@ Please provide a clear, informative response about this gene. Include the key de
                         md.append("| # | Pathway / Gene Set | Studies | Avg AUROC | Meta-FDR | Direction |")
                         md.append("|---|---|---|---|---|---|")
                         for i, g in enumerate(gene_sets, 1):
+                            fdr_str = g.get("meta_fdr_sci") or g.get("meta_fdr", "")
                             md.append(
                                 f"| {i} | {g.get('gene_set','')} | {g.get('datasets','')} "
-                                f"| {g.get('avg_auc','')} | {g.get('meta_fdr','')} "
+                                f"| {g.get('avg_auc','')} | {fdr_str} "
                                 f"| {g.get('direction','').capitalize()} |"
                             )
                     else:
