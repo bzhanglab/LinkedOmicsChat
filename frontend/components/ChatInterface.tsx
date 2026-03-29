@@ -374,11 +374,24 @@ function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void
                 {children}
             </th>
         ),
-        td: ({ node, children, ...props }: any) => (
-            <td className="px-3 py-2 text-sm text-foreground align-top" {...props}>
-                {children}
-            </td>
-        ),
+        td: ({ node, children, ...props }: any) => {
+            const text = typeof children === "string" ? children
+                : Array.isArray(children) && typeof children[0] === "string" ? children[0] : null
+            const isSensitive = text?.startsWith("↑")
+            const isResistant = text?.startsWith("↓")
+            return (
+                <td className="px-3 py-2 text-xs text-foreground align-top" {...props}>
+                    {(isSensitive || isResistant) ? (
+                        <span className={isSensitive
+                            ? "font-medium text-teal-600 dark:text-teal-400"
+                            : "font-medium text-rose-600 dark:text-rose-400"
+                        }>
+                            {children}
+                        </span>
+                    ) : children}
+                </td>
+            )
+        },
         blockquote: ({ node, children, ...props }: any) => {
             // Suppress inline source attribution blockquotes — sources are shown
             // as a consolidated footer below the message instead.
