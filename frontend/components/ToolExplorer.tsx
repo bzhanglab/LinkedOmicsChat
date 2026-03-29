@@ -843,8 +843,8 @@ const CATEGORIES: CategoryDef[] = [
     {
         label: "Clinical Trials",
         icon: ClipboardList,
-        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
-        borderColor: "border-violet-400 dark:border-violet-500",
+        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
+        borderColor: "border-rose-400 dark:border-rose-500",
         tools: ["clinical_trial_information", "batch_clinical_trial_information", "get_study_info", "gene_set_trial_information", "filter_clinical_trials", "meta_analysis_predictive_genes", "meta_analysis_predictive_gene_sets", "get_study_predictive_genes", "get_study_predictive_gene_sets"],
     },
     {
@@ -1215,62 +1215,62 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                 <h2 className="font-semibold text-gray-900 dark:text-white">Tool Explorer</h2>
             </div>
 
+            {/* Sticky search + pills — only shown on list view */}
+            {!selectedToolId && (
+                <div className="shrink-0 px-4 pt-4 pb-3 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 space-y-3">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Search tools..."
+                            className="w-full pl-9 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
+                            value={searchQuery}
+                            onChange={(e) => { setSearchQuery(e.target.value); setActiveCategory(null) }}
+                        />
+                    </div>
+                    {!searchQuery && (
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                onClick={() => setActiveCategory(null)}
+                                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                    activeCategory === null
+                                        ? "bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-800 dark:border-gray-100"
+                                        : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                                }`}
+                            >
+                                All
+                            </button>
+                            {CATEGORIES.filter(cat => {
+                                if (!tools) return false
+                                return Object.keys(tools).some(id => getCategoryForTool(id)?.label === cat.label)
+                            }).map(cat => {
+                                const Icon = cat.icon
+                                const isActive = activeCategory === cat.label
+                                return (
+                                    <button
+                                        key={cat.label}
+                                        onClick={() => setActiveCategory(isActive ? null : cat.label)}
+                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                            isActive
+                                                ? `${cat.color} ${cat.borderColor}`
+                                                : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                                        }`}
+                                    >
+                                        <Icon className="h-3 w-3" />
+                                        {cat.label}
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {error && (
                     <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-md text-sm flex items-center gap-2">
                         <AlertCircle className="h-4 w-4" />
                         {error}
-                    </div>
-                )}
-
-                {/* Search Bar + Category Pills */}
-                {!selectedToolId && (
-                    <div className="mb-4 space-y-3">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                            <input
-                                type="text"
-                                placeholder="Search tools..."
-                                className="w-full pl-9 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
-                                value={searchQuery}
-                                onChange={(e) => { setSearchQuery(e.target.value); setActiveCategory(null) }}
-                            />
-                        </div>
-                        {!searchQuery && (
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    onClick={() => setActiveCategory(null)}
-                                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                                        activeCategory === null
-                                            ? "bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-800 dark:border-gray-100"
-                                            : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
-                                    }`}
-                                >
-                                    All
-                                </button>
-                                {CATEGORIES.filter(cat => {
-                                    if (!tools) return false
-                                    return Object.keys(tools).some(id => getCategoryForTool(id)?.label === cat.label)
-                                }).map(cat => {
-                                    const Icon = cat.icon
-                                    const isActive = activeCategory === cat.label
-                                    return (
-                                        <button
-                                            key={cat.label}
-                                            onClick={() => setActiveCategory(isActive ? null : cat.label)}
-                                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                                                isActive
-                                                    ? `${cat.color} ${cat.borderColor}`
-                                                    : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
-                                            }`}
-                                        >
-                                            <Icon className="h-3 w-3" />
-                                            {cat.label}
-                                        </button>
-                                    )
-                                })}
-                            </div>
-                        )}
                     </div>
                 )}
 
