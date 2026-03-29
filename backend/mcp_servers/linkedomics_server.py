@@ -975,12 +975,79 @@ def gene_set_trial_information(gene_set: str) -> dict[str, Any]:
     return {"status": "available", "gene_set": gs, "data": get_top_n_trials(req.json())}
 
 
+# Treatment category → drug substrings used by the LinkedOmics Trials filter API.
+# Derived from the website's TreatmentSelect component (hardcoded in the frontend JS).
+# The filter API does case-insensitive substring matching on study treatment strings.
+TREATMENT_CATEGORIES: dict[str, list[str]] = {
+    "targeted": [
+        "trastuzumab", "pertuzumab", "trastuzumab-emtansine", "rituximab",
+        "ipilimumab", "atezolizumab", "nivolumab", "pembrolizumab", "bevacizumab",
+        "lapatinib", "neratinib", "ganetespib", "ganitumab", "trebananib",
+        "sunitinib", "veliparib", "bortezomib", "MK-2206",
+        "letrozole", "dexamethasone", "thalidomide",
+    ],
+    "chemotherapy": [
+        "paclitaxel", "docetaxel", "taxane",
+        "doxorubicin", "epirubicin", "anthracycline",
+        "fluorouracil", "capecitabine",
+        "cyclophosphamide", "chlorambucil",
+        "carboplatin", "platinum",
+        "ixabepilone", "thiotepa",
+    ],
+    "combinations": [
+        # chemo + targeted combination regimens in the database
+        "paclitaxel,doxorubicin,cyclophosphamide,trastuzumab",
+        "paclitaxel,doxorubicin,cyclophosphamide,pertuzumab",
+        "paclitaxel,doxorubicin,cyclophosphamide,MK-2206",
+        "paclitaxel,doxorubicin,cyclophosphamide,ganetespib",
+        "paclitaxel,doxorubicin,cyclophosphamide,ganitumab",
+        "paclitaxel,doxorubicin,cyclophosphamide,neratinib",
+        "paclitaxel,doxorubicin,cyclophosphamide,pembrolizumab",
+        "paclitaxel,doxorubicin,cyclophosphamide,trebananib",
+        "paclitaxel,doxorubicin,cyclophosphamide,veliparib",
+        "paclitaxel,fluorouracil,epidoxorubicin,cyclophosphamide,lapatinib",
+        "paclitaxel,fluorouracil,epidoxorubicin,cyclophosphamide,trastuzumab",
+        "taxane,anthracycline,cyclophosphamide,trastuzumab",
+        "taxane,fluorouracil,epirubicin,cyclophosphamide,trastuzumab",
+        "carboplatin,paclitaxel,atezolizumab",
+        "atezolizumab,bevacizumab",
+        "nivolumab,ipilimumab",
+        "pembrolizumab,ipilimumab",
+        "pembrolizumab,nivolumab",
+        "rituximab,chlorambucil",
+        "bortezomib,thalidomide,dexamethasone",
+    ],
+}
+
+def _resolve_treatment_category(
+    treatment_category: Optional[str],
+    drugs: Optional[list[str]],
+) -> list[str]:
+    """Expand a treatment category name to its constituent drug strings."""
+    if not treatment_category:
+        return drugs or []
+    key = treatment_category.strip().lower()
+    # Accept aliases
+    if key in ("immunotherapy", "checkpoint inhibitor", "immune checkpoint"):
+        key = "targeted"
+    elif key in ("chemo", "cytotoxic"):
+        key = "chemotherapy"
+    elif key in ("combo", "combination therapy"):
+        key = "combinations"
+    resolved = TREATMENT_CATEGORIES.get(key)
+    if resolved is None:
+        # Unknown category — fall back to treating the string as a drug name
+        return [treatment_category]
+    return resolved
+
+
 @mcp.tool()
 def filter_clinical_trials(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
+    treatment_category: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Find clinical trial studies matching a specific drug and/or cancer type.
+    """Find clinical trial studies matching a specific drug, treatment category, and/or cancer type.
 
     Use this tool when:
     - The user wants to know which studies exist for a drug/cancer combination
@@ -988,16 +1055,23 @@ def filter_clinical_trials(
 
     Use cases:
     - "Which studies tested nivolumab in melanoma?"
-    - "How many breast cancer tamoxifen studies are in the database?"
+    - "How many breast cancer chemotherapy studies are in the database?"
+    - "What targeted therapy studies exist for ovarian cancer?"
 
     Args:
-        drugs (list[str]): Drug names to filter by (e.g., ["tamoxifen"]).
+        drugs (list[str]): Specific drug names to filter by (e.g., ["paclitaxel"]).
         cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+            Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
+            Kidney, Bladder, Gastric, Glioblastoma.
+        treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
+            "combinations". Expands to all matching drug substrings automatically.
+            Use instead of `drugs` when the user specifies a category rather than a specific drug.
 
     Returns:
         dict: Matching study list, count, and cancer types present.
     """
-    body: dict[str, Any] = {"drugs": drugs or [], "cancers": cancers or []}
+    resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
+    body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
     req = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
     if req.status_code != 200:
         return {"status": "unavailable", "data": {}}
@@ -1008,7 +1082,7 @@ def filter_clinical_trials(
             "study_list": r.get("study_list", []),
             "study_count": r.get("length", 0),
             "possible_cancers": r.get("possible_cancers", []),
-            "filters_applied": body,
+            "filters_applied": {**body, **({"treatment_category": treatment_category} if treatment_category else {})},
         },
     }
 
@@ -1017,6 +1091,7 @@ def filter_clinical_trials(
 def meta_analysis_predictive_genes(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
+    treatment_category: Optional[str] = None,
     top_n: int = 20,
 ) -> dict[str, Any]:
     """Run a meta-analysis to find which genes best predict drug response across clinical studies.
@@ -1032,10 +1107,17 @@ def meta_analysis_predictive_genes(
     - "Which genes best predict paclitaxel response in breast cancer?"
     - "What are the top biomarkers for platinum resistance in ovarian cancer?"
     - "Find the strongest predictors of nivolumab sensitivity across all studies."
+    - "Which genes predict chemotherapy response?" → use treatment_category="chemotherapy"
+    - "Top gene predictors of targeted therapy?" → use treatment_category="targeted"
 
     Args:
-        drugs (list[str]): Drug names to filter by (e.g., ["paclitaxel"]).
+        drugs (list[str]): Specific drug names to filter by (e.g., ["paclitaxel"]).
         cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+            Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
+            Kidney, Bladder, Gastric, Glioblastoma.
+        treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
+            "combinations". Expands to all matching drug substrings automatically.
+            Use instead of `drugs` when the user specifies a category rather than a specific drug.
         top_n (int): Number of top genes to return (default 20).
 
     Returns:
@@ -1043,13 +1125,15 @@ def meta_analysis_predictive_genes(
             "datasets" = number of studies where the gene was significant.
             "avg_auc" = average AUROC across studies (>0.5 = sensitive, <0.5 = resistant).
     """
-    body: dict[str, Any] = {"drugs": drugs or [], "cancers": cancers or []}
+    resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
+    body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
+    filters_display: dict[str, Any] = {**body, **({"treatment_category": treatment_category} if treatment_category else {})}
     fr = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
     if fr.status_code != 200:
         return {"status": "unavailable", "data": {}}
     study_list = fr.json().get("study_list", [])
     if not study_list:
-        return {"status": "no_studies", "data": {"filters": body, "study_count": 0}}
+        return {"status": "no_studies", "data": {"filters": filters_display, "study_count": 0}}
 
     mr = requests.post(
         "https://trials.linkedomics.org/api/table/treatment_gene",
@@ -1069,14 +1153,15 @@ def meta_analysis_predictive_genes(
         genes.append({
             "gene": r.get("analyte", ""),
             "datasets": r.get("datasets", 0),
-            "meta_fdr": float(r.get("fdr", 1)),
+            "meta_fdr": round(abs(float(r.get("fdr", 1))), 3),
+            "meta_fdr_sci": f"{abs(float(r.get('fdr', 1))):.3e}",
             "avg_auc": round(avg_auc, 3),
             "direction": "sensitive" if avg_auc > 0.5 else "resistant",
         })
     return {
         "status": "available",
         "data": {
-            "filters": body,
+            "filters": filters_display,
             "study_count": len(study_list),
             "study_list": study_list,
             "top_genes": genes,
@@ -1088,6 +1173,7 @@ def meta_analysis_predictive_genes(
 def meta_analysis_predictive_gene_sets(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
+    treatment_category: Optional[str] = None,
     top_n: int = 20,
 ) -> dict[str, Any]:
     """Run a meta-analysis to find which gene sets / pathways best predict drug response across clinical studies.
@@ -1103,10 +1189,17 @@ def meta_analysis_predictive_gene_sets(
     - "Which pathways best predict paclitaxel response in breast cancer?"
     - "What biological processes predict platinum resistance in ovarian cancer?"
     - "Find the top pathway predictors of nivolumab sensitivity across all studies."
+    - "Which pathways predict chemotherapy response?" → use treatment_category="chemotherapy"
+    - "Top pathway predictors of targeted therapy?" → use treatment_category="targeted"
 
     Args:
-        drugs (list[str]): Drug names to filter by (e.g., ["paclitaxel"]).
+        drugs (list[str]): Specific drug names to filter by (e.g., ["paclitaxel"]).
         cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+            Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
+            Kidney, Bladder, Gastric, Glioblastoma.
+        treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
+            "combinations". Expands to all matching drug substrings automatically.
+            Use instead of `drugs` when the user specifies a category rather than a specific drug.
         top_n (int): Number of top gene sets to return (default 20).
 
     Returns:
@@ -1114,13 +1207,15 @@ def meta_analysis_predictive_gene_sets(
             "datasets" = number of studies where the gene set was significant.
             "avg_auc" = average AUROC across studies (>0.5 = resistant, <0.5 = sensitive).
     """
-    body: dict[str, Any] = {"drugs": drugs or [], "cancers": cancers or []}
+    resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
+    body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
+    filters_display: dict[str, Any] = {**body, **({"treatment_category": treatment_category} if treatment_category else {})}
     fr = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
     if fr.status_code != 200:
         return {"status": "unavailable", "data": {}}
     study_list = fr.json().get("study_list", [])
     if not study_list:
-        return {"status": "no_studies", "data": {"filters": body, "study_count": 0}}
+        return {"status": "no_studies", "data": {"filters": filters_display, "study_count": 0}}
 
     mr = requests.post(
         "https://trials.linkedomics.org/api/table/treatment_gene_set",
@@ -1140,14 +1235,15 @@ def meta_analysis_predictive_gene_sets(
         gene_sets.append({
             "gene_set": r.get("analyte", ""),
             "datasets": r.get("datasets", 0),
-            "meta_fdr": float(r.get("fdr", 1)),
+            "meta_fdr": round(abs(float(r.get("fdr", 1))), 3),
+            "meta_fdr_sci": f"{abs(float(r.get('fdr', 1))):.3e}",
             "avg_auc": round(avg_auc, 3),
             "direction": "sensitive" if avg_auc < 0.5 else "resistant",
         })
     return {
         "status": "available",
         "data": {
-            "filters": body,
+            "filters": filters_display,
             "study_count": len(study_list),
             "study_list": study_list,
             "top_gene_sets": gene_sets,
