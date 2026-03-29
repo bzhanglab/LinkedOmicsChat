@@ -1156,7 +1156,7 @@ def meta_analysis_predictive_genes(
             "meta_fdr": round(abs(float(r.get("fdr", 1))), 3),
             "meta_fdr_sci": f"{abs(float(r.get('fdr', 1))):.3e}",
             "avg_auc": round(avg_auc, 3),
-            "direction": "sensitive" if avg_auc > 0.5 else "resistant",
+            "direction": "sensitive" if avg_auc < 0.5 else "resistant",
         })
     return {
         "status": "available",
