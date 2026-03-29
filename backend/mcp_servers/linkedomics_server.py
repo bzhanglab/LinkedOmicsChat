@@ -1092,7 +1092,7 @@ def meta_analysis_predictive_genes(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
-    top_n: int = 20,
+    top_n: int = 50,
 ) -> dict[str, Any]:
     """Run a meta-analysis to find which genes best predict drug response across clinical studies.
 
@@ -1145,7 +1145,7 @@ def meta_analysis_predictive_genes(
     rows = mr.json()
 
     rows_sorted = sorted(
-        rows, key=lambda r: abs(float(r.get("sorted_fdr", 0))), reverse=True
+        rows, key=lambda r: abs(float(r.get("avg_auc", 0.5)) - 0.5), reverse=True
     )[:top_n]
     genes = []
     for r in rows_sorted:
@@ -1227,7 +1227,7 @@ def meta_analysis_predictive_gene_sets(
     rows = mr.json()
 
     rows_sorted = sorted(
-        rows, key=lambda r: abs(float(r.get("sorted_fdr", 0))), reverse=True
+        rows, key=lambda r: abs(float(r.get("avg_auc", 0.5)) - 0.5), reverse=True
     )[:top_n]
     gene_sets = []
     for r in rows_sorted:

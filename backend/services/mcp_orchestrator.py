@@ -826,6 +826,74 @@ def _generate_trials_auroc_chart(data: dict, label: str) -> Optional[dict]:
         return None
 
 
+def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Optional[dict]:
+    """Generate a horizontal AUROC bar chart for meta-analysis results (genes or gene sets).
+
+    Items are ranked by |avg_auc - 0.5|. Teal = sensitive (AUROC<0.5), orange = resistant (AUROC>0.5).
+    """
+    try:
+        import io, base64
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not items:
+            return None
+
+        # Show top 20 for readability
+        items_plot = items[:20]
+        labels = [str(g.get(label_key, ""))[:40] for g in items_plot]
+        aurocs = [float(g.get("avg_auc", 0.5)) for g in items_plot]
+        colors = ["#3b82f6" if a < 0.5 else "#f97316" for a in aurocs]
+
+        # Sort by auroc ascending (sensitive at top)
+        order = sorted(range(len(aurocs)), key=lambda i: aurocs[i])
+        labels = [labels[i] for i in order]
+        aurocs = [aurocs[i] for i in order]
+        colors = [colors[i] for i in order]
+
+        fig_h = max(3.5, len(labels) * 0.4 + 1.2)
+        fig, ax = plt.subplots(figsize=(9, fig_h))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        y_pos = np.arange(len(labels))
+        bars = ax.barh(y_pos, aurocs, height=0.65, color=colors, edgecolor="none")
+        ax.axvline(0.5, color="#666666", linewidth=1.0, linestyle="--")
+
+        for bar, val in zip(bars, aurocs):
+            ax.text(bar.get_width() + 0.008, bar.get_y() + bar.get_height() / 2,
+                    f"{val:.3f}", va="center", ha="left", fontsize=7.5, color="#333333")
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(labels, fontsize=8)
+        ax.set_xlim(0.0, 1.15)
+        ax.set_xlabel("Avg AUROC", fontsize=9)
+        ax.set_title(title, fontsize=11, fontweight="bold", pad=8)
+        ax.tick_params(axis="x", labelsize=8)
+
+        from matplotlib.patches import Patch
+        ax.legend(handles=[
+            Patch(facecolor="#3b82f6", label="Sensitive (AUROC < 0.5)"),
+            Patch(facecolor="#f97316", label="Resistant (AUROC > 0.5)"),
+        ], loc="lower right", fontsize=8, frameon=False)
+
+        fig.tight_layout()
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        png_buf.seek(0)
+        png_b64 = base64.b64encode(png_buf.read()).decode()
+        plt.close(fig)
+
+        return {"title": title, "png_b64": png_b64, "type": "static_plot"}
+    except Exception as e:
+        logger.warning(f"[Meta-analysis chart] Failed: {e}")
+        return None
+
+
 def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
     """Generate a single grouped horizontal bar chart for cis-correlations.
 
@@ -3124,6 +3192,9 @@ Please provide a clear, informative response about this gene. Include the key de
                         parts.append(f"cancers={cancers_f}")
                     return ", ".join(parts) if parts else "all studies"
 
+                def _dir_label(d: str) -> str:
+                    return "↑ Sensitive" if d == "sensitive" else "↓ Resistant"
+
                 md = ["## Meta-analysis: Top Predictive Genes"]
                 if status == "no_studies":
                     md.append(f"_No studies found matching filters: {_filter_label(filters)}._")
@@ -3137,6 +3208,14 @@ Please provide a clear, informative response about this gene. Include the key de
                     md.append("")
                     genes = d.get("top_genes", [])
                     if genes:
+                        chart = _generate_meta_analysis_chart(
+                            genes, "gene",
+                            f"Top Predictive Genes — {_filter_label(filters)}"
+                        )
+                        if chart:
+                            viz_id = _uuid.uuid4().hex
+                            _visualizations.append({"type": "static_plot", "id": viz_id, **chart})
+                            md.append(f"[PLOT:{viz_id}]\n")
                         md.append("| # | Gene | Studies | Avg AUROC | Meta-FDR | Direction |")
                         md.append("|---|---|---|---|---|---|")
                         for i, g in enumerate(genes, 1):
@@ -3144,7 +3223,7 @@ Please provide a clear, informative response about this gene. Include the key de
                             md.append(
                                 f"| {i} | {g.get('gene','')} | {g.get('datasets','')} "
                                 f"| {g.get('avg_auc','')} | {fdr_str} "
-                                f"| {g.get('direction','').capitalize()} |"
+                                f"| {_dir_label(g.get('direction',''))} |"
                             )
                     else:
                         md.append("_No significant predictive genes found._")
@@ -3172,6 +3251,14 @@ Please provide a clear, informative response about this gene. Include the key de
                     md.append("")
                     gene_sets = d.get("top_gene_sets", [])
                     if gene_sets:
+                        chart = _generate_meta_analysis_chart(
+                            gene_sets, "gene_set",
+                            f"Top Predictive Pathways — {_filter_label(filters)}"
+                        )
+                        if chart:
+                            viz_id = _uuid.uuid4().hex
+                            _visualizations.append({"type": "static_plot", "id": viz_id, **chart})
+                            md.append(f"[PLOT:{viz_id}]\n")
                         md.append("| # | Pathway / Gene Set | Studies | Avg AUROC | Meta-FDR | Direction |")
                         md.append("|---|---|---|---|---|---|")
                         for i, g in enumerate(gene_sets, 1):
@@ -3179,7 +3266,7 @@ Please provide a clear, informative response about this gene. Include the key de
                             md.append(
                                 f"| {i} | {g.get('gene_set','')} | {g.get('datasets','')} "
                                 f"| {g.get('avg_auc','')} | {fdr_str} "
-                                f"| {g.get('direction','').capitalize()} |"
+                                f"| {_dir_label(g.get('direction',''))} |"
                             )
                     else:
                         md.append("_No significant predictive pathways found._")

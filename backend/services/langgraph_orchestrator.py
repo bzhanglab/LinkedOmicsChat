@@ -543,14 +543,16 @@ PLANNING RULES:
 - For survival questions: call only survival tools (`overall_survival_per_cancer`, `tcga_survival_analysis`). Do NOT call `cancer_gene_expression` or `clinical_trial_information` unless the user explicitly asks about expression levels or drugs/treatments.
 - For expression questions: call only expression tools (`cancer_gene_expression`). Do NOT call survival or clinical trial tools unless explicitly asked.
 - Clinical trial tools are only relevant when the user asks about drugs, treatments, or clinical trials — never call them for survival or expression queries. Use the right tool for the question:
-  - Gene → drug sensitivity/resistance: `clinical_trial_information`
-  - Pathway → drug sensitivity/resistance: `gene_set_trial_information`
+  - Single gene → which drugs/studies predict response: `clinical_trial_information`
+  - Multiple genes → use `batch_clinical_trial_information` instead of calling `clinical_trial_information` repeatedly
+  - Pathway/gene set → drug sensitivity/resistance: `gene_set_trial_information`
   - Study details/abstract: `get_study_info`
   - Which studies exist for a drug/cancer: `filter_clinical_trials`
-  - Top gene biomarkers across studies: `meta_analysis_predictive_genes`
-  - Top pathway biomarkers across studies: `meta_analysis_predictive_gene_sets`
-  - Gene rankings within one study: `get_study_predictive_genes`
-  - Pathway rankings within one study: `get_study_predictive_gene_sets`
+  - Top gene biomarkers across studies (treatment-centric): `meta_analysis_predictive_genes`
+  - Top pathway biomarkers across studies (treatment-centric): `meta_analysis_predictive_gene_sets`
+  - Gene rankings within one specific study: `get_study_predictive_genes`
+  - Pathway rankings within one specific study: `get_study_predictive_gene_sets`
+  - Workflow — study-specific analysis: call `filter_clinical_trials` first to find matching studies, then `get_study_predictive_genes` or `get_study_predictive_gene_sets` on a specific study ID, then optionally `get_study_info` for context
 - IMPORTANT — drug name resolution: when the user specifies a broad treatment class, use the `treatment_category` parameter (not `drugs`) in `filter_clinical_trials`, `meta_analysis_predictive_genes`, and `meta_analysis_predictive_gene_sets`. Accepted values: "chemotherapy", "targeted", "combinations". The tool expands these to the correct drug substrings automatically.
   - "chemotherapy" / "chemo" / "cytotoxic" → treatment_category="chemotherapy"
   - "targeted therapy" / "targeted" / "immunotherapy" / "checkpoint inhibitor" → treatment_category="targeted"
