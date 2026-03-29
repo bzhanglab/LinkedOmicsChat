@@ -1,7 +1,7 @@
 "use client"
 
-import { ArrowRight, Activity, Network, Pill, TrendingUp, FlaskConical, Dna } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { useState } from "react"
+import { ArrowRight, Activity, Network, Pill, TrendingUp, FlaskConical, Dna, BarChart2, HeartPulse, ClipboardList } from "lucide-react"
 
 interface UseCase {
     id: string
@@ -22,7 +22,7 @@ const USE_CASES: UseCase[] = [
         exampleQuery: "Is EGFR overexpressed at the protein level in lung cancer compared to normal tissue?",
         tools: ["cancer_gene_expression"],
         category: "Expression & Biomarkers",
-        icon: Activity,
+        icon: BarChart2,
     },
     {
         id: "survival-biomarker",
@@ -31,7 +31,7 @@ const USE_CASES: UseCase[] = [
         exampleQuery: "Does high ESR1 expression predict better or worse survival in breast cancer?",
         tools: ["overall_survival_per_cancer", "cancer_gene_expression"],
         category: "Expression & Biomarkers",
-        icon: TrendingUp,
+        icon: HeartPulse,
     },
     {
         id: "multi-omics-regulation",
@@ -61,6 +61,43 @@ const USE_CASES: UseCase[] = [
         category: "Drug & Clinical",
         icon: FlaskConical,
     },
+    // Clinical Trials
+    {
+        id: "chemotherapy-biomarkers",
+        title: "Chemotherapy Biomarker Discovery",
+        description: "Run a meta-analysis across all chemotherapy clinical studies to identify which genes most strongly predict sensitivity or resistance.",
+        exampleQuery: "Which genes are most predictive of chemotherapy response across all studies?",
+        tools: ["meta_analysis_predictive_genes"],
+        category: "Clinical Trials",
+        icon: FlaskConical,
+    },
+    {
+        id: "immunotherapy-pathways",
+        title: "Immunotherapy Pathway Predictors",
+        description: "Identify biological pathways whose activity predicts response to checkpoint inhibitor immunotherapy across multiple clinical studies.",
+        exampleQuery: "Which pathways predict immunotherapy sensitivity across clinical trials?",
+        tools: ["meta_analysis_predictive_gene_sets"],
+        category: "Clinical Trials",
+        icon: Activity,
+    },
+    {
+        id: "study-gene-ranking",
+        title: "Per-Study Gene Rankings",
+        description: "Get the ranked list of genes predicting treatment response within a specific clinical study, and look up its details and abstract.",
+        exampleQuery: "What genes best predict paclitaxel response in study GSE25066, and what was that study about?",
+        tools: ["get_study_predictive_genes", "get_study_info"],
+        category: "Clinical Trials",
+        icon: TrendingUp,
+    },
+    {
+        id: "filter-trials",
+        title: "Clinical Study Discovery",
+        description: "Find which clinical studies in the database tested a specific drug or treatment class in a given cancer type.",
+        exampleQuery: "Which studies tested nivolumab in melanoma?",
+        tools: ["filter_clinical_trials"],
+        category: "Clinical Trials",
+        icon: ClipboardList,
+    },
     // Functional Networks
     {
         id: "functional-network",
@@ -82,22 +119,39 @@ const USE_CASES: UseCase[] = [
     },
 ]
 
-const CATEGORIES = ["Expression & Biomarkers", "Drug & Clinical", "Functional Networks"]
-
-const CATEGORY_COLORS: Record<string, { badge: string; line: string }> = {
-    "Expression & Biomarkers": {
-        badge: "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300",
-        line: "bg-teal-200 dark:bg-teal-800",
-    },
-    "Drug & Clinical": {
-        badge: "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
-        line: "bg-violet-200 dark:bg-violet-800",
-    },
-    "Functional Networks": {
-        badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-        line: "bg-emerald-200 dark:bg-emerald-800",
-    },
+interface CategoryDef {
+    label: string
+    icon: React.ElementType
+    color: string
+    borderColor: string
 }
+
+const CATEGORIES: CategoryDef[] = [
+    {
+        label: "Expression & Biomarkers",
+        icon: BarChart2,
+        color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
+        borderColor: "border-teal-400 dark:border-teal-500",
+    },
+    {
+        label: "Drug & Clinical",
+        icon: Pill,
+        color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
+        borderColor: "border-amber-400 dark:border-amber-500",
+    },
+    {
+        label: "Clinical Trials",
+        icon: ClipboardList,
+        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
+        borderColor: "border-rose-400 dark:border-rose-500",
+    },
+    {
+        label: "Functional Networks",
+        icon: Network,
+        color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
+        borderColor: "border-blue-400 dark:border-blue-500",
+    },
+]
 
 const TOOL_LABELS: Record<string, string> = {
     cancer_gene_expression: "Expression",
@@ -113,10 +167,63 @@ const TOOL_LABELS: Record<string, string> = {
     filter_clinical_trials: "Trial Filter",
     meta_analysis_predictive_genes: "Gene Meta-analysis",
     meta_analysis_predictive_gene_sets: "Pathway Meta-analysis",
-    get_study_predictive_genes: "Study Genes",
-    get_study_predictive_gene_sets: "Study Pathways",
+    get_study_predictive_genes: "Study Gene Rankings",
+    get_study_predictive_gene_sets: "Study Pathway Rankings",
     funmap_neighborhood: "FunMap Network",
     webgestalt: "Pathway Enrichment",
+}
+
+function UseCaseCard({ uc, catDef, onStartChat }: {
+    uc: UseCase
+    catDef: CategoryDef | undefined
+    onStartChat: (q: string) => void
+}) {
+    const Icon = uc.icon
+    const color = catDef?.color ?? "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400"
+    return (
+        <button
+            onClick={() => onStartChat(uc.exampleQuery)}
+            className="group flex flex-col items-start text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50/50 dark:hover:bg-teal-900/20 hover:shadow-md transition-all duration-200"
+        >
+            {/* Icon + title */}
+            <div className="flex items-center gap-3 w-full mb-2">
+                <div className={`h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
+                    <Icon className="h-4 w-4" />
+                </div>
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors text-sm leading-snug">
+                    {uc.title}
+                </h3>
+            </div>
+
+            {/* Description */}
+            <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3 line-clamp-2">
+                {uc.description}
+            </p>
+
+            {/* Tool badges */}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+                {uc.tools.map((tool) => (
+                    <span
+                        key={tool}
+                        className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 font-mono"
+                    >
+                        {TOOL_LABELS[tool] ?? tool}
+                    </span>
+                ))}
+            </div>
+
+            {/* Example query */}
+            <p className="text-xs text-gray-400 dark:text-gray-500 italic line-clamp-2 mb-3">
+                &ldquo;{uc.exampleQuery}&rdquo;
+            </p>
+
+            {/* CTA */}
+            <div className="flex items-center gap-1.5 text-xs font-medium text-teal-500 dark:text-teal-400 group-hover:text-teal-600 dark:group-hover:text-teal-300 transition-colors mt-auto">
+                Try this query
+                <ArrowRight className="w-3.5 h-3.5" />
+            </div>
+        </button>
+    )
 }
 
 interface UseCasesPanelProps {
@@ -124,95 +231,96 @@ interface UseCasesPanelProps {
 }
 
 export function UseCasesPanel({ onStartChat }: UseCasesPanelProps) {
+    const [activeCategory, setActiveCategory] = useState<string | null>(null)
+
+    const filtered = activeCategory
+        ? USE_CASES.filter((uc) => uc.category === activeCategory)
+        : USE_CASES
+
+    const activeCatDef = CATEGORIES.find((c) => c.label === activeCategory)
+
     return (
-        <div className="flex flex-col h-full overflow-y-auto bg-background">
+        <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
             {/* Header */}
-            <div className="px-8 pt-8 pb-6 border-b border-border">
-                <h1 className="text-2xl font-semibold text-foreground">Use Cases</h1>
-                <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
-                    Example analyses you can run using the chat interface. Click any use case to try it — the query will be loaded into the chat automatically.
-                </p>
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
+                <ArrowRight className="h-5 w-5 text-teal-500" />
+                <h2 className="font-semibold text-gray-900 dark:text-white">Use Cases</h2>
             </div>
 
-            {/* Use case groups */}
-            <div className="px-8 py-6 space-y-10">
-                {CATEGORIES.map((category) => {
-                    const items = USE_CASES.filter((uc) => uc.category === category)
-                    return (
-                        <section key={category}>
-                            <div className="flex items-center gap-3 mb-4">
-                                <span className={cn(
-                                    "text-xs font-bold tracking-wide px-3 py-1 rounded-full",
-                                    CATEGORY_COLORS[category]?.badge
-                                )}>
-                                    {category}
-                                </span>
-                                <div className={cn("flex-1 h-px", CATEGORY_COLORS[category]?.line)} />
-                            </div>
-                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                                {items.map((uc) => {
-                                    const Icon = uc.icon
-                                    return (
-                                        <div
-                                            key={uc.id}
-                                            className="group flex flex-col bg-card border border-border rounded-xl p-5 hover:border-primary/50 hover:shadow-sm transition-all"
-                                        >
-                                            {/* Icon + title */}
-                                            <div className="flex items-start gap-3 mb-3">
-                                                <div className="mt-0.5 p-2 rounded-lg bg-primary/10 text-primary shrink-0">
-                                                    <Icon className="w-4 h-4" />
-                                                </div>
-                                                <h3 className="font-semibold text-foreground text-sm leading-snug">
-                                                    {uc.title}
-                                                </h3>
-                                            </div>
+            {/* Sticky category pills */}
+            <div className="shrink-0 px-4 py-3 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        onClick={() => setActiveCategory(null)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                            activeCategory === null
+                                ? "bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-800 dark:border-gray-100"
+                                : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                        }`}
+                    >
+                        All
+                    </button>
+                    {CATEGORIES.map((cat) => {
+                        const Icon = cat.icon
+                        const isActive = activeCategory === cat.label
+                        return (
+                            <button
+                                key={cat.label}
+                                onClick={() => setActiveCategory(isActive ? null : cat.label)}
+                                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                    isActive
+                                        ? `${cat.color} ${cat.borderColor}`
+                                        : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                                }`}
+                            >
+                                <Icon className="h-3 w-3" />
+                                {cat.label}
+                            </button>
+                        )
+                    })}
+                </div>
+            </div>
 
-                                            {/* Description */}
-                                            <p className="text-xs text-muted-foreground leading-relaxed mb-4 flex-1">
-                                                {uc.description}
-                                            </p>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
-                                            {/* Tool badges */}
-                                            <div className="flex flex-wrap gap-1.5 mb-4">
-                                                {uc.tools.map((tool) => (
-                                                    <span
-                                                        key={tool}
-                                                        className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border font-mono"
-                                                    >
-                                                        {TOOL_LABELS[tool] ?? tool}
-                                                    </span>
-                                                ))}
-                                            </div>
-
-                                            {/* Example query preview */}
-                                            <div className="text-xs text-muted-foreground italic bg-muted/50 rounded-lg px-3 py-2 mb-4 border border-border/50">
-                                                &ldquo;{uc.exampleQuery}&rdquo;
-                                            </div>
-
-                                            {/* CTA */}
-                                            <button
-                                                onClick={() => onStartChat(uc.exampleQuery)}
-                                                className={cn(
-                                                    "flex items-center justify-center gap-2 w-full px-4 py-2 rounded-lg text-xs font-medium transition-all",
-                                                    "bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground",
-                                                    "group-hover:bg-primary group-hover:text-primary-foreground"
-                                                )}
-                                            >
-                                                Try this query
-                                                <ArrowRight className="w-3.5 h-3.5" />
-                                            </button>
+                {/* Flat grid when filtered */}
+                {activeCategory ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {filtered.map((uc) => (
+                            <UseCaseCard key={uc.id} uc={uc} catDef={activeCatDef} onStartChat={onStartChat} />
+                        ))}
+                    </div>
+                ) : (
+                    /* Grouped by category when "All" */
+                    <div className="space-y-6">
+                        {CATEGORIES.map((cat) => {
+                            const Icon = cat.icon
+                            const items = USE_CASES.filter((uc) => uc.category === cat.label)
+                            if (items.length === 0) return null
+                            return (
+                                <div key={cat.label}>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <div className={`h-6 w-6 rounded-md flex items-center justify-center ${cat.color}`}>
+                                            <Icon className="h-3.5 w-3.5" />
                                         </div>
-                                    )
-                                })}
-                            </div>
-                        </section>
-                    )
-                })}
-            </div>
+                                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                                            {cat.label}
+                                        </h3>
+                                        <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+                                        <span className="text-xs text-gray-400">{items.length}</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                        {items.map((uc) => (
+                                            <UseCaseCard key={uc.id} uc={uc} catDef={cat} onStartChat={onStartChat} />
+                                        ))}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
 
-            {/* Footer note */}
-            <div className="px-8 pb-8">
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-gray-400 dark:text-gray-500 pt-2">
                     More use cases will be added as new data sources and tools are integrated.
                 </p>
             </div>
