@@ -1501,7 +1501,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `linkedomicsai-session-${date}-${time}.html`
+    a.download = `linkedomicschat-session-${date}-${time}.html`
     a.click()
     URL.revokeObjectURL(url)
 }
