@@ -887,6 +887,24 @@ RESPONSE STYLE:
 - When replying directly without tools, short markdown is enough.
 """
 
+    DIRECT_RESPONSE_PROMPT_TEMPLATE = """\
+You are LinkedOmicsChat, a concise multi-omics research assistant.
+
+{data_access}
+
+DIRECT RESPONSE RULES:
+- Do not call tools in this mode.
+- For greetings and brief chat, respond naturally and briefly.
+- For platform questions like "what can you analyze?" or "what data do you have?", answer from the AVAILABLE DATA section only.
+- If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.
+- If the question is outside current tool scope, say that briefly, state the supported scope, and then offer:
+  **Options:** `Answer using general knowledge` · `Show what LinkedOmicsChat can analyze for [GENE]`
+  Omit the second option if no gene is mentioned.
+- If the request depends on recent conversation context, use the recent history provided.
+- Do NOT invent unsupported datasets or capabilities.
+- Do NOT suggest follow-up questions at the end.
+"""
+
     def __init__(self, parent_orchestrator=None):
         """
         Args:
@@ -923,38 +941,64 @@ RESPONSE STYLE:
         self._rebuild_graph()
         logger.info(f"[LangGraph] Ready with {len(self._tools)} tools.")
 
-    def _build_data_access_section(self) -> str:
+    def _build_data_access_section(self, *, compact: bool = False) -> str:
         """Generate a data access section based on which MCP servers are actually enabled."""
         available = self.mcp_aggregator.list_tools()
         servers = set(info["server"] for info in available.values())
 
         lines = ["AVAILABLE DATA (only what the enabled tools can access):"]
         if "linkedomics" in servers:
-            lines.append(
-                "- LinkedOmics / CPTAC: gene expression (RNA + protein), cis-correlations, FunMap networks, "
-                "drug targets, clinical trials, and CPTAC survival via `overall_survival_per_cancer` "
-                "for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
-            )
-            lines.append(
-                "- LinkedOmics / TCGA: survival associations across 35+ cohorts and multiple omics layers "
-                "via `tcga_survival_analysis`."
-            )
+            if compact:
+                lines.append(
+                    "- LinkedOmics / CPTAC: tumor-vs-normal expression, cis-correlations, FunMap, targets, trials, and CPTAC survival for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
+                )
+                lines.append(
+                    "- LinkedOmics / TCGA: multi-omics survival analysis across 35+ cohorts."
+                )
+            else:
+                lines.append(
+                    "- LinkedOmics / CPTAC: gene expression (RNA + protein), cis-correlations, FunMap networks, "
+                    "drug targets, clinical trials, and CPTAC survival via `overall_survival_per_cancer` "
+                    "for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
+                )
+                lines.append(
+                    "- LinkedOmics / TCGA: survival associations across 35+ cohorts and multiple omics layers "
+                    "via `tcga_survival_analysis`."
+                )
         if "gene_utils" in servers:
             lines.append(
-                "- Gene utilities: resolve HGNC / Ensembl / UniProt gene identifiers via `resolve_gene_identifier`."
+                "- Gene utilities: resolve HGNC / Ensembl / UniProt gene identifiers."
             )
         if "literature" in servers:
             lines.append(
-                "- PubMed: live literature search via `search_pubmed` and abstract retrieval via `get_pubmed_abstract`."
+                "- PubMed: live literature search and abstract retrieval."
             )
         if not servers:
             lines.append("- (No data tools are currently enabled.)")
-        lines.append(
-            "\nOUT OF SCOPE UNLESS A TOOL EXPLICITLY SUPPORTS IT:\n"
-            "- Raw GDC mutation counts, raw TCGA genomics tables, single-cell data, protein 3D structure, "
-            "variant pathogenicity, GWAS, immune infiltration, sequence analysis, and other unlisted data sources."
-        )
+        if compact:
+            lines.append(
+                "\nOUT OF SCOPE UNLESS A TOOL EXPLICITLY SUPPORTS IT:\n"
+                "- Raw mutation tables, single-cell data, protein 3D structure, variant pathogenicity, GWAS, immune infiltration, sequence analysis, and other unlisted sources."
+            )
+        else:
+            lines.append(
+                "\nOUT OF SCOPE UNLESS A TOOL EXPLICITLY SUPPORTS IT:\n"
+                "- Raw GDC mutation counts, raw TCGA genomics tables, single-cell data, protein 3D structure, "
+                "variant pathogenicity, GWAS, immune infiltration, sequence analysis, and other unlisted data sources."
+            )
         return "\n".join(lines)
+
+    def _build_system_prompt(self, active_gene: str = "unknown", *, tool_scope: str = "full") -> str:
+        """Build a scope-aware system prompt."""
+        if tool_scope == "none":
+            return self.DIRECT_RESPONSE_PROMPT_TEMPLATE.format(
+                data_access=self._build_data_access_section(compact=True),
+            )
+        return self.SYSTEM_PROMPT_TEMPLATE.format(
+            bio_guidelines=self.BIO_GUIDELINES,
+            active_gene=active_gene or "unknown",
+            data_access=self._build_data_access_section(),
+        )
 
     def _rebuild_graph(
         self,
@@ -969,11 +1013,7 @@ RESPONSE STYLE:
         scoped_tool_ids = _TOOL_SCOPE_MAP.get(tool_scope)
         self._tool_scope = tool_scope
         self._tools = build_mcp_tools(self.mcp_aggregator, allowed_tool_ids=scoped_tool_ids)
-        system_prompt = self.SYSTEM_PROMPT_TEMPLATE.format(
-            bio_guidelines=self.BIO_GUIDELINES,
-            active_gene=active_gene or "unknown",
-            data_access=self._build_data_access_section(),
-        )
+        system_prompt = self._build_system_prompt(active_gene=active_gene, tool_scope=tool_scope)
         self._graph = build_graph(self.llm, self._tools, system_prompt)
         logger.info(
             "[LangGraph] Rebuilt graph | scope=%s | bound_tools=%s",
@@ -1034,6 +1074,12 @@ RESPONSE STYLE:
                 messages.append(AIMessage(content=content))
         return messages
 
+    def _history_limit_for_scope(self, tool_scope: str) -> int:
+        """Use less history for obvious no-tool turns to lower prompt cost."""
+        if tool_scope == "none":
+            return 2
+        return 10
+
     async def _prepare_execution_context(
         self,
         query: str,
@@ -1057,7 +1103,8 @@ RESPONSE STYLE:
         # Rebuild graph with current active_gene in system prompt
         self._rebuild_graph(active_gene=active_gene, tool_scope=tool_scope)
 
-        history_messages = self._format_history(session)
+        history_limit = self._history_limit_for_scope(tool_scope)
+        history_messages = self._format_history(session, limit=history_limit)
         initial_messages = history_messages + [HumanMessage(content=effective_query)]
         initial_state: AgentState = {
             "messages": initial_messages,
