@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Type
 
@@ -104,7 +105,10 @@ def _build_args_schema(input_schema: Dict[str, Any]) -> Type[BaseModel]:
     return create_model("MCPToolArgs", **fields)
 
 
-def build_mcp_tools(aggregator: MCPAggregator) -> List[BaseTool]:
+def build_mcp_tools(
+    aggregator: MCPAggregator,
+    allowed_tool_ids: Optional[Sequence[str]] = None,
+) -> List[BaseTool]:
     """
     Convert every registered MCP tool into a LangChain StructuredTool.
 
@@ -112,8 +116,11 @@ def build_mcp_tools(aggregator: MCPAggregator) -> List[BaseTool]:
     valid Python identifiers (no colons).  The mapping is reversed when
     calling call_tool on the aggregator.
     """
+    allowed_tool_id_set = set(allowed_tool_ids or [])
     tools: List[BaseTool] = []
     for tool_id, meta in aggregator.list_tools().items():
+        if allowed_tool_id_set and tool_id not in allowed_tool_id_set:
+            continue
         lc_name = tool_id.replace("::", "__")
         description = (meta.get("description") or "").strip()
         input_schema = meta.get("inputSchema") or {}
@@ -144,7 +151,11 @@ def build_mcp_tools(aggregator: MCPAggregator) -> List[BaseTool]:
         tools.append(tool)
         logger.debug(f"[LangGraph] Registered tool: {lc_name}")
 
-    logger.info(f"[LangGraph] Built {len(tools)} MCP tools for LangGraph agent")
+    logger.info(
+        "[LangGraph] Built %s MCP tools for LangGraph agent%s",
+        len(tools),
+        f" (scoped from {len(allowed_tool_id_set)} allowed ids)" if allowed_tool_id_set else "",
+    )
     return tools
 
 
@@ -215,6 +226,92 @@ def _should_continue(state: AgentState) -> str:
     if isinstance(last, AIMessage) and last.tool_calls:
         return "tools"
     return END
+
+
+_TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
+    "none": (),
+    "expression": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::batch_cancer_gene_expression",
+    ),
+    "survival": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::batch_overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis",
+    ),
+    "literature": (
+        "literature::search_pubmed",
+        "literature::get_pubmed_abstract",
+    ),
+}
+
+_CONVERSATIONAL_QUERIES = {
+    "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "cool",
+}
+
+_PLATFORM_PATTERNS = (
+    "what can you analyze",
+    "what can you do",
+    "what data do you have",
+    "what data do you access",
+    "what cancer types",
+    "what cohorts",
+    "what is linkedomicschat",
+)
+
+_LITERATURE_KEYWORDS = (
+    "paper", "papers", "pubmed", "literature", "publication", "publications",
+    "abstract", "citation", "citations",
+)
+
+_EXPRESSION_KEYWORDS = (
+    "tumor vs normal", "expression", "expressed", "overexpress", "underexpress",
+    "upregulat", "downregulat", "tumour vs normal",
+)
+
+_SURVIVAL_KEYWORDS = (
+    "survival", "overall survival", "prognos", "kaplan", "km curve", "hazard ratio", "os ",
+)
+
+_SURVIVAL_OMICS_KEYWORDS = (
+    "methylation", "mirna", "mirnaseq", "scna", "copy number", "rppa", "rnaseq", "tcga",
+)
+
+
+def _looks_conversational(query: str) -> bool:
+    normalized = re.sub(r"\s+", " ", query.strip().lower()).strip(" ?!.,")
+    return normalized in _CONVERSATIONAL_QUERIES
+
+
+def _looks_platform_question(query: str) -> bool:
+    normalized = query.strip().lower()
+    return any(pattern in normalized for pattern in _PLATFORM_PATTERNS)
+
+
+def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
+    """Choose a conservative tool subset for obvious query types."""
+    normalized = re.sub(r"\s+", " ", query.strip().lower())
+    if not normalized:
+        return "full"
+
+    if normalized.startswith("show what linkedomicschat can analyze for"):
+        return "full"
+    if normalized.startswith("answer using general knowledge"):
+        return "none"
+    if _looks_conversational(normalized) or _looks_platform_question(normalized):
+        return "none"
+    if any(keyword in normalized for keyword in _LITERATURE_KEYWORDS):
+        return "literature"
+    if any(keyword in normalized for keyword in _EXPRESSION_KEYWORDS):
+        return "expression"
+    if any(keyword in normalized for keyword in _SURVIVAL_KEYWORDS):
+        return "survival"
+    if active_gene and any(keyword in normalized for keyword in _SURVIVAL_OMICS_KEYWORDS):
+        return "survival"
+
+    return "full"
 
 
 def _make_agent_node(llm_with_tools, system_prompt: str):
@@ -650,7 +747,7 @@ def build_graph(llm, tools: List[BaseTool], system_prompt: str):
         agent ──(has tool_calls)──▶ tools ──▶ agent
               ──(no tool_calls) ──▶ END
     """
-    llm_with_tools = llm.bind_tools(tools)
+    llm_with_tools = llm.bind_tools(tools) if tools else llm
 
     workflow = StateGraph(AgentState)
     workflow.add_node("agent", _make_agent_node(llm_with_tools, system_prompt))
@@ -815,6 +912,7 @@ RESPONSE STYLE:
 
         self._graph = None
         self._tools: List[BaseTool] = []
+        self._tool_scope: str = "full"
 
     async def initialize(self):
         """Initialize MCP connections (if standalone) and build the LangGraph."""
@@ -858,18 +956,30 @@ RESPONSE STYLE:
         )
         return "\n".join(lines)
 
-    def _rebuild_graph(self, active_gene: str = "unknown"):
+    def _rebuild_graph(
+        self,
+        active_gene: str = "unknown",
+        *,
+        tool_scope: str = "full",
+    ):
         """(Re)build the compiled LangGraph with current MCP tools."""
         if not self.llm:
             logger.warning("[LangGraph] No LLM available, graph not built.")
             return
-        self._tools = build_mcp_tools(self.mcp_aggregator)
+        scoped_tool_ids = _TOOL_SCOPE_MAP.get(tool_scope)
+        self._tool_scope = tool_scope
+        self._tools = build_mcp_tools(self.mcp_aggregator, allowed_tool_ids=scoped_tool_ids)
         system_prompt = self.SYSTEM_PROMPT_TEMPLATE.format(
             bio_guidelines=self.BIO_GUIDELINES,
             active_gene=active_gene or "unknown",
             data_access=self._build_data_access_section(),
         )
         self._graph = build_graph(self.llm, self._tools, system_prompt)
+        logger.info(
+            "[LangGraph] Rebuilt graph | scope=%s | bound_tools=%s",
+            tool_scope,
+            [tool.name.replace("__", "::") for tool in self._tools],
+        )
 
     async def cleanup(self):
         """Cleanup MCP connections (only in standalone mode)."""
@@ -939,9 +1049,13 @@ RESPONSE STYLE:
         if effective_query != query:
             logger.info(f"{log_prefix} Expanded contextual shortcut for query processing.")
         active_gene = session.get("context", {}).get("active_gene", "unknown")
+        tool_scope = _infer_tool_scope(
+            effective_query,
+            active_gene if active_gene != "unknown" else None,
+        )
 
         # Rebuild graph with current active_gene in system prompt
-        self._rebuild_graph(active_gene=active_gene)
+        self._rebuild_graph(active_gene=active_gene, tool_scope=tool_scope)
 
         history_messages = self._format_history(session)
         initial_messages = history_messages + [HumanMessage(content=effective_query)]
