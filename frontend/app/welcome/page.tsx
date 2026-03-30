@@ -6,78 +6,82 @@ import Link from "next/link"
 import { useAuth } from "@/components/AuthContext"
 import { MessageCircle, DatabaseZap, FileCheck2, Zap, MousePointerClick, ChevronDown } from "lucide-react"
 
-type Category = "survival" | "expression" | "network" | "proteomics" | "mutation"
+type Category = "survival" | "expression" | "network" | "proteomics" | "drug_targets" | "clinical_trials"
 
 const CAT_STYLE: Record<Category, string> = {
-    survival:   "bg-rose-100    border-rose-400   text-slate-700 hover:bg-rose-200",
-    expression: "bg-teal-100    border-teal-400   text-slate-700 hover:bg-teal-200",
-    network:    "bg-emerald-100 border-emerald-400 text-slate-700 hover:bg-emerald-200",
-    proteomics: "bg-indigo-100  border-indigo-400 text-slate-700 hover:bg-indigo-200",
-    mutation:   "bg-orange-100  border-orange-400 text-slate-700 hover:bg-orange-200",
+    survival:        "bg-rose-100    border-rose-400   text-slate-700 hover:bg-rose-200",
+    expression:      "bg-teal-100    border-teal-400   text-slate-700 hover:bg-teal-200",
+    network:         "bg-emerald-100 border-emerald-400 text-slate-700 hover:bg-emerald-200",
+    proteomics:      "bg-indigo-100  border-indigo-400 text-slate-700 hover:bg-indigo-200",
+    drug_targets:    "bg-violet-100  border-violet-400 text-slate-700 hover:bg-violet-200",
+    clinical_trials: "bg-amber-100   border-amber-400  text-slate-700 hover:bg-amber-200",
 }
 
 const CAT_ROW_STYLE: Record<Category, string> = {
-    survival:   "bg-rose-50/60    border-rose-100   text-rose-700    hover:bg-rose-100/80",
-    expression: "bg-teal-50/60    border-teal-100   text-teal-700    hover:bg-teal-100/80",
-    network:    "bg-emerald-50/60 border-emerald-100 text-emerald-700 hover:bg-emerald-100/80",
-    proteomics: "bg-indigo-50/60  border-indigo-100  text-indigo-700  hover:bg-indigo-100/80",
-    mutation:   "bg-orange-50/60  border-orange-100  text-orange-700  hover:bg-orange-100/80",
+    survival:        "bg-rose-50/60    border-rose-100    text-rose-700    hover:bg-rose-100/80",
+    expression:      "bg-teal-50/60    border-teal-100    text-teal-700    hover:bg-teal-100/80",
+    network:         "bg-emerald-50/60 border-emerald-100 text-emerald-700 hover:bg-emerald-100/80",
+    proteomics:      "bg-indigo-50/60  border-indigo-100  text-indigo-700  hover:bg-indigo-100/80",
+    drug_targets:    "bg-violet-50/60  border-violet-100  text-violet-700  hover:bg-violet-100/80",
+    clinical_trials: "bg-amber-50/60   border-amber-100   text-amber-700   hover:bg-amber-100/80",
 }
 
 const CAT_LABEL: Record<Category, string> = {
-    survival:   "Survival analysis",
-    expression: "Gene expression",
-    network:    "Network & pathway",
-    proteomics: "Proteomics",
-    mutation:   "Mutation analysis",
+    survival:        "Survival analysis",
+    expression:      "Gene expression",
+    network:         "Network & pathway",
+    proteomics:      "Proteomics",
+    drug_targets:    "Drug targets",
+    clinical_trials: "Clinical trials",
 }
 
 interface Chip { text: string; cat: Category }
 
 const ROW1: Chip[] = [
-    { text: "Is ESR1 associated with survival in BRCA?",  cat: "survival"   },
-    { text: "EGFR expression across TCGA LUAD",           cat: "expression" },
-    { text: "Survival analysis for PIK3CA in LUAD",       cat: "survival"   },
-    { text: "RB1 co-expression partners in OV",           cat: "expression" },
-    { text: "BRCA1 drug targets + survival analysis",     cat: "survival"   },
-    { text: "Overall survival in KIRC with VHL mutation", cat: "survival"   },
-    { text: "VEGFA expression in clear cell RCC",         cat: "expression" },
+    { text: "Is ESR1 associated with survival in BRCA?",            cat: "survival"        },
+    { text: "EGFR expression across TCGA LUAD",                     cat: "expression"      },
+    { text: "Which genes predict paclitaxel response in breast cancer?", cat: "clinical_trials" },
+    { text: "FunMap partners of RB1",                               cat: "network"         },
+    { text: "Survival analysis for PIK3CA in LUAD",                 cat: "survival"        },
+    { text: "Which studies tested nivolumab in melanoma?",          cat: "clinical_trials" },
+    { text: "VEGFA expression in clear cell RCC",                   cat: "expression"      },
 ]
 
 const ROW2: Chip[] = [
-    { text: "LinkedOmics network for MYC in BRCA",        cat: "network"    },
-    { text: "Compare KRAS RNA vs protein in PDAC",        cat: "proteomics" },
-    { text: "Find TP53 functional neighbors",             cat: "network"    },
-    { text: "Phosphoproteomics of EGFR in LUAD",          cat: "proteomics" },
-    { text: "WebGestalt enrichment for PTEN targets",     cat: "network"    },
-    { text: "AKT1 phosphosite changes in LUAD",           cat: "proteomics" },
+    { text: "FunMap functional partners of MYC",                    cat: "network"         },
+    { text: "Compare KRAS RNA vs protein in PDAC",                  cat: "proteomics"      },
+    { text: "Find TP53 functional neighbors",                        cat: "network"         },
+    { text: "Which genes best predict immunotherapy response?",      cat: "clinical_trials" },
+    { text: "Phosphoproteomics of EGFR in LUAD",                    cat: "proteomics"      },
+    { text: "WebGestalt enrichment for PTEN targets",               cat: "network"         },
+    { text: "AKT1 phosphosite changes in LUAD",                     cat: "proteomics"      },
 ]
 
 const ROW3: Chip[] = [
-    { text: "TP53 mutation frequency in breast cancer",   cat: "mutation"   },
-    { text: "Differential expression GBM vs normal",      cat: "expression" },
-    { text: "MET amplification frequency in LUSC",        cat: "mutation"   },
-    { text: "CDH1 methylation in gastric cancer",         cat: "mutation"   },
-    { text: "Pathway enrichment for DNA repair genes",    cat: "network"    },
-    { text: "SMAD4 loss and TGF-β pathway in PDAC",      cat: "mutation"   },
+    { text: "Is EGFR a druggable oncology target?",                 cat: "drug_targets"    },
+    { text: "EGFR expression in GBM vs normal tissue",              cat: "expression"      },
+    { text: "Tell me about clinical study GSE25066",                cat: "clinical_trials" },
+    { text: "CDH1 methylation in gastric cancer",                   cat: "expression"      },
+    { text: "Pathway enrichment for DNA repair genes",              cat: "network"         },
+    { text: "What drugs are approved for HER2/ERBB2?",             cat: "drug_targets"    },
 ]
 
 const ROW4: Chip[] = [
-    { text: "Proteogenomic correlation for CDKN2A",       cat: "proteomics" },
-    { text: "PTEN loss and immune infiltration in GBM",   cat: "mutation"   },
-    { text: "HIF1A targets in hypoxic KIRC",              cat: "network"    },
-    { text: "Immune subtype differences in COAD",         cat: "expression" },
-    { text: "RB1 loss frequency in SCLC",                 cat: "mutation"   },
-    { text: "FunMap neighborhood of BRCA1",               cat: "network"    },
+    { text: "Proteogenomic correlation for CDKN2A",                 cat: "proteomics"      },
+    { text: "Is PTEN a drug target in cancer?",                     cat: "drug_targets"    },
+    { text: "Which pathways predict chemotherapy resistance?",      cat: "clinical_trials" },
+    { text: "CDK4 expression across TCGA cancer types",            cat: "expression"      },
+    { text: "RB1 expression and survival in lung cancer",           cat: "survival"        },
+    { text: "FunMap neighborhood of BRCA1",                         cat: "network"         },
 ]
 
 const ROW5: Chip[] = [
-    { text: "Survival by TP53 status in OV",              cat: "survival"   },
-    { text: "KRAS G12D mutation in colorectal cancer",    cat: "mutation"   },
-    { text: "mRNA–protein correlation for MYC",           cat: "proteomics" },
-    { text: "LinkedOmics survival module for LUAD",       cat: "survival"   },
-    { text: "Enrichment analysis for EMT pathway",        cat: "network"    },
-    { text: "PIK3CA hotspot mutations in BRCA",           cat: "mutation"   },
+    { text: "Survival by TP53 expression in OV",                    cat: "survival"        },
+    { text: "KRAS expression in colorectal cancer",                 cat: "expression"      },
+    { text: "Tamoxifen resistance biomarkers in breast cancer",     cat: "clinical_trials" },
+    { text: "LinkedOmics survival module for LUAD",                 cat: "survival"        },
+    { text: "Enrichment analysis for EMT pathway",                  cat: "network"         },
+    { text: "Is PIK3CA a druggable target in breast cancer?",       cat: "drug_targets"    },
 ]
 
 
