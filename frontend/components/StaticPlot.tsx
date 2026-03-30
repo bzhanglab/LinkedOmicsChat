@@ -1,7 +1,7 @@
 "use client"
 import { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { Download, Table, Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react"
+import { Download, Table, Maximize2, X } from "lucide-react"
 import type { AnyVisualization, StaticVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
 
@@ -89,12 +89,9 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
     const [fetchError, setFetchError] = useState(false)
     const [showAtRisk, setShowAtRisk] = useState(false)
     const [lightboxOpen, setLightboxOpen] = useState(false)
-    const [zoom, setZoom] = useState(1)
 
-    const openLightbox  = useCallback(() => { setLightboxOpen(true); setZoom(1) }, [])
+    const openLightbox  = useCallback(() => setLightboxOpen(true), [])
     const closeLightbox = useCallback(() => setLightboxOpen(false), [])
-
-    const clampZoom = (z: number) => Math.min(5, Math.max(0.5, z))
 
     useEffect(() => {
         if (!lightboxOpen) return
@@ -181,24 +178,14 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
                                     {/* Lightbox toolbar */}
                                     <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/30 rounded-t-lg flex-shrink-0">
                                         <span className="text-xs text-muted-foreground flex-1 truncate px-1">{resolvedViz.title}</span>
-                                        <button onClick={() => setZoom(z => clampZoom(z * 1.25))} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Zoom in"><ZoomIn className="h-3.5 w-3.5" /></button>
-                                        <button onClick={() => setZoom(z => clampZoom(z / 1.25))} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Zoom out"><ZoomOut className="h-3.5 w-3.5" /></button>
-                                        <button onClick={() => setZoom(1)} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Reset zoom"><RotateCcw className="h-3.5 w-3.5" /></button>
                                         <button onClick={closeLightbox} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Close"><X className="h-3.5 w-3.5" /></button>
                                     </div>
-                                    {/* Scrollable image area */}
-                                    <div
-                                        className="overflow-auto p-3"
-                                        style={{ maxHeight: "calc(95vh - 36px)" }}
-                                        onWheel={e => {
-                                            e.preventDefault()
-                                            setZoom(z => clampZoom(z * (e.deltaY < 0 ? 1.1 : 0.9)))
-                                        }}
-                                    >
+                                    {/* Image area */}
+                                    <div className="overflow-auto p-3" style={{ maxHeight: "calc(95vh - 36px)", maxWidth: "95vw" }}>
                                         <img
                                             src={`data:image/png;base64,${resolvedViz.png_b64}`}
                                             alt={resolvedViz.title}
-                                            style={{ width: `${zoom * 100}%`, minWidth: "100%", display: "block", height: "auto" }}
+                                            style={{ display: "block", height: "auto", maxWidth: "100%" }}
                                             draggable={false}
                                         />
                                     </div>
