@@ -51,6 +51,8 @@ class AgentState(TypedDict):
     # Accumulated token usage across all LLM calls in this query
     input_tokens: int
     output_tokens: int
+    # Per-node execution trace for observability and tuning
+    execution_trace: List[Dict[str, Any]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +155,51 @@ def build_mcp_tools(aggregator: MCPAggregator) -> List[BaseTool]:
 MAX_STEPS = 8  # Safety cap on tool-call iterations
 
 
+def _normalize_runtime_tool_name(tool_name: str) -> str:
+    """Normalize LangChain tool names to MCP-style ids for logs and traces."""
+    return tool_name.replace("__", "::").rsplit("#", 1)[0]
+
+
+def _format_execution_trace(execution_trace: Sequence[Dict[str, Any]]) -> str:
+    """Render a compact one-line summary of per-step LangGraph execution."""
+    if not execution_trace:
+        return "none"
+
+    parts: List[str] = []
+    for entry in execution_trace:
+        node = entry.get("node", "unknown")
+        step = entry.get("step", "?")
+        latency_ms = entry.get("latency_ms", 0)
+        if node == "agent":
+            tool_calls = entry.get("tool_calls") or []
+            tool_text = ",".join(tool_calls) if tool_calls else "final"
+            parts.append(
+                "agent#{step}({latency}ms in={in_tok} out={out_tok} -> {tool_text})".format(
+                    step=step,
+                    latency=latency_ms,
+                    in_tok=entry.get("input_tokens", 0),
+                    out_tok=entry.get("output_tokens", 0),
+                    tool_text=tool_text,
+                )
+            )
+            continue
+
+        if node == "tools":
+            tool_summaries = []
+            for tool_call in entry.get("tool_calls") or []:
+                tool_name = tool_call.get("tool", "tool")
+                tool_latency = tool_call.get("latency_ms", 0)
+                status = tool_call.get("status", "ok")
+                tool_summaries.append(f"{tool_name}:{tool_latency}ms:{status}")
+            tools_text = ",".join(tool_summaries) if tool_summaries else "none"
+            parts.append(f"tools#{step}({latency_ms}ms {tools_text})")
+            continue
+
+        parts.append(f"{node}#{step}({latency_ms}ms)")
+
+    return " | ".join(parts)
+
+
 def _should_continue(state: AgentState) -> str:
     """
     Routing function: continue to tool execution or stop?
@@ -175,18 +222,43 @@ def _make_agent_node(llm_with_tools, system_prompt: str):
     async def agent_node(state: AgentState) -> Dict[str, Any]:
         # Prepend system message on every call so it's always in context
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        started = time.perf_counter()
         response = await llm_with_tools.ainvoke(messages)
+        latency_ms = int((time.perf_counter() - started) * 1000)
 
         # Accumulate token usage from this LLM call
         usage = LLMFactory._extract_usage(response, llm_with_tools)
         in_tok = usage.input_tokens
         out_tok = usage.output_tokens
+        agent_step = state["steps"] + 1
+        tool_calls = [
+            _normalize_runtime_tool_name(str(tc.get("name", "")))
+            for tc in getattr(response, "tool_calls", []) or []
+            if tc.get("name")
+        ]
+        trace_entry = {
+            "node": "agent",
+            "step": agent_step,
+            "latency_ms": latency_ms,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "tool_calls": tool_calls,
+        }
+        logger.info(
+            "[LangGraph] Agent step %s | latency_ms=%s | input_tokens=%s | output_tokens=%s | tool_calls=%s",
+            agent_step,
+            latency_ms,
+            in_tok,
+            out_tok,
+            tool_calls or ["final"],
+        )
 
         return {
             "messages": [response],
-            "steps": state["steps"] + 1,
+            "steps": agent_step,
             "input_tokens": state.get("input_tokens", 0) + in_tok,
             "output_tokens": state.get("output_tokens", 0) + out_tok,
+            "execution_trace": list(state.get("execution_trace", [])) + [trace_entry],
         }
     return agent_node
 
@@ -233,6 +305,8 @@ def _make_tool_node(tools: List[BaseTool]):
         new_results = dict(state.get("tool_results") or {})
         active_gene = state.get("active_gene")
         call_counts: Dict[str, int] = {}
+        step_tool_metrics: List[Dict[str, Any]] = []
+        started = time.perf_counter()
 
         for tc in last_ai.tool_calls:
             tool_name = tc["name"]
@@ -242,16 +316,23 @@ def _make_tool_node(tools: List[BaseTool]):
             tool = tool_map.get(tool_name)
             if not tool:
                 content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+                tool_latency_ms = 0
+                status = "missing"
             else:
                 try:
+                    tool_started = time.perf_counter()
                     raw = await tool.coroutine(**args)
+                    tool_latency_ms = int((time.perf_counter() - tool_started) * 1000)
                     content = json.dumps(raw) if not isinstance(raw, str) else raw
                     # Truncate abstracts so the LLM summarises instead of reproducing
                     if tool_name in ("literature__search_pubmed", "literature__get_pubmed_abstract"):
                         content = _compact_literature(content)
+                    status = "ok"
                 except Exception as e:
                     logger.error(f"[LangGraph] Tool {tool_name} error: {e}")
+                    tool_latency_ms = int((time.perf_counter() - tool_started) * 1000)
                     content = json.dumps({"error": str(e)})
+                    status = "error"
 
             # Track result with unique key (mirrors mcp_orchestrator convention)
             mcp_tool_id = tool_name.replace("__", "::")
@@ -283,12 +364,34 @@ def _make_tool_node(tools: List[BaseTool]):
             tool_messages.append(
                 ToolMessage(content=content, tool_call_id=call_id, name=tool_name)
             )
+            step_tool_metrics.append(
+                {
+                    "tool": mcp_tool_id,
+                    "latency_ms": tool_latency_ms,
+                    "status": status,
+                }
+            )
             logger.info(f"[LangGraph] Tool {mcp_tool_id} executed → stored as {unique_key}")
 
+        tool_step = state.get("steps", 0)
+        total_latency_ms = int((time.perf_counter() - started) * 1000)
+        trace_entry = {
+            "node": "tools",
+            "step": tool_step,
+            "latency_ms": total_latency_ms,
+            "tool_calls": step_tool_metrics,
+        }
+        logger.info(
+            "[LangGraph] Tool step %s | latency_ms=%s | tool_calls=%s",
+            tool_step,
+            total_latency_ms,
+            step_tool_metrics,
+        )
         return {
             "messages": tool_messages,
             "tool_results": new_results,
             "active_gene": active_gene,
+            "execution_trace": list(state.get("execution_trace", [])) + [trace_entry],
         }
 
     return tool_node
@@ -764,6 +867,7 @@ RESPONSE STYLE:
             "steps": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "execution_trace": [],
         }
         return session, effective_query, active_gene, initial_state
 
@@ -791,6 +895,7 @@ RESPONSE STYLE:
         raw_results = final_state.get("tool_results", {})
         new_active_gene = final_state.get("active_gene") or active_gene
         tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
+        execution_trace = list(final_state.get("execution_trace", []))
         usage_tracker = {
             "input_tokens": final_state.get("input_tokens", 0),
             "output_tokens": final_state.get("output_tokens", 0),
@@ -803,7 +908,7 @@ RESPONSE STYLE:
             session["context"]["active_gene"] = new_active_gene
 
         logger.info(
-            "%s Execution summary | query=%r | steps=%s | tool_calls=%s | tools=%s | input_tokens=%s | output_tokens=%s",
+            "%s Execution summary | query=%r | steps=%s | tool_calls=%s | tools=%s | input_tokens=%s | output_tokens=%s | trace=%s",
             log_prefix,
             original_query[:120],
             final_state.get("steps", 0),
@@ -811,6 +916,7 @@ RESPONSE STYLE:
             tools_used,
             usage_tracker["input_tokens"],
             usage_tracker["output_tokens"],
+            _format_execution_trace(execution_trace),
         )
         return llm_summary, is_general_knowledge, raw_results, tools_used, usage_tracker
 
