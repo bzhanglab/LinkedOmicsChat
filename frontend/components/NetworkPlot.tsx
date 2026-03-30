@@ -1,5 +1,6 @@
 "use client"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
+import { createPortal } from "react-dom"
 import CytoscapeComponent from "react-cytoscapejs"
 import type { Core, LayoutOptions } from "cytoscape"
 import { Download, Maximize2, X, ZoomIn, ZoomOut, Minimize2 } from "lucide-react"
@@ -417,7 +418,7 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
                         </div>
 
                         {/* Lightbox */}
-                        {lightboxOpen && typeof document !== "undefined" && (
+                        {lightboxOpen && typeof document !== "undefined" && createPortal(
                             <div
                                 className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm"
                                 onClick={closeLightbox}
@@ -438,7 +439,8 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
                                         <ColorLegend absMax={absMax} hovered={hoveredNode} large />
                                     </div>
                                 </div>
-                            </div>
+                            </div>,
+                            document.body
                         )}
 
                         {/* Color explanation */}
