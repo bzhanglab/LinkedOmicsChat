@@ -736,6 +736,217 @@ RESPONSE STYLE:
                 messages.append(AIMessage(content=content))
         return messages
 
+    async def _prepare_execution_context(
+        self,
+        query: str,
+        user_id: str,
+        session_id: Optional[str],
+        client_ip: Optional[str],
+        *,
+        log_prefix: str,
+    ) -> tuple[Dict[str, Any], str, str, AgentState]:
+        """Load session context, rebuild the graph, and prepare the initial state."""
+        session = await self._get_session(session_id, user_id, client_ip=client_ip)
+        effective_query = _expand_contextual_shortcuts(query, session)
+        if effective_query != query:
+            logger.info(f"{log_prefix} Expanded contextual shortcut for query processing.")
+        active_gene = session.get("context", {}).get("active_gene", "unknown")
+
+        # Rebuild graph with current active_gene in system prompt
+        self._rebuild_graph(active_gene=active_gene)
+
+        history_messages = self._format_history(session)
+        initial_messages = history_messages + [HumanMessage(content=effective_query)]
+        initial_state: AgentState = {
+            "messages": initial_messages,
+            "tool_results": {},
+            "active_gene": active_gene if active_gene != "unknown" else None,
+            "steps": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+        return session, effective_query, active_gene, initial_state
+
+    def _extract_final_state_context(
+        self,
+        final_state: AgentState,
+        active_gene: str,
+        session: Dict[str, Any],
+        *,
+        log_prefix: str,
+        original_query: str,
+    ) -> tuple[str, bool, Dict[str, Any], List[str], Dict[str, Any]]:
+        """Normalize the final graph state into a response-building context."""
+        final_messages = final_state.get("messages", [])
+        final_ai_msg = next(
+            (m for m in reversed(final_messages) if isinstance(m, AIMessage) and not m.tool_calls),
+            None,
+        )
+        llm_summary = _normalize_content(final_ai_msg.content) if final_ai_msg else ""
+
+        is_general_knowledge = llm_summary.startswith("[GENERAL_KNOWLEDGE]")
+        if is_general_knowledge:
+            llm_summary = llm_summary[len("[GENERAL_KNOWLEDGE]"):].lstrip("\n").strip()
+
+        raw_results = final_state.get("tool_results", {})
+        new_active_gene = final_state.get("active_gene") or active_gene
+        tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
+        usage_tracker = {
+            "input_tokens": final_state.get("input_tokens", 0),
+            "output_tokens": final_state.get("output_tokens", 0),
+            "model": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", None) or settings.DEFAULT_LLM_MODEL,
+        }
+
+        if "context" not in session:
+            session["context"] = {}
+        if new_active_gene and new_active_gene != "unknown":
+            session["context"]["active_gene"] = new_active_gene
+
+        logger.info(
+            "%s Execution summary | query=%r | steps=%s | tool_calls=%s | tools=%s | input_tokens=%s | output_tokens=%s",
+            log_prefix,
+            original_query[:120],
+            final_state.get("steps", 0),
+            len(raw_results),
+            tools_used,
+            usage_tracker["input_tokens"],
+            usage_tracker["output_tokens"],
+        )
+        return llm_summary, is_general_knowledge, raw_results, tools_used, usage_tracker
+
+    async def _build_response_from_final_state(
+        self,
+        *,
+        query: str,
+        effective_query: str,
+        session: Dict[str, Any],
+        active_gene: str,
+        final_state: AgentState,
+        log_prefix: str,
+        include_stream_metadata: bool = False,
+    ) -> Dict[str, Any]:
+        """Convert the final LangGraph state into the API response payload."""
+        (
+            llm_summary,
+            is_general_knowledge,
+            raw_results,
+            tools_used,
+            usage_tracker,
+        ) = self._extract_final_state_context(
+            final_state,
+            active_gene,
+            session,
+            log_prefix=log_prefix,
+            original_query=query,
+        )
+
+        rich_message = llm_summary
+        suggestions: List[str] = []
+
+        async def _format():
+            if raw_results and self._parent is not None:
+                try:
+                    formatted = await self._parent._generate_response(
+                        effective_query, raw_results, session, intent="research", usage_tracker=usage_tracker
+                    )
+                    _msg = formatted.get("message") or ""
+                    _summary = formatted.get("summary") or ""
+                    _placeholder = {"", "No LinkedOmics results.", "No response generated."}
+                    msg_out = _msg if _msg.strip() and _msg.strip() not in _placeholder else llm_summary
+                    if not msg_out.strip() and raw_results:
+                        lines = ["Here are the results from the tools that were called:\n"]
+                        for key, val in raw_results.items():
+                            tool_name = key.rsplit("#", 1)[0].replace("::", " › ")
+                            gene = val.get("_gene", "")
+                            result = val.get("_result", {})
+                            if isinstance(result, dict) and result.get("error"):
+                                lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: ⚠️ {result['error']}")
+                            elif isinstance(result, dict):
+                                keys = [k for k in result if not k.startswith("_")][:5]
+                                lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: returned {len(keys)} fields ({', '.join(keys)})")
+                            else:
+                                lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: completed")
+                        msg_out = "\n".join(lines)
+                    summary_out = _summary.strip() or llm_summary
+                    return (
+                        msg_out,
+                        summary_out,
+                        formatted.get("tools_used") or tools_used,
+                        formatted.get("raw_results") or raw_results,
+                        formatted.get("visualizations") or [],
+                    )
+                except Exception as e:
+                    logger.warning(f"{log_prefix} _generate_response failed: {e}")
+            return llm_summary, llm_summary, tools_used, raw_results, []
+
+        async def _suggest():
+            if not raw_results:
+                return []
+            if self._parent is not None:
+                try:
+                    return await self._parent._generate_suggestions(
+                        effective_query, llm_summary, session, n=3, usage_tracker=usage_tracker
+                    )
+                except Exception as e:
+                    logger.warning(f"{log_prefix} _generate_suggestions failed: {e}")
+            return []
+
+        (rich_message, display_summary, tools_used_final, raw_results_final, visualizations), suggestions = await asyncio.gather(
+            _format(), _suggest()
+        )
+
+        clarification_options: List[str] = []
+        tool_sources: Dict[str, str] = {}
+        if include_stream_metadata:
+            clarification_options = _parse_clarification_options(llm_summary)
+            if clarification_options:
+                llm_summary = _strip_options_line(llm_summary)
+                rich_message = _strip_options_line(rich_message)
+            rich_message = _strip_invalid_source_citations(rich_message, tools_used_final)
+            tool_sources = _build_tool_sources(raw_results_final)
+
+        is_literature_only = bool(tools_used_final) and all(
+            t.startswith("literature::") for t in tools_used_final
+        )
+        any_errors = bool(raw_results_final) and any(
+            isinstance(v.get("_result"), dict) and "error" in v.get("_result", {})
+            for v in raw_results_final.values()
+        )
+        show_summary = bool(
+            not any_errors
+            and raw_results_final
+            and rich_message.strip()
+            and display_summary.strip()
+            and rich_message.strip() != display_summary.strip()
+        )
+        input_tokens = usage_tracker.get("input_tokens", 0)
+        output_tokens = usage_tracker.get("output_tokens", 0)
+        model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
+
+        formatted_response = {
+            "success": True,
+            "summary": display_summary if show_summary else "",
+            "message": rich_message,
+            "query": query,
+            "tools_used": list(set(tools_used_final)),
+            "raw_results": raw_results_final,
+            "visualizations": visualizations,
+            "analyses": [],
+            "suggestions": suggestions,
+            "datasets": [],
+            "papers": [],
+            "no_collapse": is_literature_only,
+            "is_general_knowledge": is_general_knowledge,
+            "_input_tokens": input_tokens,
+            "_output_tokens": output_tokens,
+            "_model": model_name,
+        }
+        if include_stream_metadata:
+            formatted_response["clarification_options"] = clarification_options
+            formatted_response["tool_sources"] = tool_sources
+
+        return formatted_response
+
     # ── Main entry point ───────────────────────────────────────────────────────
 
     async def process_query(
@@ -753,14 +964,13 @@ RESPONSE STYLE:
         try:
             logger.info(f"[LangGraph] Processing query: {query}")
 
-            session = await self._get_session(session_id, user_id, client_ip=client_ip)
-            effective_query = _expand_contextual_shortcuts(query, session)
-            if effective_query != query:
-                logger.info("[LangGraph] Expanded contextual shortcut for query processing.")
-            active_gene = session.get("context", {}).get("active_gene", "unknown")
-
-            # Rebuild graph with current active_gene in system prompt
-            self._rebuild_graph(active_gene=active_gene)
+            session, effective_query, active_gene, initial_state = await self._prepare_execution_context(
+                query,
+                user_id,
+                session_id,
+                client_ip,
+                log_prefix="[LangGraph]",
+            )
 
             if not self._graph:
                 return {
@@ -770,154 +980,17 @@ RESPONSE STYLE:
                     "session_id": session["id"],
                 }
 
-            # Build input state: history messages + current query
-            history_messages = self._format_history(session)
-            initial_messages = history_messages + [HumanMessage(content=effective_query)]
-
-            initial_state: AgentState = {
-                "messages": initial_messages,
-                "tool_results": {},
-                "active_gene": active_gene if active_gene != "unknown" else None,
-                "steps": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-            }
-
             # Run the LangGraph agent
             logger.info("[LangGraph] Starting agent graph execution...")
             final_state = await self._graph.ainvoke(initial_state)
-
-            # Extract the LLM's analytical summary from the last AI message
-            final_messages = final_state.get("messages", [])
-            final_ai_msg = next(
-                (m for m in reversed(final_messages) if isinstance(m, AIMessage) and not m.tool_calls),
-                None,
+            formatted_response = await self._build_response_from_final_state(
+                query=query,
+                effective_query=effective_query,
+                session=session,
+                active_gene=active_gene,
+                final_state=final_state,
+                log_prefix="[LangGraph]",
             )
-            llm_summary = _normalize_content(final_ai_msg.content) if final_ai_msg else ""
-
-            # Detect [GENERAL_KNOWLEDGE] marker — LLM uses this when answering out-of-scope
-            # questions with training knowledge after user confirms.
-            is_general_knowledge = llm_summary.startswith("[GENERAL_KNOWLEDGE]")
-            if is_general_knowledge:
-                llm_summary = llm_summary[len("[GENERAL_KNOWLEDGE]"):].lstrip("\n").strip()
-
-            # Collect raw_results (structured as {"tool_id#N": {"_gene": ..., "_result": ...}})
-            raw_results = final_state.get("tool_results", {})
-            new_active_gene = final_state.get("active_gene") or active_gene
-            tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
-            usage_tracker = {
-                "input_tokens": final_state.get("input_tokens", 0),
-                "output_tokens": final_state.get("output_tokens", 0),
-                "model": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", None) or settings.DEFAULT_LLM_MODEL,
-            }
-
-            # Update session context
-            if "context" not in session:
-                session["context"] = {}
-            if new_active_gene and new_active_gene != "unknown":
-                session["context"]["active_gene"] = new_active_gene
-
-            # ── Rich formatting + suggestions (run concurrently) ─────────────
-            # _generate_response formats tool outputs into rich markdown.
-            # _generate_suggestions asks the LLM for 3 follow-up questions.
-            # Both are independent so we run them in parallel.
-            rich_message = llm_summary  # fallback
-            suggestions: List[str] = []
-
-            async def _format():
-                if raw_results and self._parent is not None:
-                    try:
-                        formatted = await self._parent._generate_response(
-                            effective_query, raw_results, session, intent="research", usage_tracker=usage_tracker
-                        )
-                        _msg = formatted.get("message") or ""
-                        _summary = formatted.get("summary") or ""
-                        _placeholder = {"", "No LinkedOmics results.", "No response generated."}
-                        msg_out = _msg if _msg.strip() and _msg.strip() not in _placeholder else llm_summary
-                        # Last resort: build a plain-text summary from raw results so the
-                        # user never sees "Analysis completed. See results below." with nothing below.
-                        if not msg_out.strip() and raw_results:
-                            lines = ["Here are the results from the tools that were called:\n"]
-                            for key, val in raw_results.items():
-                                tool_name = key.rsplit("#", 1)[0].replace("::", " › ")
-                                gene = val.get("_gene", "")
-                                result = val.get("_result", {})
-                                if isinstance(result, dict) and result.get("error"):
-                                    lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: ⚠️ {result['error']}")
-                                elif isinstance(result, dict):
-                                    keys = [k for k in result if not k.startswith("_")][:5]
-                                    lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: returned {len(keys)} fields ({', '.join(keys)})")
-                                else:
-                                    lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: completed")
-                            msg_out = "\n".join(lines)
-                        summary_out = _summary.strip() or llm_summary
-                        return msg_out, \
-                               summary_out, \
-                               formatted.get("tools_used") or tools_used, \
-                               formatted.get("raw_results") or raw_results, \
-                               formatted.get("visualizations") or []
-                    except Exception as e:
-                        logger.warning(f"[LangGraph] _generate_response failed: {e}")
-                return llm_summary, llm_summary, tools_used, raw_results, []
-
-            async def _suggest():
-                # Only generate suggestions after tool-based responses — for general
-                # chat there is no research context to base meaningful follow-ups on.
-                if not raw_results:
-                    return []
-                if self._parent is not None:
-                    try:
-                        return await self._parent._generate_suggestions(
-                            effective_query, llm_summary, session, n=3, usage_tracker=usage_tracker
-                        )
-                    except Exception as e:
-                        logger.warning(f"[LangGraph] _generate_suggestions failed: {e}")
-                return []
-
-            (rich_message, display_summary, tools_used, raw_results, visualizations), suggestions = await asyncio.gather(
-                _format(), _suggest()
-            )
-
-            # Literature responses are always shown in full — never collapsed.
-            is_literature_only = bool(tools_used) and all(
-                t.startswith("literature::") for t in tools_used
-            )
-
-            # Suppress summary when any tool call returned an error (e.g. invalid gene,
-            # partial multi-gene failure) — LLM narrative already covers the explanation.
-            any_errors = bool(raw_results) and any(
-                isinstance(v.get("_result"), dict) and "error" in v.get("_result", {})
-                for v in raw_results.values()
-            )
-            show_summary = bool(
-                not any_errors
-                and raw_results
-                and rich_message.strip()
-                and display_summary.strip()
-                and rich_message.strip() != display_summary.strip()
-            )
-            input_tokens = usage_tracker.get("input_tokens", 0)
-            output_tokens = usage_tracker.get("output_tokens", 0)
-            model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
-
-            formatted_response = {
-                "success": True,
-                "summary": display_summary if show_summary else "",
-                "message": rich_message,
-                "query": query,
-                "tools_used": list(set(tools_used)),
-                "raw_results": raw_results,
-                "visualizations": visualizations,
-                "analyses": [],
-                "suggestions": suggestions,
-                "datasets": [],
-                "papers": [],
-                "no_collapse": is_literature_only,  # frontend: never show "Show details"
-                "is_general_knowledge": is_general_knowledge,
-                "_input_tokens": input_tokens,
-                "_output_tokens": output_tokens,
-                "_model": model_name,
-            }
 
             # Persist to DB (or memory in standalone mode)
             turn_id = await self._save_query(session, query, formatted_response)
@@ -955,30 +1028,17 @@ RESPONSE STYLE:
             logger.info(f"[LangGraph Stream] Processing query: {query}")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Initializing session...'})}\n\n"
 
-            session = await self._get_session(session_id, user_id, client_ip=client_ip)
-            effective_query = _expand_contextual_shortcuts(query, session)
-            if effective_query != query:
-                logger.info("[LangGraph Stream] Expanded contextual shortcut for query processing.")
-            active_gene = session.get("context", {}).get("active_gene", "unknown")
-
-            # Rebuild graph
-            self._rebuild_graph(active_gene=active_gene)
+            session, effective_query, active_gene, initial_state = await self._prepare_execution_context(
+                query,
+                user_id,
+                session_id,
+                client_ip,
+                log_prefix="[LangGraph Stream]",
+            )
 
             if not self._graph:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'LangGraph not available.', 'query': query, 'session_id': session['id']}})}\n\n"
                 return
-
-            # Build input state
-            history_messages = self._format_history(session)
-            initial_messages = history_messages + [HumanMessage(content=effective_query)]
-            initial_state: AgentState = {
-                "messages": initial_messages,
-                "tool_results": {},
-                "active_gene": active_gene if active_gene != "unknown" else None,
-                "steps": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-            }
 
             logger.info("[LangGraph Stream] Starting execution...")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing query requirements...'})}\n\n"
@@ -1017,121 +1077,15 @@ RESPONSE STYLE:
 
             # --- POST-PROCESSING (Same as process_query) ---
             yield f"data: {json.dumps({'type': 'status', 'content': 'Formatting response...'})}\n\n"
-            
-            final_messages = final_state.get("messages", [])
-            final_ai_msg = next(
-                (m for m in reversed(final_messages) if isinstance(m, AIMessage) and not m.tool_calls),
-                None,
+            formatted_response = await self._build_response_from_final_state(
+                query=query,
+                effective_query=effective_query,
+                session=session,
+                active_gene=active_gene,
+                final_state=final_state,
+                log_prefix="[LangGraph Stream]",
+                include_stream_metadata=True,
             )
-            llm_summary = _normalize_content(final_ai_msg.content) if final_ai_msg else ""
-
-            # Detect [GENERAL_KNOWLEDGE] marker
-            is_general_knowledge = llm_summary.startswith("[GENERAL_KNOWLEDGE]")
-            if is_general_knowledge:
-                llm_summary = llm_summary[len("[GENERAL_KNOWLEDGE]"):].lstrip("\n").strip()
-
-            raw_results = final_state.get("tool_results", {})
-            new_active_gene = final_state.get("active_gene") or active_gene
-            tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
-            usage_tracker = {
-                "input_tokens": final_state.get("input_tokens", 0),
-                "output_tokens": final_state.get("output_tokens", 0),
-                "model": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", None) or settings.DEFAULT_LLM_MODEL,
-            }
-
-            if "context" not in session:
-                session["context"] = {}
-            if new_active_gene and new_active_gene != "unknown":
-                session["context"]["active_gene"] = new_active_gene
-
-            rich_message = llm_summary
-            suggestions: List[str] = []
-
-            async def _format():
-                if raw_results and self._parent is not None:
-                    try:
-                        formatted = await self._parent._generate_response(
-                            effective_query, raw_results, session, intent="research", usage_tracker=usage_tracker
-                        )
-                        _msg = formatted.get("message") or ""
-                        _summary = formatted.get("summary") or ""
-                        _placeholder = {"", "No LinkedOmics results.", "No response generated."}
-                        return _msg if _msg.strip() and _msg.strip() not in _placeholder else llm_summary, \
-                               (_summary.strip() or llm_summary), \
-                               formatted.get("tools_used") or tools_used, \
-                               formatted.get("raw_results") or raw_results, \
-                               formatted.get("visualizations") or []
-                    except Exception as e:
-                        logger.warning(f"[LangGraph Stream] _generate_response failed: {e}")
-                return llm_summary, llm_summary, tools_used, raw_results, []
-
-            async def _suggest():
-                if not raw_results:
-                    return []
-                if self._parent is not None:
-                    try:
-                        return await self._parent._generate_suggestions(
-                            effective_query, llm_summary, session, n=3, usage_tracker=usage_tracker
-                        )
-                    except Exception as e:
-                        logger.warning(f"[LangGraph Stream] _generate_suggestions failed: {e}")
-                return []
-
-            (rich_message, display_summary, tools_used_post, raw_results_post, visualizations), suggestions = await asyncio.gather(
-                _format(), _suggest()
-            )
-
-            is_literature_only = bool(tools_used_post) and all(
-                t.startswith("literature::") for t in tools_used_post
-            )
-
-            clarification_options = _parse_clarification_options(llm_summary)
-            if clarification_options:
-                llm_summary = _strip_options_line(llm_summary)
-                rich_message = _strip_options_line(rich_message)
-            rich_message = _strip_invalid_source_citations(rich_message, tools_used_post)
-            tool_sources = _build_tool_sources(raw_results_post)
-
-            # Only include a separate summary when rich_message is genuinely different
-            # from the LLM narrative (i.e. _generate_response produced richer content).
-            # When they're the same text the frontend would duplicate the content.
-            # Also suppress when any tool call returned an error (e.g. invalid gene,
-            # partial multi-gene failure) — LLM narrative already covers the explanation.
-            any_errors_post = bool(raw_results_post) and any(
-                isinstance(v.get("_result"), dict) and "error" in v.get("_result", {})
-                for v in raw_results_post.values()
-            )
-            show_summary = bool(
-                not any_errors_post
-                and raw_results_post
-                and rich_message.strip()
-                and display_summary.strip()
-                and rich_message.strip() != display_summary.strip()
-            )
-            input_tokens = usage_tracker.get("input_tokens", 0)
-            output_tokens = usage_tracker.get("output_tokens", 0)
-            model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
-
-            formatted_response = {
-                "success": True,
-                "summary": display_summary if show_summary else "",
-                "message": rich_message,
-                "query": query,
-                "tools_used": list(set(tools_used_post)),
-                "raw_results": raw_results_post,
-                "visualizations": visualizations,
-                "analyses": [],
-                "suggestions": suggestions,
-                "clarification_options": clarification_options,
-                "tool_sources": tool_sources,
-                "datasets": [],
-                "papers": [],
-                "no_collapse": is_literature_only,
-                "is_general_knowledge": is_general_knowledge,
-                "_input_tokens": input_tokens,
-                "_output_tokens": output_tokens,
-                "_model": model_name,
-            }
 
             turn_id = await self._save_query(session, query, formatted_response)
             
