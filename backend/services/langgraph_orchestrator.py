@@ -292,6 +292,91 @@ def _compact_literature(content: str) -> str:
     return json.dumps(data)
 
 
+def _survival_significance_key(result: Dict[str, Any]) -> float:
+    """Sort survival rows by strongest reported significance (lower is better)."""
+    for key in ("fdr", "pvalue"):
+        value = result.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return abs(float(value))
+        except (TypeError, ValueError):
+            continue
+    return float("inf")
+
+
+def _compact_tcga_survival(content: str) -> str:
+    """
+    Reduce TCGA survival payloads before feeding them back to the LLM.
+
+    The raw result is still preserved separately for downstream rendering. Here we
+    remove KM sample arrays and, for broader query modes, keep only the most
+    informative rows so the second agent turn does not re-ingest massive JSON.
+    """
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content
+
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or not isinstance(results, list):
+        return content
+
+    mode = int(data.get("mode", 0) or 0)
+    compacted = {k: v for k, v in data.items() if k != "results"}
+
+    simplified_results: List[Dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        reduced: Dict[str, Any] = {}
+        for key in ("gene", "cohort", "omics", "hr", "pvalue", "fdr", "n"):
+            value = item.get(key)
+            if value is not None and value != "":
+                reduced[key] = value
+        if not reduced:
+            reduced = {
+                key: value
+                for key, value in item.items()
+                if key != "samples" and not isinstance(value, (list, dict))
+            }
+        simplified_results.append(reduced)
+
+    sorted_results = sorted(simplified_results, key=_survival_significance_key)
+    significant_results = [
+        result for result in sorted_results if _survival_significance_key(result) < 0.05
+    ]
+
+    if mode in (1, 2):
+        compact_results = sorted_results[:10]
+    elif mode == 3:
+        compact_results = sorted_results[:12]
+    elif mode == 4:
+        compact_results = (significant_results or sorted_results)[:20]
+    else:
+        compact_results = sorted_results[:10]
+
+    compacted["results"] = compact_results
+    compacted["result_summary"] = {
+        "total_results": len(results),
+        "returned_results": len(compact_results),
+        "significant_results": len(significant_results),
+        "samples_omitted": any(isinstance(item, dict) and "samples" in item for item in results),
+    }
+    compacted["results_truncated"] = len(compact_results) < len(results)
+    compacted["tool_message_compacted"] = True
+    return json.dumps(compacted)
+
+
+def _compact_tool_message(tool_name: str, content: str) -> str:
+    """Shrink tool outputs for the LLM while keeping raw payloads elsewhere."""
+    if tool_name in ("literature__search_pubmed", "literature__get_pubmed_abstract"):
+        return _compact_literature(content)
+    if tool_name == "linkedomics__tcga_survival_analysis":
+        return _compact_tcga_survival(content)
+    return content
+
+
 def _make_tool_node(tools: List[BaseTool]):
     """
     Return an async tool node that executes all tool_calls from the last AIMessage,
@@ -315,7 +400,8 @@ def _make_tool_node(tools: List[BaseTool]):
 
             tool = tool_map.get(tool_name)
             if not tool:
-                content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+                raw_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+                content = raw_content
                 tool_latency_ms = 0
                 status = "missing"
             else:
@@ -323,15 +409,14 @@ def _make_tool_node(tools: List[BaseTool]):
                     tool_started = time.perf_counter()
                     raw = await tool.coroutine(**args)
                     tool_latency_ms = int((time.perf_counter() - tool_started) * 1000)
-                    content = json.dumps(raw) if not isinstance(raw, str) else raw
-                    # Truncate abstracts so the LLM summarises instead of reproducing
-                    if tool_name in ("literature__search_pubmed", "literature__get_pubmed_abstract"):
-                        content = _compact_literature(content)
+                    raw_content = json.dumps(raw) if not isinstance(raw, str) else raw
+                    content = _compact_tool_message(tool_name, raw_content)
                     status = "ok"
                 except Exception as e:
                     logger.error(f"[LangGraph] Tool {tool_name} error: {e}")
                     tool_latency_ms = int((time.perf_counter() - tool_started) * 1000)
-                    content = json.dumps({"error": str(e)})
+                    raw_content = json.dumps({"error": str(e)})
+                    content = raw_content
                     status = "error"
 
             # Track result with unique key (mirrors mcp_orchestrator convention)
@@ -342,9 +427,9 @@ def _make_tool_node(tools: List[BaseTool]):
 
             # Parse content back to dict for raw_results
             try:
-                result_dict = json.loads(content)
+                result_dict = json.loads(raw_content)
             except Exception:
-                result_dict = {"raw": content}
+                result_dict = {"raw": raw_content}
 
             # Extract gene from args (protein, gene_symbol, gene, or proteins list for batch tools)
             gene_arg = args.get("protein") or args.get("gene_symbol") or args.get("gene")
