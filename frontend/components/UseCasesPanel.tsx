@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowRight, Activity, Network, Pill, TrendingUp, FlaskConical, Dna, BarChart2, HeartPulse, ClipboardList } from "lucide-react"
+import { ArrowRight, Activity, Network, Pill, TrendingUp, FlaskConical, Dna, BarChart2, HeartPulse, ClipboardList, Zap } from "lucide-react"
 
 interface UseCase {
     id: string
@@ -14,24 +14,15 @@ interface UseCase {
 }
 
 const USE_CASES: UseCase[] = [
-    // Expression & Biomarkers
+    // Expression Analysis
     {
         id: "pan-cancer-expression",
         title: "Pan-cancer Expression Screen",
         description: "Check whether a gene is overexpressed or downregulated in tumor vs. normal tissue across 10 cancer types, at both RNA and protein levels.",
         exampleQuery: "Is EGFR overexpressed at the protein level in lung cancer compared to normal tissue?",
         tools: ["cancer_gene_expression"],
-        category: "Expression & Biomarkers",
+        category: "Expression Analysis",
         icon: BarChart2,
-    },
-    {
-        id: "survival-biomarker",
-        title: "Survival Biomarker Analysis",
-        description: "Determine whether high or low expression of a gene is associated with better or worse overall survival across cancer cohorts.",
-        exampleQuery: "Does high ESR1 expression predict better or worse survival in breast cancer?",
-        tools: ["overall_survival_per_cancer", "cancer_gene_expression"],
-        category: "Expression & Biomarkers",
-        icon: HeartPulse,
     },
     {
         id: "multi-omics-regulation",
@@ -39,17 +30,27 @@ const USE_CASES: UseCase[] = [
         description: "Identify what drives a gene's expression — RNA transcription, gene copy number amplification (SCNV), or DNA methylation silencing.",
         exampleQuery: "What drives EGFR overexpression in glioblastoma — gene amplification, methylation, or RNA levels?",
         tools: ["get_cis_correlations", "cancer_gene_expression"],
-        category: "Expression & Biomarkers",
+        category: "Expression Analysis",
         icon: Dna,
     },
-    // Drug & Clinical
+    // Survival Analysis
+    {
+        id: "survival-biomarker",
+        title: "Survival Biomarker Analysis",
+        description: "Determine whether high or low expression of a gene is associated with better or worse overall survival across cancer cohorts.",
+        exampleQuery: "Does high ESR1 expression predict better or worse survival in breast cancer?",
+        tools: ["overall_survival_per_cancer", "cancer_gene_expression"],
+        category: "Survival Analysis",
+        icon: HeartPulse,
+    },
+    // Drug Targets
     {
         id: "drug-target",
         title: "Drug Target Assessment",
         description: "Look up whether a gene is an FDA-approved oncology target, identify associated drugs, and check cancer cell line dependency.",
         exampleQuery: "Is TP53 a druggable oncology target, and what drugs or clinical trials are associated with it?",
         tools: ["get_target", "clinical_trial_information"],
-        category: "Drug & Clinical",
+        category: "Drug Targets",
         icon: Pill,
     },
     {
@@ -58,7 +59,7 @@ const USE_CASES: UseCase[] = [
         description: "Find drugs where a gene's expression level predicts sensitivity or resistance, based on clinical trial and pharmacogenomics data.",
         exampleQuery: "Which chemotherapy drugs are patients with high BRCA1 expression likely to be resistant to?",
         tools: ["clinical_trial_information"],
-        category: "Drug & Clinical",
+        category: "Drug Targets",
         icon: FlaskConical,
     },
     // Clinical Trials
@@ -98,13 +99,22 @@ const USE_CASES: UseCase[] = [
         category: "Clinical Trials",
         icon: ClipboardList,
     },
-    // Functional Networks
+    // Pathway Enrichment
+    {
+        id: "pathway-enrichment",
+        title: "GO & Pathway Enrichment",
+        description: "Run gene ontology and pathway enrichment analysis on a list of genes to identify overrepresented biological processes, molecular functions, and KEGG pathways.",
+        exampleQuery: "What biological pathways are enriched in the top co-expressed genes with TP53 in glioblastoma?",
+        tools: ["webgestalt"],
+        category: "Pathway Enrichment",
+        icon: Zap,
+    },
     {
         id: "functional-network",
-        title: "Functional Network & Pathway Analysis",
-        description: "Discover proteins that are functionally related to a gene in the FunMap network, then identify the biological pathways and GO terms they share.",
-        exampleQuery: "What proteins are functionally related to TP53, and what biological pathways do they enrich?",
-        tools: ["funmap_neighborhood", "webgestalt"],
+        title: "Functional Network Analysis",
+        description: "Discover proteins that are functionally related to a gene in the FunMap network based on co-expression, co-regulation, and protein interaction data.",
+        exampleQuery: "What proteins are functionally related to TP53 in the FunMap network?",
+        tools: ["funmap_neighborhood"],
         category: "Functional Networks",
         icon: Network,
     },
@@ -128,13 +138,19 @@ interface CategoryDef {
 
 const CATEGORIES: CategoryDef[] = [
     {
-        label: "Expression & Biomarkers",
+        label: "Expression Analysis",
         icon: BarChart2,
         color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
         borderColor: "border-teal-400 dark:border-teal-500",
     },
     {
-        label: "Drug & Clinical",
+        label: "Survival Analysis",
+        icon: HeartPulse,
+        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
+        borderColor: "border-rose-400 dark:border-rose-500",
+    },
+    {
+        label: "Drug Targets",
         icon: Pill,
         color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
         borderColor: "border-amber-400 dark:border-amber-500",
@@ -144,6 +160,12 @@ const CATEGORIES: CategoryDef[] = [
         icon: ClipboardList,
         color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
         borderColor: "border-rose-400 dark:border-rose-500",
+    },
+    {
+        label: "Pathway Enrichment",
+        icon: FlaskConical,
+        color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
+        borderColor: "border-emerald-400 dark:border-emerald-500",
     },
     {
         label: "Functional Networks",
