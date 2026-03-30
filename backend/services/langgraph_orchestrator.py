@@ -257,6 +257,19 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "literature::search_pubmed",
         "literature::get_pubmed_abstract",
     ),
+    "funmap": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::funmap_neighborhood",
+    ),
+    "correlation": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::get_cis_correlations",
+        "linkedomics::batch_get_cis_correlations",
+    ),
+    "pathway": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::webgestalt",
+    ),
 }
 
 _CONVERSATIONAL_QUERIES = {
@@ -282,6 +295,25 @@ _TRIAL_KEYWORDS = (
     "clinical trial", "clinical trials", "drug", "drugs", "treatment", "treatments",
     "resistant", "resistance", "sensitive", "sensitivity", "biomarker", "biomarkers",
     "predict response", "predict treatment", "response to", "therapy",
+)
+
+_FUNMAP_KEYWORDS = (
+    "funmap", "functional neighbor", "functional neighbourhood", "gene network",
+    "protein network", "co-functional", "network neighbor", "network neighbourhood",
+    "interaction network", "functional interaction",
+)
+
+_CORRELATION_KEYWORDS = (
+    "cis-correl", "cis correl",
+    "drives expression", "drive expression", "driving expression",
+    "translation efficiency",
+    "rna vs protein", "rna-protein correlation",
+    "copy number effect", "dosage effect",
+)
+
+_PATHWAY_KEYWORDS = (
+    "pathway", "enrichment", "gsea", "gene ontology", "go term",
+    "kegg", "webgestalt", "ora ", "wikipathway",
 )
 
 _EXPRESSION_KEYWORDS = (
@@ -324,6 +356,12 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "literature"
     if any(keyword in normalized for keyword in _TRIAL_KEYWORDS):
         return "trials"
+    if any(keyword in normalized for keyword in _PATHWAY_KEYWORDS):
+        return "pathway"
+    if any(keyword in normalized for keyword in _FUNMAP_KEYWORDS):
+        return "funmap"
+    if any(keyword in normalized for keyword in _CORRELATION_KEYWORDS):
+        return "correlation"
     if any(keyword in normalized for keyword in _EXPRESSION_KEYWORDS):
         return "expression"
     if any(keyword in normalized for keyword in _SURVIVAL_KEYWORDS):

@@ -100,6 +100,74 @@
       ]
     },
     {
+      "id": "funmap_single_gene",
+      "query": "Find functional neighbors of TP53 in the FunMap network.",
+      "expected_tools_all": [
+        "linkedomics::funmap_neighborhood"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information",
+        "linkedomics::cancer_gene_expression"
+      ]
+    },
+    {
+      "id": "funmap_network_keyword",
+      "query": "What genes are functionally connected to BRCA1?",
+      "expected_tools_all": [
+        "linkedomics::funmap_neighborhood"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "correlation_cis_methylation",
+      "query": "Show cis-correlations for BRCA1 across CPTAC cohorts.",
+      "expected_tools_all": [
+        "linkedomics::get_cis_correlations"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Cis-regulatory question: methylation → expression, should use get_cis_correlations."
+    },
+    {
+      "id": "correlation_cis_explicit",
+      "query": "Show cis-correlations for MYC.",
+      "expected_tools_all": [
+        "linkedomics::get_cis_correlations"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::cancer_gene_expression"
+      ]
+    },
+    {
+      "id": "pathway_enrichment_genelist",
+      "query": "Run pathway enrichment analysis on TP53, MDM2, CDKN1A, ATM, and BRCA1.",
+      "expected_tools_all": [
+        "linkedomics::webgestalt"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "pathway_enrichment_explicit",
+      "query": "What pathways are enriched in this gene set: EGFR, MET, ERBB2, ALK, RET?",
+      "expected_tools_all": [
+        "linkedomics::webgestalt"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::cancer_gene_expression"
+      ]
+    },
+    {
       "id": "followup_anchor_survival",
       "session_key": "tp53_followup",
       "query": "Show TP53 overall survival in BRCA.",
