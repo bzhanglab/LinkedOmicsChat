@@ -16,47 +16,59 @@ type TabId = typeof TABS[number]["id"]
 const ANALYSES = [
     {
         name: "Survival analysis",
-        desc: "Kaplan-Meier overall survival curves stratified by high/low expression or other molecular features. Returns the plot, log-rank p-value, hazard ratio, and a scrollable at-risk table for all event time points.",
+        desc: "Single-gene survival associations across CPTAC cohorts plus TCGA multi-omics survival analysis across 35+ cohort codes. Depending on the query, results may include Kaplan-Meier plots, cohort-level summaries, or genome-wide prognostic scans.",
     },
     {
-        name: "Differential expression",
-        desc: "Volcano plot of tumor vs. normal differential expression with user-configurable fold-change and significance thresholds. Highlights up- and down-regulated genes.",
+        name: "Tumor-vs-normal expression",
+        desc: "Screen RNA and protein expression differences between tumor and normal tissue across 10 LinkedOmics/CPTAC cohorts, returned as cohort-level significance summaries and visual tiles.",
     },
     {
-        name: "Correlation analysis",
-        desc: "Gene-level Spearman/Pearson correlation across omics layers within a cohort, returned as ranked tables with statistical significance.",
+        name: "Proteogenomic correlation",
+        desc: "Analyze RNA-protein, methylation-RNA, and SCNA-RNA relationships within a cohort to understand what drives a gene's expression pattern and proteogenomic behavior.",
     },
     {
-        name: "Multi-omics query",
-        desc: "Natural-language retrieval of molecular profiles, co-expression partners, drug targets, and pathway-level summaries across all TCGA and CPTAC cohorts.",
+        name: "Drug target assessment",
+        desc: "Evaluate therapeutic actionability using LinkedOmics target annotations, including target tier, associated drugs, tumor overexpression, phosphosite activity, dependency, antigen evidence, and related tumor-biology signals.",
     },
     {
-        name: "Network & pathway",
-        desc: "FunMap functional neighborhood analysis and WebGestalt pathway enrichment for gene sets of interest.",
+        name: "Clinical trial biomarkers",
+        desc: "Find genes and pathways linked to treatment sensitivity or resistance, discover studies by drug or cancer type, and run per-study or meta-analysis biomarker ranking across LinkedOmics trial datasets.",
     },
     {
-        name: "Proteogenomics",
-        desc: "Integration of CPTAC mass spectrometry proteomics and phosphoproteomics with matched TCGA genomic data for mRNA–protein and SCNA–protein correlation.",
+        name: "Functional networks",
+        desc: "Explore FunMap functional neighborhoods to identify proteins that are likely co-functional, co-regulated, or pathway-related to a gene of interest.",
+    },
+    {
+        name: "Pathway enrichment",
+        desc: "Run WebGestalt overrepresentation analysis on gene sets to identify enriched biological processes and pathways with ranked significance summaries and plots.",
+    },
+    {
+        name: "Literature evidence",
+        desc: "Search PubMed and retrieve article abstracts to connect LinkedOmics findings to peer-reviewed biomedical literature and supporting citations.",
     },
 ]
 
 const EXAMPLE_QUERIES = [
     { q: "Is ESR1 associated with survival in BRCA?",    cat: "Survival" },
-    { q: "Survival analysis for PIK3CA in LUAD",          cat: "Survival" },
-    { q: "EGFR expression across TCGA LUAD",              cat: "Expression" },
-    { q: "RB1 co-expression partners in OV",              cat: "Correlation" },
-    { q: "Compare KRAS RNA vs protein in PDAC",           cat: "Proteogenomics" },
-    { q: "Differential expression GBM vs normal",         cat: "Expression" },
-    { q: "LinkedOmics network for MYC in BRCA",           cat: "Network" },
-    { q: "Phosphoproteomics of EGFR in LUAD",             cat: "Proteogenomics" },
+    { q: "Which genes are prognostic in BRCA at the RNA level?", cat: "Survival" },
+    { q: "EGFR expression in GBM vs normal tissue",       cat: "Expression" },
+    { q: "What drives EGFR overexpression in glioblastoma — SCNA, methylation, or RNA?", cat: "Proteogenomics" },
+    { q: "Is EGFR a druggable oncology target?",          cat: "Drug targets" },
+    { q: "Which genes best predict paclitaxel response in breast cancer?", cat: "Clinical trials" },
+    { q: "Find functional neighbors of TP53 in the FunMap network", cat: "Network" },
+    { q: "Run WebGestalt enrichment for BRCA1 neighbors", cat: "Pathway" },
+    { q: "Find recent papers on ESR1 and breast cancer survival", cat: "Literature" },
 ]
 
 const CAT_STYLE: Record<string, string> = {
     "Survival":        "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400",
     "Expression":      "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
-    "Correlation":     "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
     "Proteogenomics":  "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400",
     "Network":         "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    "Drug targets":    "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
+    "Clinical trials": "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+    "Pathway":         "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+    "Literature":      "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
 }
 
 export function AboutContent() {
@@ -172,7 +184,7 @@ export function AboutContent() {
                                         <span className="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400 font-medium">NCI</span>
                                     </div>
                                     <p className="text-xs text-muted-foreground leading-relaxed">
-                                        Multi-omics profiling of 11,000+ tumor samples across 32 cancer types. Includes mRNA, miRNA, methylation, copy number, protein (RPPA), and clinical data.
+                                        Multi-omics profiling of 11,000+ tumor samples across 32 primary cancer types. Includes mRNA, miRNA, methylation, copy number, protein (RPPA), and clinical data.
                                     </p>
                                     <a href="https://www.linkedomics.org/login.php#dataSource" target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs text-primary hover:underline">
                                         View cohorts on LinkedOmics ↗
@@ -196,9 +208,9 @@ export function AboutContent() {
                                 </div>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                All data are accessed in real time via{" "}
+                                Core omics datasets are accessed in real time via{" "}
                                 <a href="https://www.linkedomics.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">LinkedOmics</a>
-                                {" "}(linkedomics.org). LinkedOmicsChat does not store or redistribute raw omics data.
+                                {" "}(linkedomics.org), including LinkedOmics-hosted APIs for TCGA survival analysis. LinkedOmicsChat does not store or redistribute raw omics data.
                             </p>
                         </div>
 

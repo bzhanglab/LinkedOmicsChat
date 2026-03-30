@@ -88,7 +88,7 @@ export function OmicsCohorts() {
             {/* Cohorts — scrollable, matches omics height */}
             <div className="flex flex-col">
                 <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">
-                    TCGA Cohorts ({COHORTS.length})
+                    TCGA Cohorts & Aggregate Cohorts ({COHORTS.length})
                 </h3>
                 <div
                     className="overflow-y-auto rounded border border-border text-xs"

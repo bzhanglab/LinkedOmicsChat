@@ -38,12 +38,12 @@ function Divider() {
 
 const DATA_SOURCES = [
     {
-        name: "LinkedOmics KB",
-        url: "https://kb.linkedomics.org",
+        name: "LinkedOmics",
+        url: "https://www.linkedomics.org",
         color: "bg-teal-50 border-teal-100",
         dot: "bg-teal-500",
-        description: "Pan-cancer expression, survival associations, drug targets, and clinical trial information across 33 TCGA cancer types.",
-        tools: ["Gene expression by cancer type", "Overall survival correlations", "Drug target lookup", "Clinical trial data"],
+        description: "Core multi-omics and analysis services used by the app, including TCGA survival, CPTAC-integrated expression and correlation analyses, drug target annotations, and treatment-response studies served through LinkedOmics-hosted APIs.",
+        tools: ["TCGA survival", "CPTAC-integrated expression", "Drug target lookup", "Clinical trial studies"],
     },
     {
         name: "FunMap",
@@ -66,8 +66,8 @@ const DATA_SOURCES = [
         url: "https://proteomics.cancer.gov/programs/cptac",
         color: "bg-rose-50 border-rose-100",
         dot: "bg-rose-500",
-        description: "Clinical Proteomic Tumor Analysis Consortium proteomics, phosphoproteomics, and clinical data for 10 cancer types.",
-        tools: ["Protein abundance", "Phosphorylation sites", "mRNA–protein correlation", "Clinical metadata"],
+        description: "Underlying proteomics and phosphoproteomics datasets used in LinkedOmics-supported proteogenomic analyses across 10 cohorts.",
+        tools: ["Protein abundance", "Phosphorylation sites", "mRNA-protein correlation", "Clinical metadata"],
     },
     {
         name: "PubMed",
@@ -76,6 +76,14 @@ const DATA_SOURCES = [
         dot: "bg-amber-500",
         description: "NCBI literature search integrated into the research workflow for evidence-backed answers.",
         tools: ["Keyword and gene searches", "Recent publication summaries", "Abstract-level evidence"],
+    },
+    {
+        name: "MyGene.info",
+        url: "https://mygene.info",
+        color: "bg-sky-50 border-sky-100",
+        dot: "bg-sky-500",
+        description: "Identifier normalization service used to resolve Ensembl and UniProt identifiers to HGNC gene symbols before analysis.",
+        tools: ["Gene ID normalization", "Ensembl to HGNC", "UniProt to HGNC"],
     },
 ]
 
@@ -141,12 +149,12 @@ const ARCH_STEPS = [
     {
         step: "3",
         title: "MCP tools query real APIs",
-        desc: "Each tool calls the actual API endpoint (LinkedOmics KB, FunMap, WebGestalt, CPTAC) and returns structured data.",
+        desc: "Each tool calls the relevant live endpoint or service layer, including LinkedOmics-hosted APIs, FunMap, WebGestalt, PubMed, and MyGene.info.",
     },
     {
         step: "4",
         title: "LLM synthesizes the answer",
-        desc: "Results are formatted into a cited markdown response. Inline source chips link directly to the API call that was made.",
+        desc: "Results are formatted into a cited markdown response with visualizations, tables, and literature references.",
     },
 ]
 
@@ -157,11 +165,7 @@ const FAQS = [
     },
     {
         q: "What cancer types are supported?",
-        a: "All 33 TCGA cancer types (BRCA, LUAD, COAD, OV, GBM, KIRC, and more) for expression and survival data. CPTAC proteomics covers 10 cancer types: BRCA, LUAD, COAD, OV, GBM, PDAC, UCEC, HNSCC, LSCC, and CCRCC.",
-    },
-    {
-        q: "How do the inline source chips work?",
-        a: "After each data point retrieved from a tool, the response includes a small source chip. Clicking it opens the exact API endpoint that was called, including the gene and parameters used — so you can inspect or reproduce the result.",
+        a: "TCGA survival analysis supports 35 cohort codes, including aggregate cohorts such as COADREAD, GBMLGG, KIPAN, and STES. CPTAC-integrated expression, survival, and correlation analyses currently cover 10 cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC.",
     },
     {
         q: "Can it run multi-step analyses automatically?",
@@ -173,7 +177,7 @@ const FAQS = [
     },
     {
         q: "Is the data real or simulated?",
-        a: "All data comes from live API calls to LinkedOmics KB, FunMap, WebGestalt, and CPTAC. No mock data is used in production responses.",
+        a: "Production responses use live API calls to LinkedOmics-hosted services, FunMap, WebGestalt, PubMed, and MyGene.info as needed.",
     },
 ]
 
@@ -229,8 +233,8 @@ export default function DocsPage() {
                     <SectionLabel>Data Sources</SectionLabel>
                     <SectionTitle icon={<Database className="w-6 h-6" />}>Where the data comes from</SectionTitle>
                     <SectionDesc>
-                        Every response is grounded in live API calls to these databases.
-                        Source chips in responses link directly to the exact endpoint that was queried.
+                        Results are grounded in live API calls to these datasets and services.
+                        Different workflows query different sources in real time depending on the question.
                     </SectionDesc>
 
                     <div className="grid sm:grid-cols-2 gap-4">
@@ -373,7 +377,7 @@ export default function DocsPage() {
                         </Link>
                     </div>
                     <p className="mt-6 text-xs text-slate-400">
-                        Built by Zhang Lab · Data from TCGA, CPTAC, LinkedOmics, and PubMed
+                        Built by Zhang Lab · Data and services from LinkedOmics, TCGA, CPTAC, PubMed, and related research resources
                     </p>
                 </div>
 

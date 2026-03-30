@@ -247,6 +247,9 @@ export default function WelcomePage() {
 
                 {/* Nav links */}
                 <div className="hidden sm:flex items-center gap-6">
+                    <Link href="/about" className="text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium">
+                        About
+                    </Link>
                     <Link href="/docs" className="text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium">
                         Docs
                     </Link>
@@ -340,6 +343,7 @@ export default function WelcomePage() {
             <div className="relative z-10 flex items-center justify-between px-6 lg:px-10 py-4">
                 <p className="text-xs text-slate-400">© 2026 Zhang Lab</p>
                 <div className="hidden sm:flex items-center gap-4 text-xs text-slate-400">
+                    <Link href="/about" className="hover:text-slate-600 transition-colors">About</Link>
                     <Link href="/docs" className="hover:text-slate-600 transition-colors">Docs</Link>
                     <Link href="/login" className="hover:text-slate-600 transition-colors">Sign in</Link>
                     <Link href="/register" className="hover:text-slate-600 transition-colors">Register</Link>
