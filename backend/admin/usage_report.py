@@ -9,9 +9,14 @@ Run from the backend/ directory:
 import sys
 import argparse
 import time
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Ignore unrelated shell DEBUG values (for example "release" from an IDE env)
+# so Pydantic can read the boolean DEBUG setting from backend/.env.
+os.environ.pop("DEBUG", None)
 
 import logging
 logging.disable(logging.CRITICAL)  # suppress all library noise

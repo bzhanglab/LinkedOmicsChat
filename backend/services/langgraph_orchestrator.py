@@ -178,9 +178,9 @@ def _make_agent_node(llm_with_tools, system_prompt: str):
         response = await llm_with_tools.ainvoke(messages)
 
         # Accumulate token usage from this LLM call
-        usage = getattr(response, "usage_metadata", None) or {}
-        in_tok = usage.get("input_tokens", 0) or 0
-        out_tok = usage.get("output_tokens", 0) or 0
+        usage = LLMFactory._extract_usage(response, llm_with_tools)
+        in_tok = usage.input_tokens
+        out_tok = usage.output_tokens
 
         return {
             "messages": [response],
@@ -805,8 +805,11 @@ RESPONSE STYLE:
             raw_results = final_state.get("tool_results", {})
             new_active_gene = final_state.get("active_gene") or active_gene
             tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
-            input_tokens = final_state.get("input_tokens", 0)
-            output_tokens = final_state.get("output_tokens", 0)
+            usage_tracker = {
+                "input_tokens": final_state.get("input_tokens", 0),
+                "output_tokens": final_state.get("output_tokens", 0),
+                "model": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", None) or settings.DEFAULT_LLM_MODEL,
+            }
 
             # Update session context
             if "context" not in session:
@@ -825,7 +828,7 @@ RESPONSE STYLE:
                 if raw_results and self._parent is not None:
                     try:
                         formatted = await self._parent._generate_response(
-                            effective_query, raw_results, session, intent="research"
+                            effective_query, raw_results, session, intent="research", usage_tracker=usage_tracker
                         )
                         _msg = formatted.get("message") or ""
                         _summary = formatted.get("summary") or ""
@@ -865,7 +868,7 @@ RESPONSE STYLE:
                 if self._parent is not None:
                     try:
                         return await self._parent._generate_suggestions(
-                            effective_query, llm_summary, session, n=3
+                            effective_query, llm_summary, session, n=3, usage_tracker=usage_tracker
                         )
                     except Exception as e:
                         logger.warning(f"[LangGraph] _generate_suggestions failed: {e}")
@@ -893,6 +896,9 @@ RESPONSE STYLE:
                 and display_summary.strip()
                 and rich_message.strip() != display_summary.strip()
             )
+            input_tokens = usage_tracker.get("input_tokens", 0)
+            output_tokens = usage_tracker.get("output_tokens", 0)
+            model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
 
             formatted_response = {
                 "success": True,
@@ -910,6 +916,7 @@ RESPONSE STYLE:
                 "is_general_knowledge": is_general_knowledge,
                 "_input_tokens": input_tokens,
                 "_output_tokens": output_tokens,
+                "_model": model_name,
             }
 
             # Persist to DB (or memory in standalone mode)
@@ -1026,8 +1033,11 @@ RESPONSE STYLE:
             raw_results = final_state.get("tool_results", {})
             new_active_gene = final_state.get("active_gene") or active_gene
             tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
-            input_tokens = final_state.get("input_tokens", 0)
-            output_tokens = final_state.get("output_tokens", 0)
+            usage_tracker = {
+                "input_tokens": final_state.get("input_tokens", 0),
+                "output_tokens": final_state.get("output_tokens", 0),
+                "model": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", None) or settings.DEFAULT_LLM_MODEL,
+            }
 
             if "context" not in session:
                 session["context"] = {}
@@ -1041,7 +1051,7 @@ RESPONSE STYLE:
                 if raw_results and self._parent is not None:
                     try:
                         formatted = await self._parent._generate_response(
-                            effective_query, raw_results, session, intent="research"
+                            effective_query, raw_results, session, intent="research", usage_tracker=usage_tracker
                         )
                         _msg = formatted.get("message") or ""
                         _summary = formatted.get("summary") or ""
@@ -1061,7 +1071,7 @@ RESPONSE STYLE:
                 if self._parent is not None:
                     try:
                         return await self._parent._generate_suggestions(
-                            effective_query, llm_summary, session, n=3
+                            effective_query, llm_summary, session, n=3, usage_tracker=usage_tracker
                         )
                     except Exception as e:
                         logger.warning(f"[LangGraph Stream] _generate_suggestions failed: {e}")
@@ -1098,6 +1108,9 @@ RESPONSE STYLE:
                 and display_summary.strip()
                 and rich_message.strip() != display_summary.strip()
             )
+            input_tokens = usage_tracker.get("input_tokens", 0)
+            output_tokens = usage_tracker.get("output_tokens", 0)
+            model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
 
             formatted_response = {
                 "success": True,
@@ -1117,6 +1130,7 @@ RESPONSE STYLE:
                 "is_general_knowledge": is_general_knowledge,
                 "_input_tokens": input_tokens,
                 "_output_tokens": output_tokens,
+                "_model": model_name,
             }
 
             turn_id = await self._save_query(session, query, formatted_response)

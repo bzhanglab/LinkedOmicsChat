@@ -1382,7 +1382,6 @@ class MCPOrchestrator:
             except Exception as e:
                 logger.warning(f"Could not create LangGraphOrchestrator: {e}. Falling back to legacy planner.")
 
-        
         # Try to load valid genes for strict validation
         self.valid_genes = set()
         try:
@@ -1398,18 +1397,72 @@ class MCPOrchestrator:
                 logger.warning(f"valid_genes.txt not found at {valid_genes_path}, falling back to loose validation")
         except Exception as e:
             logger.error(f"Failed to load valid_genes.txt: {e}")
-        
+
         # Expert guidelines for biological reasoning
         self.BIO_GUIDELINES = """
 ### BIOLOGICAL REASONING GUIDELINES:
 1. **Statistical Significance**: A p-value < 0.05 is typically significant. For survival curves (Kaplan-Meier), a lower p-value indicates a stronger correlation.
-2. **Omics Vocabulary**: 
-   - 'mRNA/RNA' refers to gene expression levels. 
+2. **Omics Vocabulary**:
+   - 'mRNA/RNA' refers to gene expression levels.
    - 'Protein' refers to proteomic abundance.
    - 'Log Ratio' or 'Fold Change' indicates relative expression (positive = upregulated, negative = downregulated).
 3. **Cross-Omics Synthesis**: If you have information about both expression and survival, explain how they relate (e.g., "High expression of MYC correlates with poor survival outcomes, suggesting oncogenic potential").
 4. **Context Matters**: LinkedOmics data comes from specific CPTAC and TCGA cohorts. Always mention the cancer type (e.g., GBM, BRCA) if known.
 """
+
+    def _default_llm_model_name(self) -> Optional[str]:
+        """Best-effort model name for usage attribution."""
+        return (
+            getattr(self.llm, "model_name", None)
+            or getattr(self.llm, "model", None)
+            or settings.DEFAULT_LLM_MODEL
+        )
+
+    def _new_llm_usage_tracker(
+        self,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Initialize a per-query usage accumulator."""
+        return {
+            "input_tokens": int(input_tokens or 0),
+            "output_tokens": int(output_tokens or 0),
+            "model": model or self._default_llm_model_name(),
+        }
+
+    def _record_llm_usage(
+        self,
+        usage_tracker: Optional[Dict[str, Any]],
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        model: Optional[str] = None,
+    ) -> None:
+        """Accumulate LLM usage into a mutable per-query tracker."""
+        if usage_tracker is None:
+            return
+        usage_tracker["input_tokens"] = int(usage_tracker.get("input_tokens", 0) or 0) + int(input_tokens or 0)
+        usage_tracker["output_tokens"] = int(usage_tracker.get("output_tokens", 0) or 0) + int(output_tokens or 0)
+        if model:
+            usage_tracker["model"] = model
+
+    async def _invoke_llm_tracked(
+        self,
+        messages: List[Any],
+        usage_tracker: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> str:
+        """Invoke the configured LLM and merge any reported usage into the tracker."""
+        result = await LLMFactory.invoke_async_with_metadata(self.llm, messages, **kwargs)
+        self._record_llm_usage(
+            usage_tracker,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            model=result.model,
+        )
+        return result.text
     
     async def initialize(self):
         """Initialize MCP connections (and the LangGraph agent if enabled)."""
@@ -1482,13 +1535,14 @@ class MCPOrchestrator:
 
             # Get or create session
             session = await self._get_or_create_session(session_id, user_id, client_ip=client_ip)
+            usage_tracker = self._new_llm_usage_tracker()
             
             # Simple intent classification
-            intent = await self._classify_intent(query, session)
+            intent = await self._classify_intent(query, session, usage_tracker=usage_tracker)
             logger.info(f"Query intent: {intent}")
             
             # Use LLM to determine which tools to call
-            tools_to_call = await self._determine_tools(query, intent, session)
+            tools_to_call = await self._determine_tools(query, intent, session, usage_tracker=usage_tracker)
             
             # Execute tools
             results = {}
@@ -1546,7 +1600,7 @@ class MCPOrchestrator:
                 session["context"]["active_gene"] = active_gene
             
             # Generate final response using LLM (pass intent to avoid gene extraction for conversational queries)
-            final_response = await self._generate_response(query, results, session, intent)
+            final_response = await self._generate_response(query, results, session, intent, usage_tracker=usage_tracker)
             
             # Format response to match expected API structure (before saving)
             formatted_response = {
@@ -1560,7 +1614,10 @@ class MCPOrchestrator:
                 "analyses": [],
                 "suggestions": [],
                 "datasets": [],
-                "papers": []
+                "papers": [],
+                "_input_tokens": usage_tracker.get("input_tokens", 0),
+                "_output_tokens": usage_tracker.get("output_tokens", 0),
+                "_model": usage_tracker.get("model") or self._default_llm_model_name(),
             }
             
             # Update session
@@ -1729,7 +1786,12 @@ class MCPOrchestrator:
                 self.sessions[session["id"]] = session
                 return session
     
-    async def _classify_intent(self, query: str, session: Dict[str, Any]) -> str:
+    async def _classify_intent(
+        self,
+        query: str,
+        session: Dict[str, Any],
+        usage_tracker: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Classify query intent using LLM for robust, context-aware categorization"""
         
         # Fast path: very short queries are likely conversational
@@ -1777,9 +1839,9 @@ Current User Query: "{query}"
 
 Classify this query. Return JSON only."""
 
-                response = await LLMFactory.invoke_async(
-                    self.llm,
-                    [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+                response = await self._invoke_llm_tracked(
+                    [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)],
+                    usage_tracker=usage_tracker,
                 )
                 
                 # Parse LLM response
@@ -1968,7 +2030,12 @@ Classify this query. Return JSON only."""
             text = text[:80_000] + "\n...[truncated]..."
         return text
 
-    async def _llm_summarize_tool_results(self, query: str, results: Dict[str, Any]) -> str:
+    async def _llm_summarize_tool_results(
+        self,
+        query: str,
+        results: Dict[str, Any],
+        usage_tracker: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Ask the LLM to summarize tool outputs (short summary separate from full message)."""
         if not self.llm or settings.MOCK_LLM or not results:
             return ""
@@ -2015,8 +2082,7 @@ Rules:
 - Mention at most 3 specific genes, pathways, cohorts, or terms unless the user explicitly asked for an exhaustive list.
 - Prefer synthesis, ranking, caveats, and notable exceptions over repeating exact values that will already be visible in the detailed output.
 """
-            resp = await LLMFactory.invoke_async(
-                self.llm,
+            resp = await self._invoke_llm_tracked(
                 [
                     SystemMessage(
                         content=(
@@ -2026,6 +2092,7 @@ Rules:
                     ),
                     HumanMessage(content=prompt),
                 ],
+                usage_tracker=usage_tracker,
             )
             return (resp or "").strip()
         except Exception as e:
@@ -2038,6 +2105,7 @@ Rules:
         response_text: str,
         session: Dict[str, Any],
         n: int = 3,
+        usage_tracker: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """Generate n follow-up question suggestions using the LLM.
 
@@ -2079,12 +2147,12 @@ IMPORTANT — LinkedOmicsChat can ONLY answer questions that use one of these ca
 Every suggestion MUST be answerable by one of the capabilities above.
 Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structure, sequence alignment, GWAS, variant annotation, drug mechanism of action, or anything else outside this list.
 """
-            resp = await LLMFactory.invoke_async(
-                self.llm,
+            resp = await self._invoke_llm_tracked(
                 [
                     SystemMessage(content="You are LinkedOmicsChat, a specialized cancer multi-omics assistant. Generate concise follow-up questions that are answerable using LinkedOmics data (expression, survival, drug targets, pathway enrichment, FunMap interactions)."),
                     HumanMessage(content=prompt),
                 ],
+                usage_tracker=usage_tracker,
             )
             text = (resp or "").strip()
             # Parse numbered lines
@@ -2248,7 +2316,8 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
         query: str,
         available_tools: Dict[str, Dict[str, Any]],
         history_str: str,
-        session: Optional[Dict[str, Any]] = None
+        session: Optional[Dict[str, Any]] = None,
+        usage_tracker: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Use LLM to produce a tool-call plan with arguments, validated by schema."""
         if not self.llm or not available_tools:
@@ -2287,7 +2356,7 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
             logger.info(f"History context preview: {history_str[:200]}...")
 
         # Attempt 1
-        raw = await LLMFactory.invoke_async(self.llm, [system, human])
+        raw = await self._invoke_llm_tracked([system, human], usage_tracker=usage_tracker)
         # Log raw string content
         logger.info(f"Raw LLM Tool Plan: {raw}")
         parsed = self._extract_json_obj(raw)
@@ -2310,12 +2379,18 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
                 "Return ONLY valid JSON in the required shape with correct tool ids and required arguments."
             )
         )
-        raw2 = await LLMFactory.invoke_async(self.llm, [system, human2])
+        raw2 = await self._invoke_llm_tracked([system, human2], usage_tracker=usage_tracker)
         logger.info(f"Raw LLM Tool Plan (Attempt 2): {raw2}")
         parsed2 = self._extract_json_obj(raw2)
         return self._validate_tool_calls(parsed2, available_tools)
 
-    async def _determine_tools(self, query: str, intent: str, session: Dict[str, Any] = None) -> list:
+    async def _determine_tools(
+        self,
+        query: str,
+        intent: str,
+        session: Dict[str, Any] = None,
+        usage_tracker: Optional[Dict[str, Any]] = None,
+    ) -> list:
         """Determine which MCP tools to call based on query.
 
         Tool selection is fully delegated to the LLM via _llm_plan_tools, which
@@ -2333,7 +2408,7 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
                 else:
                     logger.warning("No session provided to _determine_tools")
 
-                planned = await self._llm_plan_tools(query, available_tools, history_str, session)
+                planned = await self._llm_plan_tools(query, available_tools, history_str, session, usage_tracker=usage_tracker)
                 logger.info(f"LLM planned tools: {planned}")
                 return planned  # trust LLM; empty list means no tools needed
             except Exception as e:
@@ -2349,7 +2424,8 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
         query: str,
         results: Dict[str, Any],
         session: Dict[str, Any],
-        intent: str = "general"
+        intent: str = "general",
+        usage_tracker: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Generate final response from tool results"""
         if not results:
@@ -2401,8 +2477,7 @@ The user says: "{query}"
 
 Please provide a helpful, natural, and professional response. If they are just greeting you, greet them back as a Senior Multi-Omics Bioinformatics Analyst. If they are asking for help or about your capabilities, explain them clearly."""
                 
-                response = await LLMFactory.invoke_async(
-                    self.llm,
+                response = await self._invoke_llm_tracked(
                     [
                         SystemMessage(
                             content=(
@@ -2411,7 +2486,8 @@ Please provide a helpful, natural, and professional response. If they are just g
                             )
                         ),
                         HumanMessage(content=prompt)
-                    ]
+                    ],
+                    usage_tracker=usage_tracker,
                 )
                 
                 return {
@@ -2456,7 +2532,7 @@ Please provide a helpful, natural, and professional response. If they are just g
                     tools_used = [k for k in results.keys() if (k.split('#')[0] if '#' in k else k) in rendered_ids]
                 else:
                     tools_used = list(results.keys())
-                summary = await self._llm_summarize_tool_results(query, results)
+                summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
                 return {
                     "success": True,
                     "summary": summary or "",
@@ -2509,8 +2585,7 @@ Here is the information I found:
 
 Please provide a clear, informative response about this gene. Include the key details: what the gene is, what chromosome it's on, and its main function. Write in a natural, conversational way. Refer to previous context if relevant."""
                 
-                response = await LLMFactory.invoke_async(
-                    self.llm,
+                response = await self._invoke_llm_tracked(
                     [
                         SystemMessage(
                             content=(
@@ -2521,12 +2596,13 @@ Please provide a clear, informative response about this gene. Include the key de
                             )
                         ),
                         HumanMessage(content=prompt)
-                    ]
+                    ],
+                    usage_tracker=usage_tracker,
                 )
                 
                 # Ensure the response actually contains the information
                 if response and len(response.strip()) > 20:
-                    summary = await self._llm_summarize_tool_results(query, results)
+                    summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
                     return {
                         "success": True,
                         "summary": summary or "",
@@ -2570,7 +2646,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 else:
                     formatted_results.append(f"**{tool_id}**:\n{result}")
             message = f"I found the following information:\n\n" + "\n\n".join(formatted_results)
-        summary = await self._llm_summarize_tool_results(query, results)
+        summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
         return {
             "success": True,
             "summary": summary or "",
@@ -3778,6 +3854,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
 
             in_tok = response.get("_input_tokens", 0) or 0
             out_tok = response.get("_output_tokens", 0) or 0
+            model_name = response.get("_model") or self._default_llm_model_name()
             if (in_tok or out_tok) and session.get("client_ip"):
                 db = SessionLocal()
                 try:
@@ -3785,7 +3862,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                         ip_address=session["client_ip"],
                         input_tokens=in_tok,
                         output_tokens=out_tok,
-                        model=settings.DEFAULT_LLM_MODEL,
+                        model=model_name,
                         timestamp=time.time(),
                     ))
                     db.commit()
@@ -3823,6 +3900,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     # Record token usage if present (set by LangGraphOrchestrator)
                     in_tok = response.get("_input_tokens", 0) or 0
                     out_tok = response.get("_output_tokens", 0) or 0
+                    model_name = response.get("_model") or self._default_llm_model_name()
                     if in_tok or out_tok:
                         if session.get("user_id") not in (None, "guest"):
                             db.add(TokenUsage(
@@ -3830,7 +3908,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                                 session_id=session_id,
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
-                                model=settings.DEFAULT_LLM_MODEL,
+                                model=model_name,
                                 timestamp=time.time(),
                             ))
                         elif session.get("client_ip"):
@@ -3838,7 +3916,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                                 ip_address=session["client_ip"],
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
-                                model=settings.DEFAULT_LLM_MODEL,
+                                model=model_name,
                                 timestamp=time.time(),
                             ))
 
@@ -3905,6 +3983,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     # Record token usage if present (set by LangGraphOrchestrator)
                     in_tok = response.get("_input_tokens", 0) or 0
                     out_tok = response.get("_output_tokens", 0) or 0
+                    model_name = response.get("_model") or self._default_llm_model_name()
                     if in_tok or out_tok:
                         if session.get("user_id") not in (None, "guest"):
                             db.add(TokenUsage(
@@ -3912,7 +3991,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                                 session_id=session_id,
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
-                                model=settings.DEFAULT_LLM_MODEL,
+                                model=model_name,
                                 timestamp=time.time(),
                             ))
                         elif session.get("client_ip"):
@@ -3920,7 +3999,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                                 ip_address=session["client_ip"],
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
-                                model=settings.DEFAULT_LLM_MODEL,
+                                model=model_name,
                                 timestamp=time.time(),
                             ))
 

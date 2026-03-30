@@ -2,7 +2,8 @@
 LLM Factory - Unified interface for different LLM providers
 Allows easy switching between OpenAI, Anthropic, Ollama, etc.
 """
-from typing import Optional, List
+from dataclasses import dataclass
+from typing import Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -12,6 +13,16 @@ from core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMInvocationResult:
+    """Normalized text + usage metadata returned by a single LLM invocation."""
+
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: Optional[str] = None
 
 
 class LLMFactory:
@@ -91,13 +102,82 @@ class LLMFactory:
         )
     
     @staticmethod
-    async def invoke_async(
+    def _extract_text(response: Any) -> str:
+        """Normalize a provider response object to plain text."""
+        if hasattr(response, 'content'):
+            content = response.content
+            if isinstance(content, list):
+                return "".join(
+                    [
+                        str(part.get("text", "") if isinstance(part, dict) else part)
+                        for part in content
+                    ]
+                )
+            return str(content)
+        if isinstance(response, str):
+            return response
+        return str(response)
+
+    @staticmethod
+    def _extract_usage(response: Any, llm_instance=None) -> LLMInvocationResult:
+        """Extract usage metadata from a LangChain response when available."""
+        usage = getattr(response, "usage_metadata", None) or {}
+        response_metadata = getattr(response, "response_metadata", None) or {}
+        token_usage = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+
+        def _pick_int(*values: Any) -> int:
+            for value in values:
+                if value is None or value == "":
+                    continue
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    continue
+            return 0
+
+        input_tokens = _pick_int(
+            usage.get("input_tokens"),
+            usage.get("prompt_tokens"),
+            token_usage.get("input_tokens"),
+            token_usage.get("prompt_tokens"),
+            token_usage.get("prompt_token_count"),
+            response_metadata.get("input_tokens"),
+            response_metadata.get("prompt_tokens"),
+            response_metadata.get("prompt_token_count"),
+        )
+        output_tokens = _pick_int(
+            usage.get("output_tokens"),
+            usage.get("completion_tokens"),
+            token_usage.get("output_tokens"),
+            token_usage.get("completion_tokens"),
+            token_usage.get("candidates_token_count"),
+            response_metadata.get("output_tokens"),
+            response_metadata.get("completion_tokens"),
+            response_metadata.get("candidates_token_count"),
+        )
+
+        model = (
+            response_metadata.get("model_name")
+            or response_metadata.get("model")
+            or getattr(llm_instance, "model_name", None)
+            or getattr(llm_instance, "model", None)
+        )
+
+        return LLMInvocationResult(
+            text=LLMFactory._extract_text(response),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model=str(model) if model else None,
+        )
+
+    @staticmethod
+    async def invoke_async_with_metadata(
         llm_instance,
         messages: List[BaseMessage],
         **kwargs
-    ) -> str:
+    ) -> LLMInvocationResult:
         """
-        Invoke LLM asynchronously and return text response
+        Invoke LLM asynchronously and return normalized text + usage metadata.
         
         Args:
             llm_instance: LLM instance from create_llm()
@@ -105,62 +185,61 @@ class LLMFactory:
             **kwargs: Additional invocation parameters
             
         Returns:
-            Text response from LLM
+            LLMInvocationResult with text, token counts, and model name when available.
         """
         if llm_instance is None:
-            return "Mock response (MOCK_LLM=True)"
+            return LLMInvocationResult(text="Mock response (MOCK_LLM=True)")
         
         try:
             response = await llm_instance.ainvoke(messages, **kwargs)
-            
-            # Handle different response types
-            if hasattr(response, 'content'):
-                content = response.content
-                if isinstance(content, list):
-                    # Some models (like Gemini) return content as a list of parts
-                    return "".join([str(part.get("text", "") if isinstance(part, dict) else part) for part in content])
-                return str(content)
-            elif isinstance(response, str):
-                return response
-            else:
-                return str(response)
+            return LLMFactory._extract_usage(response, llm_instance)
         except Exception as e:
             logger.error(f"Error invoking LLM: {e}")
             raise
+
+    @staticmethod
+    async def invoke_async(
+        llm_instance,
+        messages: List[BaseMessage],
+        **kwargs
+    ) -> str:
+        """Invoke LLM asynchronously and return text response only."""
+        result = await LLMFactory.invoke_async_with_metadata(llm_instance, messages, **kwargs)
+        return result.text
     
+    @staticmethod
+    def invoke_sync_with_metadata(
+        llm_instance,
+        messages: List[BaseMessage],
+        **kwargs
+    ) -> LLMInvocationResult:
+        """
+        Invoke LLM synchronously and return normalized text + usage metadata.
+        
+        Args:
+            llm_instance: LLM instance from create_llm()
+            messages: List of message objects
+            **kwargs: Additional invocation parameters
+            
+        Returns:
+            LLMInvocationResult with text, token counts, and model name when available.
+        """
+        if llm_instance is None:
+            return LLMInvocationResult(text="Mock response (MOCK_LLM=True)")
+        
+        try:
+            response = llm_instance.invoke(messages, **kwargs)
+            return LLMFactory._extract_usage(response, llm_instance)
+        except Exception as e:
+            logger.error(f"Error invoking LLM: {e}")
+            raise
+
     @staticmethod
     def invoke_sync(
         llm_instance,
         messages: List[BaseMessage],
         **kwargs
     ) -> str:
-        """
-        Invoke LLM synchronously and return text response
-        
-        Args:
-            llm_instance: LLM instance from create_llm()
-            messages: List of message objects
-            **kwargs: Additional invocation parameters
-            
-        Returns:
-            Text response from LLM
-        """
-        if llm_instance is None:
-            return "Mock response (MOCK_LLM=True)"
-        
-        try:
-            response = llm_instance.invoke(messages, **kwargs)
-            
-            # Handle different response types
-            if hasattr(response, 'content'):
-                content = response.content
-                if isinstance(content, list):
-                    return "".join([str(part.get("text", "") if isinstance(part, dict) else part) for part in content])
-                return str(content)
-            elif isinstance(response, str):
-                return response
-            else:
-                return str(response)
-        except Exception as e:
-            logger.error(f"Error invoking LLM: {e}")
-            raise
+        """Invoke LLM synchronously and return text response only."""
+        result = LLMFactory.invoke_sync_with_metadata(llm_instance, messages, **kwargs)
+        return result.text
