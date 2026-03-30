@@ -1,0 +1,95 @@
+{
+  "description": "Baseline LangGraph evaluation cases for LinkedOmicsChat. Expectations are intentionally conservative: they check required or forbidden tools rather than full answer text.",
+  "cases": [
+    {
+      "id": "greeting_no_tools",
+      "query": "hello",
+      "expect_no_tools": true,
+      "notes": "Basic greeting should be answered directly."
+    },
+    {
+      "id": "platform_scope_no_tools",
+      "query": "What can you analyze?",
+      "expect_no_tools": true,
+      "notes": "Should answer from the available-data prompt section without forcing tool calls."
+    },
+    {
+      "id": "expression_luad",
+      "query": "How is EGFR expressed tumor vs normal in LUAD?",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::tcga_survival_analysis"
+      ]
+    },
+    {
+      "id": "survival_dual_dataset",
+      "query": "Show TP53 overall survival in BRCA.",
+      "expected_tools_all": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "survival_tcga_only_methylation",
+      "query": "Show TP53 methylation survival in BRCA from TCGA.",
+      "expected_tools_all": [
+        "linkedomics::tcga_survival_analysis"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "identifier_resolution_survival",
+      "query": "Show overall survival for ENSG00000141510 in BRCA.",
+      "expected_tools_all": [
+        "gene_utils::resolve_gene_identifier"
+      ],
+      "notes": "Identifier should be resolved before downstream analysis."
+    },
+    {
+      "id": "literature_search",
+      "query": "Find recent papers on ESR1 and breast cancer survival.",
+      "expected_tools_all": [
+        "literature::search_pubmed"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "out_of_scope_structure",
+      "query": "What is the 3D structure of TP53?",
+      "expect_no_tools": true,
+      "notes": "Should stay within scope handling rather than fabricating a relevant data tool."
+    },
+    {
+      "id": "followup_anchor_survival",
+      "session_key": "tp53_followup",
+      "query": "Show TP53 overall survival in BRCA.",
+      "expected_tools_all": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis"
+      ]
+    },
+    {
+      "id": "followup_pronoun_tcga",
+      "session_key": "tp53_followup",
+      "query": "What about methylation in TCGA?",
+      "expected_tools_all": [
+        "linkedomics::tcga_survival_analysis"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Should reuse active-gene context from the previous turn."
+    }
+  ]
+}
