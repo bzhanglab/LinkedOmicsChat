@@ -241,6 +241,18 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "linkedomics::batch_overall_survival_per_cancer",
         "linkedomics::tcga_survival_analysis",
     ),
+    "trials": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::clinical_trial_information",
+        "linkedomics::batch_clinical_trial_information",
+        "linkedomics::gene_set_trial_information",
+        "linkedomics::get_study_info",
+        "linkedomics::filter_clinical_trials",
+        "linkedomics::meta_analysis_predictive_genes",
+        "linkedomics::meta_analysis_predictive_gene_sets",
+        "linkedomics::get_study_predictive_genes",
+        "linkedomics::get_study_predictive_gene_sets",
+    ),
     "literature": (
         "literature::search_pubmed",
         "literature::get_pubmed_abstract",
@@ -264,6 +276,12 @@ _PLATFORM_PATTERNS = (
 _LITERATURE_KEYWORDS = (
     "paper", "papers", "pubmed", "literature", "publication", "publications",
     "abstract", "citation", "citations",
+)
+
+_TRIAL_KEYWORDS = (
+    "clinical trial", "clinical trials", "drug", "drugs", "treatment", "treatments",
+    "resistant", "resistance", "sensitive", "sensitivity", "biomarker", "biomarkers",
+    "predict response", "predict treatment", "response to", "therapy",
 )
 
 _EXPRESSION_KEYWORDS = (
@@ -304,6 +322,8 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "none"
     if any(keyword in normalized for keyword in _LITERATURE_KEYWORDS):
         return "literature"
+    if any(keyword in normalized for keyword in _TRIAL_KEYWORDS):
+        return "trials"
     if any(keyword in normalized for keyword in _EXPRESSION_KEYWORDS):
         return "expression"
     if any(keyword in normalized for keyword in _SURVIVAL_KEYWORDS):
@@ -480,6 +500,33 @@ def _make_tool_node(tools: List[BaseTool]):
     collects raw results, and updates tool_results + active_gene in the state.
     """
     tool_map = {t.name: t for t in tools}
+    bare_tool_map: Dict[str, List[str]] = {}
+    for tool_name in tool_map:
+        bare_name = tool_name.split("__")[-1]
+        bare_tool_map.setdefault(bare_name, []).append(tool_name)
+
+    def _resolve_tool(tool_name: str) -> tuple[str, Optional[BaseTool]]:
+        tool = tool_map.get(tool_name)
+        if tool:
+            return tool_name, tool
+
+        normalized_name = tool_name.replace("::", "__")
+        tool = tool_map.get(normalized_name)
+        if tool:
+            return normalized_name, tool
+
+        bare_name = normalized_name.split("__")[-1]
+        bare_matches = bare_tool_map.get(bare_name, [])
+        if len(bare_matches) == 1:
+            resolved_name = bare_matches[0]
+            logger.info(
+                "[LangGraph] Resolved tool alias %r -> %r",
+                tool_name,
+                resolved_name,
+            )
+            return resolved_name, tool_map[resolved_name]
+
+        return tool_name, None
 
     async def tool_node(state: AgentState) -> Dict[str, Any]:
         last_ai: AIMessage = state["messages"][-1]
@@ -491,13 +538,12 @@ def _make_tool_node(tools: List[BaseTool]):
         started = time.perf_counter()
 
         for tc in last_ai.tool_calls:
-            tool_name = tc["name"]
+            original_tool_name = tc["name"]
+            tool_name, tool = _resolve_tool(original_tool_name)
             args = tc["args"]
             call_id = tc["id"]
-
-            tool = tool_map.get(tool_name)
             if not tool:
-                raw_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+                raw_content = json.dumps({"error": f"Unknown tool: {original_tool_name}"})
                 content = raw_content
                 tool_latency_ms = 0
                 status = "missing"

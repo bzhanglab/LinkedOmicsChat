@@ -71,6 +71,35 @@
       "notes": "Should stay within scope handling rather than fabricating a relevant data tool."
     },
     {
+      "id": "general_knowledge_shortcut",
+      "query": "Answer using general knowledge: what is the 3D structure of TP53?",
+      "expect_no_tools": true,
+      "expect_general_knowledge": true,
+      "notes": "Shortcut mode should bypass tools and mark the response as general knowledge."
+    },
+    {
+      "id": "drug_target_single_gene",
+      "query": "Is EGFR a validated oncology target?",
+      "expected_tools_all": [
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "clinical_trial_single_gene",
+      "query": "Which drugs are patients likely to be resistant to if they have high EGFR expression?",
+      "expected_tools_all": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::cancer_gene_expression"
+      ]
+    },
+    {
       "id": "followup_anchor_survival",
       "session_key": "tp53_followup",
       "query": "Show TP53 overall survival in BRCA.",
