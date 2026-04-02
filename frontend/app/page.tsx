@@ -25,7 +25,13 @@ export default function Home() {
     const router = useRouter()
 
     // All hooks must be declared before any conditional returns
-    const [currentView, setCurrentView] = useState<View>("chat")
+    const [currentView, setCurrentView] = useState<View>(() => {
+        if (typeof window !== "undefined") {
+            const v = new URLSearchParams(window.location.search).get("view")
+            if (v === "tools" || v === "usecases") return v
+        }
+        return "chat"
+    })
     const [prefilledQuery, setPrefilledQuery] = useState<string | null>(null)
     const [rightPanelContext, setRightPanelContext] = useState<RightPanelContext | null>(null)
     const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -34,10 +40,15 @@ export default function Home() {
     const [pendingSearchTarget, setPendingSearchTarget] = useState<SearchJumpTarget | null>(null)
     const [toolsResetKey, setToolsResetKey] = useState(0)
     const [chatFocusKey, setChatFocusKey] = useState(0)
-    const [mountedViews, setMountedViews] = useState<Record<View, boolean>>({
-        chat: true,
-        tools: false,
-        usecases: false,
+    const [mountedViews, setMountedViews] = useState<Record<View, boolean>>(() => {
+        const initialView = typeof window !== "undefined"
+            ? (new URLSearchParams(window.location.search).get("view") as View | null)
+            : null
+        return {
+            chat: true,
+            tools: initialView === "tools",
+            usecases: initialView === "usecases",
+        }
     })
     const hasVerifiedRestoredSessionRef = useRef(false)
     // Initialize sessionId from localStorage synchronously to prevent flash
@@ -127,6 +138,14 @@ export default function Home() {
     const handleViewChange = useCallback((view: View) => {
         if (view === "tools") setToolsResetKey((k) => k + 1)
         if (view === "chat") setChatFocusKey((k) => k + 1)
+        // Sync URL so the view is bookmarkable / openable in a new tab
+        const url = new URL(window.location.href)
+        if (view === "chat") {
+            url.searchParams.delete("view")
+        } else {
+            url.searchParams.set("view", view)
+        }
+        window.history.replaceState({}, "", url.toString())
         startTransition(() => {
             setCurrentView(view)
             setMountedViews((prev) => (prev[view] ? prev : { ...prev, [view]: true }))

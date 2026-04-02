@@ -29,10 +29,10 @@ interface SidebarProps {
     onMobileClose?: () => void
 }
 
-const navItems: Array<{ id: View; label: string; icon: any; separator?: boolean; placeholder?: boolean; hidden?: boolean }> = [
-    { id: "chat", label: "Chat", icon: MessageSquare },
-    { id: "tools", label: "Tools", icon: Wrench },
-    { id: "usecases", label: "Use Cases", icon: Lightbulb },
+const navItems: Array<{ id: View; label: string; icon: any; href: string; separator?: boolean; placeholder?: boolean; hidden?: boolean }> = [
+    { id: "chat", label: "Chat", icon: MessageSquare, href: "/" },
+    { id: "tools", label: "Tools", icon: Wrench, href: "/?view=tools" },
+    { id: "usecases", label: "Use Cases", icon: Lightbulb, href: "/?view=usecases" },
 ]
 
 export function Sidebar({ currentView, onViewChange, currentSessionId, onSessionChange, onSearchResultSelect, mobileOpen = false, onMobileClose }: SidebarProps) {
@@ -113,9 +113,13 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                             {item.separator && !isCollapsed && (
                                 <div className="my-3 border-t border-border" />
                             )}
-                            <button
-                                onClick={() => handleNavClick(item.id, item.placeholder)}
-
+                            <a
+                                href={item.placeholder ? undefined : item.href}
+                                onClick={(e) => {
+                                    if (item.placeholder) return
+                                    e.preventDefault()
+                                    handleNavClick(item.id, item.placeholder)
+                                }}
                                 className={cn(
                                     "w-full flex items-center rounded-lg transition-all font-medium relative",
                                     isCollapsed ? "justify-center p-3" : "gap-3 px-4 py-3 text-left",
@@ -138,7 +142,7 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                                         )}
                                     </div>
                                 )}
-                            </button>
+                            </a>
                         </div>
                     )
                 })}
