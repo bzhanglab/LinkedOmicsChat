@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional, Sequence, Type
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, Type
 
 from langchain_core.messages import (
     AIMessage,
@@ -1469,12 +1469,11 @@ DIRECT RESPONSE RULES:
     ) -> AsyncGenerator[str, None]:
         """
         Process a query and yield execution status chunks for Server-Sent Events (SSE).
-        Yields JSON strings:
+        Yields SSE-formatted lines whose JSON payloads look like:
           {"type": "status", "content": "..."}
           {"type": "final", "content": {...}}
         """
-        import json
-        
+
         try:
             logger.info(f"[LangGraph Stream] Processing query: {query}")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Initializing session...'})}\n\n"
