@@ -1118,12 +1118,12 @@ def meta_analysis_predictive_genes(
         treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
             "combinations". Expands to all matching drug substrings automatically.
             Use instead of `drugs` when the user specifies a category rather than a specific drug.
-        top_n (int): Number of top genes to return (default 20).
+        top_n (int): Number of top genes to return (default 50).
 
     Returns:
         dict: Ranked gene list with meta-analysis statistics (meta_fdr, avg_auc, datasets, direction).
             "datasets" = number of studies where the gene was significant.
-            "avg_auc" = average AUROC across studies (>0.5 = sensitive, <0.5 = resistant).
+            "avg_auc" = average AUROC across studies (<0.5 = sensitive, >0.5 = resistant).
     """
     resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
     body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
