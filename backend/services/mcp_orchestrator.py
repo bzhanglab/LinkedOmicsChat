@@ -2777,6 +2777,56 @@ Please provide a clear, informative response about this gene. Include the key de
         def _dir_label(d: str) -> str:
             return "↑ Sensitive" if d == "sensitive" else "↓ Resistant"
 
+        def _target_filter_label(payload: dict) -> str:
+            if not isinstance(payload, dict):
+                return "all targets"
+            label = payload.get("filter_label")
+            if isinstance(label, str) and label.strip():
+                return label
+            applied = payload.get("applied_filters")
+            if isinstance(applied, dict) and applied:
+                ordered = []
+                for key in ("tier", "family", "antigen", "drug_name"):
+                    value = applied.get(key)
+                    if value:
+                        display_key = "drug" if key == "drug_name" else key
+                        ordered.append(f"{display_key}={value}")
+                if ordered:
+                    return ", ".join(ordered)
+            return "all targets"
+
+        def _trial_scope_lines(label: str, *, signal_label: str, batch: bool = False) -> list[str]:
+            lines = [
+                f"**Scope:** Study-level treatment-response associations for {label} across LinkedOmics Trials datasets.",
+                f"**Interpretation:** AUROC > 0.5 means higher {signal_label} is associated with resistance; AUROC < 0.5 means higher {signal_label} is associated with sensitivity.",
+            ]
+            if batch:
+                lines.append("**Batch mode:** One subsection is shown for each queried gene.")
+            return lines
+
+        def _tcga_scope_lines(
+            *,
+            mode: int,
+            gene: str,
+            cohort: str,
+            cohort_full: str,
+            omics_label: str,
+            n_results: int,
+        ) -> list[str]:
+            cohort_display = f"{cohort} ({cohort_full})" if cohort and cohort_full and cohort_full != cohort else (cohort or cohort_full)
+            if mode == 4:
+                scope = f"**Scope:** Genome-wide TCGA survival scan in {cohort_display} using {omics_label}; each point or row represents one gene."
+            elif mode == 3:
+                scope = f"**Scope:** Pan-cancer TCGA survival comparison for {gene} using {omics_label}; each bar or row represents one cohort."
+            elif mode == 2:
+                scope = f"**Scope:** Single-gene TCGA survival analysis for {gene} in {cohort_display} across all available omics layers."
+            else:
+                scope = f"**Scope:** Single-gene TCGA survival analysis for {gene} in {cohort_display} using {omics_label}."
+            return [
+                scope,
+                f"**Interpretation:** Hazard ratio (HR) > 1 means higher signal is associated with worse survival; HR < 1 means it is associated with better survival. Results shown: {n_results}.",
+            ]
+
         for unique_key, wrapped_result in results.items():
             # Strip the #N suffix to get the actual tool_id
             tool_id = unique_key.split('#')[0] if '#' in unique_key else unique_key
@@ -3036,12 +3086,14 @@ Please provide a clear, informative response about this gene. Include the key de
                 genes = parsed.get("genes", [])
                 total = parsed.get("total", len(genes))
                 top_n = parsed.get("top_n", len(genes))
+                filter_label = _target_filter_label(parsed)
                 if not genes:
-                    sections.append("_No druggable targets found._\n")
+                    sections.append(f"_No druggable targets found for {filter_label}._\n")
                     _rendered_tool_ids.add(tool_id)
                     continue
                 viz_id = _uuid.uuid4().hex
                 description = (
+                    f"Filters: {filter_label}. "
                     "**How targets are ranked** — Composite score = "
                     "tier weight (T1 = 50 pts, T2 = 30 pts, T3 = 10 pts) "
                     "+ approved oncology drug count × 5 pts each "
@@ -3070,8 +3122,9 @@ Please provide a clear, informative response about this gene. Include the key de
                     continue
                 genes = parsed.get("genes", [])
                 total = parsed.get("total", len(genes))
+                filter_label = _target_filter_label(parsed)
                 if not genes:
-                    sections.append("_No targets matched the search criteria._\n")
+                    sections.append(f"_No targets matched this search ({filter_label})._\n")
                     _rendered_tool_ids.add(tool_id)
                     continue
                 viz_id = _uuid.uuid4().hex
@@ -3081,6 +3134,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     "title": f"Target search results ({total} genes)",
                     "total": total,
                     "genes": genes,
+                    "description": f"Filters: {filter_label}",
                 })
                 md = [f"\n[PLOT:{viz_id}]", ""]
                 md.append("\n> **Source:** [LinkedOmics Targets](#source:targets)")
@@ -3131,8 +3185,14 @@ Please provide a clear, informative response about this gene. Include the key de
                     if status != "available":
                         md.append(f"_Status: {status}_")
                     else:
+                        md.extend(_trial_scope_lines("the requested genes", signal_label="expression", batch=True))
+                        md.append("")
                         for protein, result in raw_data.items():
-                            if not isinstance(result, dict) or result.get("status") != "available":
+                            if not isinstance(result, dict):
+                                continue
+                            if result.get("status") != "available":
+                                md.append(f"\n### {protein}")
+                                md.append(f"_No clinical-trial associations available (status: {result.get('status', 'unavailable')})._")
                                 continue
                             pdata = result.get("data") or {}
                             md.append(f"\n### {protein}")
@@ -3143,6 +3203,8 @@ Please provide a clear, informative response about this gene. Include the key de
                     if status != "available":
                         md.append(f"_Status: {status}_")
                     else:
+                        md.extend(_trial_scope_lines(chart_label, signal_label="expression"))
+                        md.append("")
                         md.extend(_render_single_trial(raw_data, chart_label))
 
                 md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
@@ -3211,6 +3273,8 @@ Please provide a clear, informative response about this gene. Include the key de
                 if status != "available":
                     md.append(f"_Status: {status}_")
                 else:
+                    md.extend(_trial_scope_lines(gs or "this gene set", signal_label="pathway activity"))
+                    md.append("")
                     total_sig = data.get("total_significant", "")
                     total_all = data.get("total_studies", "")
                     if total_sig or total_all:
@@ -3299,15 +3363,27 @@ Please provide a clear, informative response about this gene. Include the key de
                             viz_id = _uuid.uuid4().hex
                             _visualizations.append({"type": "static_plot", "id": viz_id, **chart})
                             md.append(f"[PLOT:{viz_id}]\n")
-                        md.append("| # | Gene | Studies | Avg AUROC | Meta-FDR | Direction |")
-                        md.append("|---|---|---|---|---|---|")
-                        for i, g in enumerate(genes, 1):
-                            fdr_str = g.get("meta_fdr_sci") or g.get("meta_fdr", "")
-                            md.append(
-                                f"| {i} | {g.get('gene','')} | {g.get('datasets','')} "
-                                f"| {g.get('avg_auc','')} | {fdr_str} "
-                                f"| {_dir_label(g.get('direction',''))} |"
-                            )
+                        table_viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "predictive_results_table",
+                            "id": table_viz_id,
+                            "title": "Top Predictive Genes",
+                            "row_label": "Gene",
+                            "description": f"Studies analyzed: {d.get('study_count',0)} | Filters: {_filter_label(filters)}",
+                            "rows": [
+                                {
+                                    "rank": i,
+                                    "label": g.get("gene", ""),
+                                    "studies": g.get("datasets", ""),
+                                    "avg_auroc": g.get("avg_auc", ""),
+                                    "meta_fdr": g.get("meta_fdr", ""),
+                                    "meta_fdr_sci": g.get("meta_fdr_sci", ""),
+                                    "direction": g.get("direction", ""),
+                                }
+                                for i, g in enumerate(genes, 1)
+                            ],
+                        })
+                        md.append(f"[TABLE:{table_viz_id}]")
                     else:
                         md.append("_No significant predictive genes found._")
                 md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
@@ -3342,15 +3418,27 @@ Please provide a clear, informative response about this gene. Include the key de
                             viz_id = _uuid.uuid4().hex
                             _visualizations.append({"type": "static_plot", "id": viz_id, **chart})
                             md.append(f"[PLOT:{viz_id}]\n")
-                        md.append("| # | Pathway / Gene Set | Studies | Avg AUROC | Meta-FDR | Direction |")
-                        md.append("|---|---|---|---|---|---|")
-                        for i, g in enumerate(gene_sets, 1):
-                            fdr_str = g.get("meta_fdr_sci") or g.get("meta_fdr", "")
-                            md.append(
-                                f"| {i} | {g.get('gene_set','')} | {g.get('datasets','')} "
-                                f"| {g.get('avg_auc','')} | {fdr_str} "
-                                f"| {_dir_label(g.get('direction',''))} |"
-                            )
+                        table_viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "predictive_results_table",
+                            "id": table_viz_id,
+                            "title": "Top Predictive Pathways",
+                            "row_label": "Pathway / Gene Set",
+                            "description": f"Studies analyzed: {d.get('study_count',0)} | Filters: {_filter_label(filters)}",
+                            "rows": [
+                                {
+                                    "rank": i,
+                                    "label": g.get("gene_set", ""),
+                                    "studies": g.get("datasets", ""),
+                                    "avg_auroc": g.get("avg_auc", ""),
+                                    "meta_fdr": g.get("meta_fdr", ""),
+                                    "meta_fdr_sci": g.get("meta_fdr_sci", ""),
+                                    "direction": g.get("direction", ""),
+                                }
+                                for i, g in enumerate(gene_sets, 1)
+                            ],
+                        })
+                        md.append(f"[TABLE:{table_viz_id}]")
                     else:
                         md.append("_No significant predictive pathways found._")
                 md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
@@ -3524,6 +3612,15 @@ Please provide a clear, informative response about this gene. Include the key de
                         key=lambda r: float(r.get("fdr") or r.get("pvalue") or 1.0),
                     )[:20]
                     md = [f"## {section_title}", ""]
+                    md.extend(_tcga_scope_lines(
+                        mode=mode,
+                        gene=g,
+                        cohort=cohort_key_k,
+                        cohort_full=cohort_full,
+                        omics_label=omics_label,
+                        n_results=len(all_results),
+                    ))
+                    md.append("")
                     if fig_dict:
                         _visualizations.append({"type": "static_plot", "id": viz_id, "title": fig_dict["title"],
                                                  **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")}})
@@ -3549,6 +3646,15 @@ Please provide a clear, informative response about this gene. Include the key de
                     omics_label = _OMICS_LABEL_PRE.get(omics_query, omics_query)
                     section_title = f"TCGA Survival Analysis — {g} ({omics_label}, all cohorts)"
                     md = [f"## {section_title}", ""]
+                    md.extend(_tcga_scope_lines(
+                        mode=mode,
+                        gene=g,
+                        cohort="",
+                        cohort_full="",
+                        omics_label=omics_label,
+                        n_results=len(all_results),
+                    ))
+                    md.append("")
                     # Bar chart across all cohorts (samples not available in mode 3)
                     cohort_fig = _generate_tcga_cohort_bar_static(all_results, g, omics_label)
                     has_cohort_plot = False
@@ -3584,6 +3690,16 @@ Please provide a clear, informative response about this gene. Include the key de
                     cohort_display = f"{cohort} — {cohort_full}" if cohort_full and cohort_full != cohort else cohort
                     section_title = f"TCGA Survival Analysis — {g} ({cohort_display})" if cohort_display else f"TCGA Survival Analysis — {g}"
                     md = [f"## {section_title}"]
+                    summary_omics_label = _OMICS_LABEL_PRE.get(omics_query, omics_query) or "omics data"
+                    md.append("")
+                    md.extend(_tcga_scope_lines(
+                        mode=mode,
+                        gene=g,
+                        cohort=cohort,
+                        cohort_full=cohort_full,
+                        omics_label=summary_omics_label,
+                        n_results=len(all_results),
+                    ))
                     # Mode 2: cohort + gene, all omics → show summary omics bar chart
                     if mode == 2:
                         omics_fig = _generate_tcga_omics_heatmap_static(all_results, g, cohort)
@@ -3702,12 +3818,21 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         for viz in visualizations:
             viz_type = viz.get("type")
             viz_id = viz.get("id")
-            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid", "target_search_table"):
+            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid", "target_search_table", "predictive_results_table"):
                 continue
             safe_viz_id = os.path.basename(str(viz_id))
             title = viz.get("title", "")
 
             if viz_type == "target_search_table":
+                try:
+                    with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
+                        _json.dump({k: viz[k] for k in viz if k != "id"}, f)
+                    write_visualization_index(safe_viz_id, session_id, title)
+                except Exception:
+                    pass
+                continue
+
+            if viz_type == "predictive_results_table":
                 try:
                     with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
                         _json.dump({k: viz[k] for k in viz if k != "id"}, f)

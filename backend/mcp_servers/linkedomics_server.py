@@ -262,6 +262,32 @@ def get_target_json() -> dict[str, dict[str, str]]:
 targets = get_target_json()
 
 
+def _build_target_filter_metadata(
+    *,
+    tier: Optional[str] = None,
+    family: Optional[str] = None,
+    antigen: Optional[str] = None,
+    drug_name: Optional[str] = None,
+) -> tuple[dict[str, str], str]:
+    applied_filters: dict[str, str] = {}
+    parts: list[str] = []
+
+    if tier:
+        applied_filters["tier"] = tier.upper()
+        parts.append(f"tier={tier.upper()}")
+    if family:
+        applied_filters["family"] = family
+        parts.append(f"family={family}")
+    if antigen:
+        applied_filters["antigen"] = antigen.upper()
+        parts.append(f"antigen={antigen.upper()}")
+    if drug_name:
+        applied_filters["drug_name"] = drug_name
+        parts.append(f"drug={drug_name}")
+
+    return applied_filters, ", ".join(parts) if parts else "all targets"
+
+
 @mcp.tool()
 def search_targets(
     tier: Optional[Literal["T1", "T2", "T3", "T4", "T5"]] = None,
@@ -327,7 +353,18 @@ def search_targets(
         })
 
     results.sort(key=lambda x: (x["tier"] or "Z", x["gene"]))
-    return {"total": len(results), "genes": results}
+    applied_filters, filter_label = _build_target_filter_metadata(
+        tier=tier,
+        family=family,
+        antigen=antigen,
+        drug_name=drug_name,
+    )
+    return {
+        "total": len(results),
+        "genes": results,
+        "applied_filters": applied_filters,
+        "filter_label": filter_label,
+    }
 
 
 _TIER_WEIGHT = {"T1": 50, "T2": 30, "T3": 10, "T4": 5, "T5": 2}
@@ -411,10 +448,16 @@ def rank_targets(
         })
 
     candidates.sort(key=lambda x: -x["count"])
+    applied_filters, filter_label = _build_target_filter_metadata(
+        family=family,
+        antigen=antigen,
+    )
     return {
         "total": len(candidates),
         "top_n": top_n,
         "genes": candidates[:top_n],
+        "applied_filters": applied_filters,
+        "filter_label": filter_label,
     }
 
 
@@ -1104,15 +1147,19 @@ def meta_analysis_predictive_genes(
     - The user wants biomarker discovery across a drug or cancer type
 
     Use cases:
-    - "Which genes best predict paclitaxel response in breast cancer?"
+    - "Which genes best predict paclitaxel response?" → drugs=["paclitaxel"], cancers=[]
+    - "Which genes best predict paclitaxel response in breast cancer?" → drugs=["paclitaxel"], cancers=["Breast"]
     - "What are the top biomarkers for platinum resistance in ovarian cancer?"
     - "Find the strongest predictors of nivolumab sensitivity across all studies."
     - "Which genes predict chemotherapy response?" → use treatment_category="chemotherapy"
     - "Top gene predictors of targeted therapy?" → use treatment_category="targeted"
 
+    IMPORTANT: only set `cancers` if the user explicitly names a cancer type. Leave it empty ([]) for
+    cross-cancer queries.
+
     Args:
         drugs (list[str]): Specific drug names to filter by (e.g., ["paclitaxel"]).
-        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]). Leave empty for all cancers.
             Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
             Kidney, Bladder, Gastric, Glioblastoma.
         treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
@@ -1145,7 +1192,7 @@ def meta_analysis_predictive_genes(
     rows = mr.json()
 
     rows_sorted = sorted(
-        rows, key=lambda r: abs(float(r.get("avg_auc", 0.5)) - 0.5), reverse=True
+        rows, key=lambda r: float(r.get("fdr", 1)), reverse=False
     )[:top_n]
     genes = []
     for r in rows_sorted:
@@ -1186,15 +1233,19 @@ def meta_analysis_predictive_gene_sets(
     - The user wants pathway-level biomarker discovery across a drug or cancer type
 
     Use cases:
-    - "Which pathways best predict paclitaxel response in breast cancer?"
+    - "Which pathways best predict paclitaxel response?" → drugs=["paclitaxel"], cancers=[]
+    - "Which pathways best predict paclitaxel response in breast cancer?" → drugs=["paclitaxel"], cancers=["Breast"]
     - "What biological processes predict platinum resistance in ovarian cancer?"
     - "Find the top pathway predictors of nivolumab sensitivity across all studies."
     - "Which pathways predict chemotherapy response?" → use treatment_category="chemotherapy"
     - "Top pathway predictors of targeted therapy?" → use treatment_category="targeted"
 
+    IMPORTANT: only set `cancers` if the user explicitly names a cancer type. Leave it empty ([]) for
+    cross-cancer queries.
+
     Args:
         drugs (list[str]): Specific drug names to filter by (e.g., ["paclitaxel"]).
-        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
+        cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]). Leave empty for all cancers.
             Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
             Kidney, Bladder, Gastric, Glioblastoma.
         treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
@@ -1227,7 +1278,7 @@ def meta_analysis_predictive_gene_sets(
     rows = mr.json()
 
     rows_sorted = sorted(
-        rows, key=lambda r: abs(float(r.get("avg_auc", 0.5)) - 0.5), reverse=True
+        rows, key=lambda r: float(r.get("fdr", 1)), reverse=False
     )[:top_n]
     gene_sets = []
     for r in rows_sorted:
