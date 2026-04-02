@@ -245,6 +245,13 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "gene_utils::resolve_gene_identifier",
         "linkedomics::tcga_survival_analysis",
     ),
+    "targets": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::get_target",
+        "linkedomics::batch_get_target",
+        "linkedomics::search_targets",
+        "linkedomics::rank_targets",
+    ),
     "trials": (
         "gene_utils::resolve_gene_identifier",
         "linkedomics::clinical_trial_information",
@@ -293,6 +300,20 @@ _PLATFORM_PATTERNS = (
 _LITERATURE_KEYWORDS = (
     "paper", "papers", "pubmed", "literature", "publication", "publications",
     "abstract", "citation", "citations",
+)
+
+_TARGET_KEYWORDS = (
+    "drug target", "drug targets",
+    "druggable",
+    "therapeutic target", "therapeutic targets",
+    "oncology target", "oncology targets",
+    "tumor antigen", "tumour antigen",
+    "tumor-associated antigen", "tumour-associated antigen",
+    "tumor specific antigen", "tumour specific antigen",
+    "neoantigen",
+    "depmap", "cell line dependency",
+    "target tier",
+    "rank target", "top target", "best target",
 )
 
 _TRIAL_KEYWORDS = (
@@ -358,6 +379,8 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "none"
     if any(keyword in normalized for keyword in _LITERATURE_KEYWORDS):
         return "literature"
+    if any(keyword in normalized for keyword in _TARGET_KEYWORDS):
+        return "targets"
     if any(keyword in normalized for keyword in _TRIAL_KEYWORDS):
         return "trials"
     if any(keyword in normalized for keyword in _PATHWAY_KEYWORDS):

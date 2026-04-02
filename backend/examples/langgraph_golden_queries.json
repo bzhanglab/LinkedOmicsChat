@@ -89,6 +89,66 @@
       ]
     },
     {
+      "id": "drug_target_keyword_not_trials",
+      "query": "Is BRCA1 a drug target?",
+      "expected_tools_all": [
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::meta_analysis_predictive_genes",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "\"drug target\" should route to targets scope, not trials scope despite containing \"drug\"."
+    },
+    {
+      "id": "targets_druggable_keyword",
+      "query": "Is TP53 druggable?",
+      "expected_tools_all": [
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer"
+      ]
+    },
+    {
+      "id": "targets_rank_attractive",
+      "query": "What are the most attractive therapeutic targets for cancer?",
+      "expected_tools_all": [
+        "linkedomics::rank_targets"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::cancer_gene_expression"
+      ]
+    },
+    {
+      "id": "targets_search_tier_family",
+      "query": "Which kinases are FDA-approved oncology targets?",
+      "expected_tools_all": [
+        "linkedomics::search_targets"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "\"oncology target\" keyword should route to targets scope; search_targets handles tier+family filtering."
+    },
+    {
+      "id": "targets_search_antigen",
+      "query": "Which genes are tumor-associated antigens in T1 tier?",
+      "expected_tools_all": [
+        "linkedomics::search_targets"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::cancer_gene_expression"
+      ],
+      "notes": "\"tumor antigen\" keyword should route to targets scope."
+    },
+    {
       "id": "clinical_trial_single_gene",
       "query": "Which drugs are patients likely to be resistant to if they have high EGFR expression?",
       "expected_tools_all": [
@@ -98,6 +158,89 @@
         "linkedomics::overall_survival_per_cancer",
         "linkedomics::cancer_gene_expression"
       ]
+    },
+    {
+      "id": "trials_batch_multi_gene",
+      "query": "Which drugs do ESR1 and ERBB2 predict resistance to?",
+      "expected_tools_all": [
+        "linkedomics::batch_clinical_trial_information"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::cancer_gene_expression"
+      ],
+      "notes": "Multiple genes should trigger the batch variant."
+    },
+    {
+      "id": "trials_gene_set",
+      "query": "Does the HALLMARK_ESTROGEN_RESPONSE pathway predict tamoxifen sensitivity?",
+      "expected_tools_all": [
+        "linkedomics::gene_set_trial_information"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Pathway/gene-set trial query should use gene_set_trial_information, not the per-gene tool."
+    },
+    {
+      "id": "trials_filter_drug_cancer",
+      "query": "Which studies tested nivolumab in melanoma?",
+      "expected_tools_all": [
+        "linkedomics::filter_clinical_trials"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Study discovery by drug + cancer should use filter_clinical_trials."
+    },
+    {
+      "id": "trials_meta_analysis_genes",
+      "query": "Which genes best predict paclitaxel response in breast cancer?",
+      "expected_tools_all": [
+        "linkedomics::meta_analysis_predictive_genes"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Cross-study biomarker discovery should use meta_analysis_predictive_genes."
+    },
+    {
+      "id": "trials_meta_analysis_gene_sets",
+      "query": "What pathways predict platinum resistance in ovarian cancer?",
+      "expected_tools_all": [
+        "linkedomics::meta_analysis_predictive_gene_sets"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::webgestalt",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Pathway-level cross-study biomarker discovery should use meta_analysis_predictive_gene_sets."
+    },
+    {
+      "id": "trials_study_info_followup_anchor",
+      "session_key": "trials_study_info",
+      "query": "Which drugs are patients likely to be resistant to if they have high ESR1 expression?",
+      "expected_tools_all": [
+        "linkedomics::clinical_trial_information"
+      ]
+    },
+    {
+      "id": "trials_study_info_followup",
+      "session_key": "trials_study_info",
+      "query": "Tell me more about the first study in those results.",
+      "expected_tools_all": [
+        "linkedomics::get_study_info"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Follow-up asking for study details should call get_study_info with the series ID from the prior turn."
     },
     {
       "id": "funmap_single_gene",
