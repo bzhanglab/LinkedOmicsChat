@@ -1648,6 +1648,12 @@ def tcga_survival_analysis(
     omics = omics.strip() or None if omics is not None else None
     mode = detect_tcga_survival_mode(cohort, gene, omics)
 
+    # Gene-only call (no cohort, no omics) is ambiguous — default to RNAseq for
+    # pan-cancer expression queries (mode 3: gene + omics, all cohorts).
+    if mode is None and gene and not cohort and not omics:
+        omics = "RNAseq"
+        mode = detect_tcga_survival_mode(cohort, gene, omics)
+
     if mode is None:
         return tcga_parameter_error("Invalid parameter combination")
 

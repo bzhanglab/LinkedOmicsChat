@@ -241,6 +241,10 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "linkedomics::batch_overall_survival_per_cancer",
         "linkedomics::tcga_survival_analysis",
     ),
+    "tcga_survival": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::tcga_survival_analysis",
+    ),
     "trials": (
         "gene_utils::resolve_gene_identifier",
         "linkedomics::clinical_trial_information",
@@ -362,12 +366,21 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "funmap"
     if any(keyword in normalized for keyword in _CORRELATION_KEYWORDS):
         return "correlation"
-    if any(keyword in normalized for keyword in _EXPRESSION_KEYWORDS):
+    has_survival = any(keyword in normalized for keyword in _SURVIVAL_KEYWORDS)
+    if any(keyword in normalized for keyword in _EXPRESSION_KEYWORDS) and not has_survival:
         return "expression"
-    if any(keyword in normalized for keyword in _SURVIVAL_KEYWORDS):
+    if has_survival:
+        # If the query explicitly mentions TCGA, restrict to tcga_survival_analysis only.
+        if "tcga" in normalized:
+            return "tcga_survival"
         return "survival"
     if active_gene and any(keyword in normalized for keyword in _SURVIVAL_OMICS_KEYWORDS):
+        if "tcga" in normalized:
+            return "tcga_survival"
         return "survival"
+    # Bare TCGA mention with no survival keyword still uses full survival scope.
+    if "tcga" in normalized:
+        return "tcga_survival"
 
     return "full"
 
@@ -953,6 +966,8 @@ Decision rules — apply the first matching rule:
 5. No cohort specified, or cohort is in the CPTAC list, and omics is RNA/protein/unspecified → call BOTH `tcga_survival_analysis` AND `overall_survival_per_cancer` (they cover complementary datasets and together give a complete picture).
 
 If neither dataset is likely to have data (e.g. unsupported omics + unsupported cohort), call the closest matching tool and let it return the error naturally.
+
+`tcga_survival_analysis` requires at least TWO of (cohort, gene, omics). Always specify `omics` when doing a pan-cancer query (no cohort): infer from the query ("expression" or unspecified → "RNAseq", "protein" → "RPPA", "methylation" → "Methylation", "miRNA" → "miRNASeq", "copy number" → "SCNA").
 
 SPECIAL MODES:
 - If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.

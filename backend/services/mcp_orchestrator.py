@@ -2762,6 +2762,21 @@ Please provide a clear, informative response about this gene. Include the key de
 
             return covered
 
+        def _filter_label(f: dict) -> str:
+            cat = f.get("treatment_category", "")
+            cancers_f = f.get("cancers", [])
+            parts = []
+            if cat:
+                parts.append(f"treatment={cat}")
+            elif f.get("drugs"):
+                parts.append(f"drugs={f['drugs']}")
+            if cancers_f:
+                parts.append(f"cancers={cancers_f}")
+            return ", ".join(parts) if parts else "all studies"
+
+        def _dir_label(d: str) -> str:
+            return "↑ Sensitive" if d == "sensitive" else "↓ Resistant"
+
         for unique_key, wrapped_result in results.items():
             # Strip the #N suffix to get the actual tool_id
             tool_id = unique_key.split('#')[0] if '#' in unique_key else unique_key
@@ -2880,8 +2895,8 @@ Please provide a clear, informative response about this gene. Include the key de
                     col_prot = "Protein (Tumor vs Normal)"
                 else:
                     base_title = "Overall survival associations"
-                    subtitle = " · CPTAC"
-                    source_desc = "CPTAC cohorts · RNA expression and protein level vs. overall survival"
+                    subtitle = ""
+                    source_desc = "LinkedOmics CPTAC cohorts · RNA expression and protein level vs. overall survival"
                     col_rna = "RNA expression"
                     col_prot = "Protein level"
 
@@ -2913,6 +2928,9 @@ Please provide a clear, informative response about this gene. Include the key de
                         has_plot = True
                     # Only show table as fallback if the plot could not be generated
                     if not has_plot:
+                        if not cancers_:
+                            # No data at all — skip this section entirely
+                            return None
                         ls.extend([f"| Cancer | {c_rna} | {c_prot} |", "|---|---|---|"])
                         for c in cancers_:
                             ls.append(f"| {c} | {rd_.get(c,'-')} | {pd_.get(c,'-')} |")
@@ -2923,10 +2941,14 @@ Please provide a clear, informative response about this gene. Include the key de
                 if batch_data:
                     for g, g_result in batch_data.items():
                         if isinstance(g_result, dict) and ("protein_level" in g_result or "RNA_level" in g_result):
-                            sections.append(_render_single_gene_section(g, g_result, base_title, subtitle, source_desc, col_rna, col_prot))
+                            sec = _render_single_gene_section(g, g_result, base_title, subtitle, source_desc, col_rna, col_prot)
+                            if sec is not None:
+                                sections.append(sec)
                 else:
                     # Use gene_name from metadata wrapper
-                    sections.append(_render_single_gene_section(gene_name, parsed, base_title, subtitle, source_desc, col_rna, col_prot))
+                    sec = _render_single_gene_section(gene_name, parsed, base_title, subtitle, source_desc, col_rna, col_prot)
+                    if sec is not None:
+                        sections.append(sec)
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
                 continue
@@ -3256,21 +3278,6 @@ Please provide a clear, informative response about this gene. Include the key de
                 status = parsed.get("status", "unavailable")
                 d = parsed.get("data") or {}
                 filters = d.get("filters", {})
-                def _filter_label(f: dict) -> str:
-                    cat = f.get("treatment_category", "")
-                    cancers_f = f.get("cancers", [])
-                    parts = []
-                    if cat:
-                        parts.append(f"treatment={cat}")
-                    elif f.get("drugs"):
-                        parts.append(f"drugs={f['drugs']}")
-                    if cancers_f:
-                        parts.append(f"cancers={cancers_f}")
-                    return ", ".join(parts) if parts else "all studies"
-
-                def _dir_label(d: str) -> str:
-                    return "↑ Sensitive" if d == "sensitive" else "↓ Resistant"
-
                 md = ["## Meta-analysis: Top Predictive Genes"]
                 if status == "no_studies":
                     md.append(f"_No studies found matching filters: {_filter_label(filters)}._")
