@@ -39,7 +39,7 @@ interface Chip { text: string; cat: Category }
 
 const ROW1: Chip[] = [
     { text: "Is ESR1 associated with survival in BRCA?",            cat: "survival"        },
-    { text: "EGFR expression across TCGA LUAD",                     cat: "expression"      },
+    { text: "EGFR expression in LUAD vs normal tissue",             cat: "expression"      },
     { text: "Which genes predict paclitaxel response in breast cancer?", cat: "clinical_trials" },
     { text: "FunMap partners of RB1",                               cat: "network"         },
     { text: "Survival analysis for PIK3CA in LUAD",                 cat: "survival"        },
@@ -52,25 +52,25 @@ const ROW2: Chip[] = [
     { text: "Compare KRAS RNA vs protein in PDAC",                  cat: "proteomics"      },
     { text: "Find TP53 functional neighbors",                        cat: "network"         },
     { text: "Which genes best predict immunotherapy response?",      cat: "clinical_trials" },
-    { text: "Phosphoproteomics of EGFR in LUAD",                    cat: "proteomics"      },
-    { text: "WebGestalt enrichment for PTEN targets",               cat: "network"         },
-    { text: "AKT1 phosphosite changes in LUAD",                     cat: "proteomics"      },
+    { text: "RNA and protein levels of MYC in LUAD",               cat: "proteomics"      },
+    { text: "Is MYC amplification correlated with its RNA level?",  cat: "network"         },
+    { text: "AKT1 RNA and protein expression in LUAD",             cat: "proteomics"      },
 ]
 
 const ROW3: Chip[] = [
     { text: "Is EGFR a druggable oncology target?",                 cat: "drug_targets"    },
     { text: "EGFR expression in GBM vs normal tissue",              cat: "expression"      },
     { text: "Tell me about clinical study GSE25066",                cat: "clinical_trials" },
-    { text: "CDH1 methylation in gastric cancer",                   cat: "expression"      },
-    { text: "Pathway enrichment for DNA repair genes",              cat: "network"         },
+    { text: "CDH1 methylation vs RNA in HNSCC",                    cat: "expression"      },
+    { text: "Which genes are most predictive of chemotherapy response?", cat: "clinical_trials" },
     { text: "What drugs are approved for HER2/ERBB2?",             cat: "drug_targets"    },
 ]
 
 const ROW4: Chip[] = [
-    { text: "Proteogenomic correlation for CDKN2A",                 cat: "proteomics"      },
+    { text: "Does CDKN2A copy number drive its RNA loss?",         cat: "proteomics"      },
     { text: "Is PTEN a drug target in cancer?",                     cat: "drug_targets"    },
     { text: "Which pathways predict chemotherapy resistance?",      cat: "clinical_trials" },
-    { text: "CDK4 expression across TCGA cancer types",            cat: "expression"      },
+    { text: "CDK4 expression across cancer types",                  cat: "expression"      },
     { text: "RB1 expression and survival in lung cancer",           cat: "survival"        },
     { text: "FunMap neighborhood of BRCA1",                         cat: "network"         },
 ]
@@ -79,8 +79,8 @@ const ROW5: Chip[] = [
     { text: "Survival by TP53 expression in OV",                    cat: "survival"        },
     { text: "KRAS expression in colorectal cancer",                 cat: "expression"      },
     { text: "Tamoxifen resistance biomarkers in breast cancer",     cat: "clinical_trials" },
-    { text: "LinkedOmics survival module for LUAD",                 cat: "survival"        },
-    { text: "Enrichment analysis for EMT pathway",                  cat: "network"         },
+    { text: "TOP2A survival across TCGA cancer types",              cat: "survival"        },
+    { text: "Which pathways predict immunotherapy sensitivity?",    cat: "clinical_trials" },
     { text: "Is PIK3CA a druggable target in breast cancer?",       cat: "drug_targets"    },
 ]
 

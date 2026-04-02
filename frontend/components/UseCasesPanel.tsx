@@ -104,7 +104,7 @@ const USE_CASES: UseCase[] = [
         id: "pathway-enrichment",
         title: "GO & Pathway Enrichment",
         description: "Run gene ontology and pathway enrichment analysis on a list of genes to identify overrepresented biological processes, molecular functions, and KEGG pathways.",
-        exampleQuery: "What biological pathways are enriched in the top co-expressed genes with TP53 in glioblastoma?",
+        exampleQuery: "Run GO enrichment on TP53, BRCA1, RB1, CDKN2A, MDM2, PTEN, ATM, CHEK2, RAD51, and CCND1.",
         tools: ["webgestalt"],
         category: "Pathway Enrichment",
         icon: Zap,
