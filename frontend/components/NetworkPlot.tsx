@@ -2,7 +2,7 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
 import CytoscapeComponent from "react-cytoscapejs"
-import type { Core, LayoutOptions } from "cytoscape"
+import type { Core, ElementDefinition, LayoutOptions, StylesheetStyle } from "cytoscape"
 import { Download, Maximize2, X, ZoomIn, ZoomOut, Minimize2 } from "lucide-react"
 import type { NetworkVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
@@ -43,7 +43,7 @@ function barYForValue(value: number, absMax: number): number {
     return ((1 - t) / 2) * BAR_H
 }
 
-const CYTOSCAPE_STYLESHEET: cytoscape.StylesheetStyle[] = [
+const CYTOSCAPE_STYLESHEET: StylesheetStyle[] = [
     {
         selector: "node",
         style: {
@@ -57,7 +57,6 @@ const CYTOSCAPE_STYLESHEET: cytoscape.StylesheetStyle[] = [
             "background-color": "data(nodeColor)" as any,
             width: 36,
             height: 36,
-            cursor: "pointer",
         },
     },
     {
@@ -210,9 +209,32 @@ const COSE_LAYOUT: LayoutOptions = {
 } as any
 
 interface NetworkCanvasProps {
-    elements: object[]
+    elements: NetworkElement[]
     height: string
     onCy: (cy: Core) => void
+}
+
+interface NetworkNodeData {
+    id: string
+    label: string
+    center?: boolean
+    nodeValue: number
+    nodeColor: string
+    textColor: string
+}
+
+interface NetworkEdgeData {
+    id: string
+    source: string
+    target: string
+}
+
+type NetworkNodeElement = ElementDefinition & { data: NetworkNodeData }
+type NetworkEdgeElement = ElementDefinition & { data: NetworkEdgeData }
+type NetworkElement = NetworkNodeElement | NetworkEdgeElement
+
+function isEdgeElement(element: NetworkElement): element is NetworkEdgeElement {
+    return "source" in element.data
 }
 
 // Defined at module level so React never sees a new component type on re-render,
@@ -296,7 +318,7 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
 
     // Build Cytoscape elements — memoized so absMax is stable and shareable
     const { elements, absMax } = useMemo(() => {
-        if (!resolvedViz?.nodes) return { elements: [], absMax: 0 }
+        if (!resolvedViz?.nodes) return { elements: [] as NetworkElement[], absMax: 0 }
 
         const centerName = resolvedViz.title.replace(/^FunMap neighborhood\s*[—-]\s*/, "").trim()
         const shownNodes = resolvedViz.nodes.slice(0, 51)
@@ -305,7 +327,7 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
         const numValues = shownNodes.map(n => parseFloat(n.value) || 0)
         const absMax = Math.max(...numValues.map(Math.abs), 1e-6)
 
-        const nodeEls = shownNodes.map(n => {
+        const nodeEls: NetworkNodeElement[] = shownNodes.map(n => {
             const numVal = parseFloat(n.value) || 0
             return {
                 data: {
@@ -320,7 +342,7 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
         })
 
         const seenEdges = new Set<string>()
-        const edgeEls = (resolvedViz.edges || [])
+        const edgeEls: NetworkEdgeElement[] = (resolvedViz.edges || [])
             .filter(e => {
                 if (!shownSet.has(e.source) || !shownSet.has(e.target)) return false
                 const key = [e.source, e.target].sort().join("\0")
@@ -335,14 +357,22 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
         return { elements: [...nodeEls, ...edgeEls], absMax }
     }, [resolvedViz])
 
+    const edgeCount = useMemo(() => elements.filter(isEdgeElement).length, [elements])
+    const nodeCount = elements.length - edgeCount
+
     // Register Cytoscape hover events
     const handleCy = useCallback((cy: Core) => {
         cyRef.current = cy
+        const container = cy.container()
         cy.on("mouseover", "node", e => {
             const d = e.target.data()
+            if (container) container.style.cursor = "pointer"
             setHoveredNode({ name: d.id, value: d.nodeValue ?? 0 })
         })
-        cy.on("mouseout", "node", () => setHoveredNode(null))
+        cy.on("mouseout", "node", () => {
+            if (container) container.style.cursor = ""
+            setHoveredNode(null)
+        })
     }, [])
 
     const handleDownloadNodesCsv = useCallback(() => {
@@ -410,9 +440,9 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
                             <NetworkCanvas elements={elements} height="100%" onCy={handleCy} />
                             <ColorLegend absMax={absMax} hovered={hoveredNode} />
                             <p className="absolute bottom-2 right-3 text-xs text-muted-foreground pointer-events-none">
-                                {elements.filter(e => "source" in e.data).length === 0
-                                    ? `${elements.length} nodes`
-                                    : `${elements.filter(e => !("source" in e.data)).length} nodes · ${elements.filter(e => "source" in e.data).length} edges`
+                                {edgeCount === 0
+                                    ? `${nodeCount} nodes`
+                                    : `${nodeCount} nodes · ${edgeCount} edges`
                                 } · drag to pan · scroll to zoom
                             </p>
                         </div>
