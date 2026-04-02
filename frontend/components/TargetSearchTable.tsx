@@ -57,6 +57,12 @@ export function TargetSearchTable({ visualization }: Props) {
 
     const { title, total, genes, description, score_label } = resolvedViz
     const hasLoScore = (genes ?? []).some(g => g.lo_score != null)
+    const headerNote = useMemo(() => {
+        if (!description) return ""
+        const plain = description.replace(/\*\*(.+?)\*\*/g, "$1").trim()
+        const firstSentence = plain.match(/^.*?\.(?:\s|$)/)?.[0]?.trim()
+        return firstSentence || plain
+    }, [description])
 
     const [page, setPage] = useState(1)
     const [sortKey, setSortKey] = useState<SortKey>("tier")
@@ -131,7 +137,14 @@ export function TargetSearchTable({ visualization }: Props) {
         <div ref={ref} className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden shadow-sm my-2">
             {/* Header */}
             <div className="px-3 py-2 border-b border-border bg-muted/30 flex items-center justify-between gap-3 flex-wrap">
-                <span className="text-sm font-semibold">{title}</span>
+                <div className="min-w-0">
+                    <div className="text-sm font-semibold">{title}</div>
+                    {headerNote && (
+                        <div className="mt-0.5 text-[11px] text-muted-foreground break-words">
+                            {headerNote}
+                        </div>
+                    )}
+                </div>
                 <input
                     type="text"
                     placeholder="Filter by gene, family, drug…"
@@ -161,12 +174,12 @@ export function TargetSearchTable({ visualization }: Props) {
                                     Family <SortIcon col="family" />
                                 </button>
                             </th>
-                            <th className={thCls}>Drugs</th>
                             <th className={thCls}>
                                 <button className="flex items-center gap-1 hover:text-teal-700" onClick={() => handleSort("antigen")}>
                                     Antigen <SortIcon col="antigen" />
                                 </button>
                             </th>
+                            <th className={thCls}>Drugs</th>
                             {hasLoScore && (
                                 <th className={thCls}>
                                     <button className="flex items-center gap-1 hover:text-teal-700" onClick={() => handleSort("lo_score")}>
@@ -193,8 +206,8 @@ export function TargetSearchTable({ visualization }: Props) {
                                         : <span className="text-muted-foreground">—</span>}
                                 </td>
                                 <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{row.family || "—"}</td>
-                                <td className="px-3 py-1.5 text-muted-foreground max-w-xs truncate" title={row.drugs}>{row.drugs || "—"}</td>
                                 <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{row.antigen || "—"}</td>
+                                <td className="px-3 py-1.5 text-muted-foreground max-w-xs truncate" title={row.drugs}>{row.drugs || "—"}</td>
                                 {hasLoScore && (
                                     <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap text-center tabular-nums">{row.lo_score ?? "—"}</td>
                                 )}
@@ -249,7 +262,7 @@ export function TargetSearchTable({ visualization }: Props) {
             </div>
 
             {/* Ranking explanation */}
-            {description && (
+            {description && description !== headerNote && (
                 <div className="px-3 py-2 border-t border-border/50 bg-muted/10 text-xs text-muted-foreground leading-relaxed">
                     <span dangerouslySetInnerHTML={{ __html: description.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>") }} />
                 </div>

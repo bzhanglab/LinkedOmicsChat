@@ -263,7 +263,29 @@ export interface TargetSearchVisualization {
     score_label?: string
 }
 
-export type AnyVisualization = StaticVisualization | NetworkVisualization | DrugTargetVisualization | TargetSearchVisualization
+export interface PredictiveResultsTableVisualization {
+    type: "predictive_results_table"
+    id: string
+    title: string
+    row_label: string
+    rows?: Array<{
+        rank: number
+        label: string
+        studies?: number
+        avg_auroc?: number
+        meta_fdr?: number
+        meta_fdr_sci?: string
+        direction?: string
+    }>
+    description?: string
+}
+
+export type AnyVisualization =
+    | StaticVisualization
+    | NetworkVisualization
+    | DrugTargetVisualization
+    | TargetSearchVisualization
+    | PredictiveResultsTableVisualization
 
 export interface ChatMessage {
     role: "user" | "assistant" | "system"
@@ -530,7 +552,7 @@ export const chatAPI = {
         return response.data
     },
 
-    async getVisualization(vizId: string): Promise<{ png_b64: string; svg: string; csv: string }> {
+    async getVisualization(vizId: string): Promise<Record<string, unknown>> {
         const response = await api.get(`/api/v1/chat/visualizations/${vizId}`)
         return response.data
     },

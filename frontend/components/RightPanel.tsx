@@ -129,6 +129,7 @@ export function RightPanel({
                   const typeConfig: Record<string, { icon: React.ReactNode; bg: string; label: string }> = {
                     drug_target_grid: { icon: <LayoutGrid className="w-7 h-7" />, bg: "bg-teal-50 dark:bg-teal-950/30", label: "Drug Target" },
                     target_search_table: { icon: <Table2 className="w-7 h-7" />, bg: "bg-sky-50 dark:bg-sky-950/30", label: "Target Table" },
+                    predictive_results_table: { icon: <Table2 className="w-7 h-7" />, bg: "bg-cyan-50 dark:bg-cyan-950/30", label: "Results Table" },
                     network_plot: { icon: <Network className="w-7 h-7" />, bg: "bg-purple-50 dark:bg-purple-950/30", label: "Network" },
                     static_plot: { icon: <BarChart2 className="w-7 h-7" />, bg: "bg-orange-50 dark:bg-orange-950/30", label: "Plot" },
                   }
@@ -201,4 +202,3 @@ export function RightPanel({
     </aside>
   )
 }
-

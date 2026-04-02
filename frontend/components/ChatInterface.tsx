@@ -19,6 +19,7 @@ import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
 import { TargetSearchTable } from "@/components/TargetSearchTable"
+import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
 import { useAuth } from "@/components/AuthContext"
 import { EnrichmentRenderer } from "./ToolExplorer"
 import axios from "axios"
@@ -114,6 +115,7 @@ function stripVizBinary(vizs: AnyVisualization[] | undefined): AnyVisualization[
 
 const PLOT_MARKER_RE = /^\[PLOT:([^\]]+)\]$/
 const NETWORK_MARKER_RE = /^\[NETWORK:([^\]]+)\]$/
+const TABLE_MARKER_RE = /^\[TABLE:([^\]]+)\]$/
 
 const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
     const handleCopyTable = useCallback((tableContent: string) => {
@@ -131,16 +133,18 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
 
     // Split content on [PLOT:id] and [NETWORK:id] markers so they render inline.
     const parts = useMemo(() => {
-        const segments: { type: "text" | "plot" | "network"; value: string }[] = []
+        const segments: { type: "text" | "plot" | "network" | "table"; value: string }[] = []
         let buf: string[] = []
         for (const line of processedContent.split("\n")) {
             const trimmed = line.trim()
             const pm = trimmed.match(PLOT_MARKER_RE)
             const nm = trimmed.match(NETWORK_MARKER_RE)
-            if (pm || nm) {
+            const tm = trimmed.match(TABLE_MARKER_RE)
+            if (pm || nm || tm) {
                 if (buf.length) { segments.push({ type: "text", value: buf.join("\n") }); buf = [] }
                 if (pm) segments.push({ type: "plot", value: pm[1] })
                 else if (nm) segments.push({ type: "network", value: nm[1] })
+                else if (tm) segments.push({ type: "table", value: tm[1] })
             } else {
                 buf.push(line)
             }
@@ -171,6 +175,12 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
                 if (part.type === "network") {
                     const viz = vizMap[part.value]
                     return viz?.type === "network_plot" ? <NetworkPlot key={i} visualization={viz} /> : null
+                }
+                if (part.type === "table") {
+                    const viz = vizMap[part.value]
+                    return viz?.type === "predictive_results_table"
+                        ? <PredictiveResultsTable key={i} visualization={viz} />
+                        : null
                 }
                 return (
                     <ReactMarkdown
@@ -245,6 +255,196 @@ function createGeneColorMap(markdown: string): Map<string, number> {
     return map
 }
 
+// Extract plain text from a HAST cell node (handles text and nested inline nodes)
+function hastCellText(cell: any): string {
+    const walk = (n: any): string => {
+        if (!n) return ""
+        if (n.type === "text") return n.value ?? ""
+        if (n.children) return n.children.map(walk).join("")
+        return ""
+    }
+    return walk(cell)
+}
+
+function reactCellText(node: React.ReactNode): string {
+    const walk = (value: React.ReactNode): string => {
+        if (value == null || typeof value === "boolean") return ""
+        if (typeof value === "string" || typeof value === "number") return String(value)
+        if (Array.isArray(value)) return value.map(walk).join("")
+        if (React.isValidElement(value)) return walk(value.props.children)
+        return ""
+    }
+    return walk(node).trim()
+}
+
+function reactElementTag(element: React.ReactElement<any>): string | undefined {
+    if (typeof element.type === "string") return element.type
+    return element.props?.node?.tagName
+}
+
+function reactElementsByTag(children: React.ReactNode, tag: string): React.ReactElement<any>[] {
+    const matches: React.ReactElement<any>[] = []
+
+    const walk = (value: React.ReactNode) => {
+        React.Children.forEach(value, (child) => {
+            if (!React.isValidElement(child)) return
+            if (reactElementTag(child) === tag) matches.push(child)
+            if (child.props?.children) walk(child.props.children)
+        })
+    }
+
+    walk(children)
+    return matches
+}
+
+function tableDataFromReactChildren(children: React.ReactNode): { headers: string[]; rows: string[][] } {
+    const thead = reactElementsByTag(children, "thead")[0]
+    const tbody = reactElementsByTag(children, "tbody")[0]
+
+    const headerRow = thead ? reactElementsByTag(thead.props.children, "tr")[0] : undefined
+    const headers = headerRow
+        ? reactElementsByTag(headerRow.props.children, "th").map((cell) => reactCellText(cell.props.children))
+        : []
+
+    const bodyRowsSource = tbody ? reactElementsByTag(tbody.props.children, "tr") : reactElementsByTag(children, "tr").slice(headers.length ? 1 : 0)
+    const rows = bodyRowsSource.map((row) =>
+        reactElementsByTag(row.props.children, "td").map((cell) => reactCellText(cell.props.children))
+    ).filter((row) => row.length > 0)
+
+    return { headers, rows }
+}
+
+// Standalone named component so React always sees the same component type
+// regardless of `createEnhancedMarkdownComponents` re-invocations.
+function SortableTable({ node, children, onCopyTable }: { node: any; children?: React.ReactNode; onCopyTable: (s: string) => void }) {
+    const [copied, setCopied] = useState(false)
+    const [sortCol, setSortCol] = useState<number | null>(null)
+    const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
+    const PAGE_SIZE = 10
+    const [page, setPage] = useState(0)
+
+    const { headers, rows } = useMemo(() => {
+        const astHeaders: string[] = []
+        const astRows: string[][] = []
+
+        if (node) {
+            const theadSection = node.children?.find((s: any) => s.tagName === "thead")
+            const tbodySection = node.children?.find((s: any) => s.tagName === "tbody")
+            const headerRow = theadSection?.children?.find((r: any) => r.tagName === "tr")
+            astHeaders.push(...(headerRow?.children ?? []).filter((c: any) => c.tagName === "th").map(hastCellText))
+            astRows.push(...(tbodySection?.children ?? [])
+                .filter((r: any) => r.tagName === "tr")
+                .map((r: any) => (r.children ?? []).filter((c: any) => c.tagName === "td").map(hastCellText)))
+        }
+
+        if (astHeaders.length || astRows.length) {
+            return { headers: astHeaders, rows: astRows }
+        }
+
+        return tableDataFromReactChildren(children)
+    }, [children, node])
+
+    const sortedRows = useMemo(() => {
+        if (sortCol === null) return rows
+        return [...rows].sort((a, b) => {
+            const va = a[sortCol] ?? "", vb = b[sortCol] ?? ""
+            const na = parseFloat(va.replace(/[^0-9.\-e+]/g, "")), nb = parseFloat(vb.replace(/[^0-9.\-e+]/g, ""))
+            const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : va.localeCompare(vb)
+            return sortDir === "asc" ? cmp : -cmp
+        })
+    }, [rows, sortCol, sortDir])
+
+    useEffect(() => { setPage(0) }, [sortCol, sortDir])
+
+    const totalRows = sortedRows.length
+    const needsPagination = totalRows > PAGE_SIZE
+    const pageCount = Math.ceil(totalRows / PAGE_SIZE)
+    const visibleRows = needsPagination ? sortedRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : sortedRows
+
+    const handleSort = (col: number) => {
+        if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc") }
+        else { setSortCol(col); setSortDir("asc") }
+    }
+    const handleCopy = () => {
+        const allRows = headers.length ? [headers, ...rows] : rows
+        onCopyTable(allRows.map(r => r.join('\t')).join('\n'))
+        setCopied(true); setTimeout(() => setCopied(false), 2000)
+    }
+    const renderCell = (text: string) => {
+        if (text.startsWith("↑")) return <span className="font-medium text-teal-600 dark:text-teal-400">{text}</span>
+        if (text.startsWith("↓")) return <span className="font-medium text-rose-600 dark:text-rose-400">{text}</span>
+        return text
+    }
+    const btnClass = "px-1.5 py-0.5 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs"
+
+    // If neither the markdown AST nor rendered children yielded table data, fall back.
+    if (headers.length === 0 && rows.length === 0) {
+        return (
+            <div className="relative group my-4 rounded-lg border border-border overflow-hidden overflow-x-auto">
+                <table className="w-full border-collapse text-sm">{children}</table>
+            </div>
+        )
+    }
+
+    return (
+        <div className="relative group my-4 rounded-lg border border-border overflow-hidden">
+            <button onClick={handleCopy}
+                className="absolute top-1.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background border border-border rounded px-2 py-1 text-xs flex items-center gap-1 hover:bg-accent z-10"
+                title="Copy table as TSV">
+                {copied ? <><Check className="w-3 h-3" />Copied!</> : <><Copy className="w-3 h-3" />Copy</>}
+            </button>
+            <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                    {headers.length > 0 && (
+                        <thead className="bg-muted/60 border-b border-border">
+                            <tr>
+                                {headers.map((h, i) => {
+                                    const active = sortCol === i
+                                    return (
+                                        <th key={i}
+                                            className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-foreground transition-colors"
+                                            onClick={() => handleSort(i)}>
+                                            <span className="inline-flex items-center gap-1">
+                                                {h}
+                                                {active ? (sortDir === "asc" ? <ChevronUp className="w-3 h-3 text-foreground" /> : <ChevronDown className="w-3 h-3 text-foreground" />) : <ChevronUp className="w-3 h-3 opacity-20" />}
+                                            </span>
+                                        </th>
+                                    )
+                                })}
+                            </tr>
+                        </thead>
+                    )}
+                    <tbody className="divide-y divide-border">
+                        {visibleRows.map((row, ri) => (
+                            <tr key={ri} className="hover:bg-muted/30 transition-colors">
+                                {row.map((cell, ci) => (
+                                    <td key={ci} className="px-3 py-2 text-xs text-foreground align-top">{renderCell(cell)}</td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                    {needsPagination && (
+                        <tfoot className="border-t border-border bg-muted/30">
+                            <tr><td colSpan={999} className="px-3 py-2">
+                                <div className="flex items-center justify-between text-xs text-muted-foreground select-none">
+                                    <span>Rows {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalRows)} of {totalRows}</span>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => setPage(0)} disabled={page === 0} className={btnClass}>«</button>
+                                        <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className={btnClass}>‹ Prev</button>
+                                        <span className="px-2">Page {page + 1} / {pageCount}</span>
+                                        <button onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page === pageCount - 1} className={btnClass}>Next ›</button>
+                                        <button onClick={() => setPage(pageCount - 1)} disabled={page === pageCount - 1} className={btnClass}>»</button>
+                                    </div>
+                                </div>
+                            </td></tr>
+                        </tfoot>
+                    )}
+                </table>
+            </div>
+        </div>
+    )
+}
+
 // Enhanced markdown components with copy table functionality
 function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void, geneColorMap?: Map<string, number>, toolSources?: Record<string, string>) {
     return {
@@ -277,118 +477,18 @@ function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void
                 </code>
             )
         },
-        table: ({ node, children, ...props }: any) => {
-            const [copied, setCopied] = useState(false)
-
-            const handleCopy = () => {
-                // Read all rows from HAST so copy always gets everything regardless of page
-                const allRows: string[][] = []
-                node?.children?.forEach((section: any) => {
-                    section?.children?.forEach((row: any) => {
-                        if (row.tagName !== 'tr') return
-                        allRows.push(
-                            row.children
-                                .filter((c: any) => c.tagName === 'th' || c.tagName === 'td')
-                                .map((c: any) => c.children?.[0]?.value ?? '')
-                        )
-                    })
-                })
-                onCopyTable(allRows.map(r => r.join('\t')).join('\n'))
-                setCopied(true)
-                setTimeout(() => setCopied(false), 2000)
-            }
-
-            return (
-                <div className="relative group my-4 rounded-lg border border-border overflow-hidden">
-                    <button
-                        onClick={handleCopy}
-                        className="absolute top-1.5 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background border border-border rounded px-2 py-1 text-xs flex items-center gap-1 hover:bg-accent z-10"
-                        title="Copy table as TSV"
-                    >
-                        {copied ? (
-                            <><Check className="w-3 h-3" />Copied!</>
-                        ) : (
-                            <><Copy className="w-3 h-3" />Copy</>
-                        )}
-                    </button>
-                    <div className="overflow-x-auto">
-                        <table className="w-full border-collapse text-sm" {...props}>
-                            {children}
-                        </table>
-                    </div>
-                </div>
-            )
-        },
-        thead: ({ node, children, ...props }: any) => (
-            <thead className="bg-muted/60 border-b border-border" {...props}>
-                {children}
-            </thead>
-        ),
-        tbody: ({ node, children, ...props }: any) => {
-            const PAGE_SIZE = 10
-            const [page, setPage] = useState(0)
-
-            const allRows = React.Children.toArray(children)
-            const totalRows = allRows.length
-            const needsPagination = totalRows > PAGE_SIZE
-            const pageCount = Math.ceil(totalRows / PAGE_SIZE)
-            const visibleRows = needsPagination
-                ? allRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-                : allRows
-
-            const btnClass = "px-1.5 py-0.5 rounded border border-border hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-
-            return (
-                <>
-                    <tbody className="divide-y divide-border" {...props}>
-                        {visibleRows}
-                    </tbody>
-                    {needsPagination && (
-                        <tfoot className="border-t border-border bg-muted/30">
-                            <tr>
-                                <td colSpan={999} className="px-3 py-2">
-                                    <div className="flex items-center justify-between text-xs text-muted-foreground select-none">
-                                        <span>Rows {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalRows)} of {totalRows}</span>
-                                        <div className="flex items-center gap-1">
-                                            <button onClick={() => setPage(0)} disabled={page === 0} className={btnClass}>«</button>
-                                            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className={btnClass}>‹ Prev</button>
-                                            <span className="px-2">Page {page + 1} / {pageCount}</span>
-                                            <button onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page === pageCount - 1} className={btnClass}>Next ›</button>
-                                            <button onClick={() => setPage(pageCount - 1)} disabled={page === pageCount - 1} className={btnClass}>»</button>
-                                        </div>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tfoot>
-                    )}
-                </>
-            )
-        },
-        tr: ({ node, children, ...props }: any) => (
-            <tr className="hover:bg-muted/30 transition-colors" {...props}>
-                {children}
-            </tr>
-        ),
-        th: ({ node, children, ...props }: any) => (
-            <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap" {...props}>
-                {children}
-            </th>
-        ),
-        td: ({ node, children, ...props }: any) => {
-            const text = typeof children === "string" ? children
-                : Array.isArray(children) && typeof children[0] === "string" ? children[0] : null
-            const isSensitive = text?.startsWith("↑")
-            const isResistant = text?.startsWith("↓")
+        table: ({ node, children }: any) => <SortableTable node={node} children={children} onCopyTable={onCopyTable} />,
+        // Fallback styled sub-components (used only in non-passNode ReactMarkdown instances)
+        thead: ({ children, ...props }: any) => <thead className="bg-muted/60 border-b border-border" {...props}>{children}</thead>,
+        tbody: ({ children, ...props }: any) => <tbody className="divide-y divide-border" {...props}>{children}</tbody>,
+        tr: ({ children, ...props }: any) => <tr className="hover:bg-muted/30 transition-colors" {...props}>{children}</tr>,
+        th: ({ children, ...props }: any) => <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap" {...props}>{children}</th>,
+        td: ({ children, ...props }: any) => {
+            const text = typeof children === "string" ? children : Array.isArray(children) && typeof children[0] === "string" ? children[0] : null
+            const isSensitive = text?.startsWith("↑"); const isResistant = text?.startsWith("↓")
             return (
                 <td className="px-3 py-2 text-xs text-foreground align-top" {...props}>
-                    {(isSensitive || isResistant) ? (
-                        <span className={isSensitive
-                            ? "font-medium text-teal-600 dark:text-teal-400"
-                            : "font-medium text-rose-600 dark:text-rose-400"
-                        }>
-                            {children}
-                        </span>
-                    ) : children}
+                    {(isSensitive || isResistant) ? <span className={isSensitive ? "font-medium text-teal-600 dark:text-teal-400" : "font-medium text-rose-600 dark:text-rose-400"}>{children}</span> : children}
                 </td>
             )
         },
@@ -829,6 +929,7 @@ const MessagesPane = memo(function MessagesPane({
                                                 const inlined = new Set([
                                                     ...(content.match(/\[PLOT:([^\]]+)\]/g)?.map(m => m.slice(6, -1)) ?? []),
                                                     ...(content.match(/\[NETWORK:([^\]]+)\]/g)?.map(m => m.slice(9, -1)) ?? []),
+                                                    ...(content.match(/\[TABLE:([^\]]+)\]/g)?.map(m => m.slice(7, -1)) ?? []),
                                                 ])
                                                 const remaining = (message.visualizations || []).filter(v => !inlined.has(v.id))
                                                 return remaining.length > 0 ? (
@@ -836,6 +937,12 @@ const MessagesPane = memo(function MessagesPane({
                                                         {remaining.map((viz) =>
                                                             viz.type === "network_plot"
                                                                 ? <NetworkPlot key={viz.id} visualization={viz} />
+                                                                : viz.type === "drug_target_grid"
+                                                                ? <DrugTargetGrid key={viz.id} visualization={viz} />
+                                                                : viz.type === "target_search_table"
+                                                                ? <TargetSearchTable key={viz.id} visualization={viz} />
+                                                                : viz.type === "predictive_results_table"
+                                                                ? <PredictiveResultsTable key={viz.id} visualization={viz} />
                                                                 : <StaticPlot key={viz.id} visualization={viz} />
                                                         )}
                                                     </div>
@@ -1203,13 +1310,14 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                     if (viz.type === "static_plot" && viz.id) {
                         try {
                             const data = await chatAPI.getVisualization(viz.id)
-                            viz.png_b64 = data.png_b64;
-                            (viz as any)._csv = data.csv
+                            viz.png_b64 = typeof data.png_b64 === "string" ? data.png_b64 : undefined
+                            ;(viz as any)._csv = typeof data.csv === "string" ? data.csv : ""
                         } catch {
                             // leave png_b64 empty — plot will be skipped
                         }
                     } else if ((viz.type === "drug_target_grid" && !(viz as any).features) ||
-                               (viz.type === "target_search_table" && !(viz as any).genes?.length)) {
+                               (viz.type === "target_search_table" && !(viz as any).genes?.length) ||
+                               (viz.type === "predictive_results_table" && !(viz as any).rows?.length)) {
                         if (viz.id) {
                             try {
                                 const data = await chatAPI.getVisualization(viz.id)
@@ -1388,28 +1496,72 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             return html
         }
 
+        const predictiveResultsTableHtml = (viz: AnyVisualization): string => {
+            if (viz.type !== "predictive_results_table") return ""
+            const v = viz as any
+            const rows: any[] = v.rows || []
+            if (!rows.length) return ""
+            let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+            html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
+            html += `<thead><tr>`
+            html += `<th style="${thS}">#</th>`
+            html += `<th style="${thS}">${escapeHtml(v.row_label || "Item")}</th>`
+            html += `<th style="${thS}">Studies</th>`
+            html += `<th style="${thS}">Avg AUROC</th>`
+            html += `<th style="${thS}">Meta-FDR</th>`
+            html += `<th style="${thS}">Direction</th>`
+            html += `</tr></thead><tbody>`
+            rows.forEach((row, i) => {
+                const rowBg = i % 2 === 0 ? rowEven : rowOdd
+                const dir = row.direction === "sensitive"
+                    ? `<span style="color:#0f766e;font-weight:600;">↑ Sensitive</span>`
+                    : row.direction === "resistant"
+                    ? `<span style="color:#e11d48;font-weight:600;">↓ Resistant</span>`
+                    : "—"
+                html += `<tr style="${rowBg}">`
+                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.rank ?? "—"}</td>`
+                html += `<td style="${tdS}font-weight:600;color:hsl(var(--foreground));">${escapeHtml(row.label || "—")}</td>`
+                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.studies ?? "—"}</td>`
+                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.avg_auroc ?? "—"}</td>`
+                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(row.meta_fdr_sci || "—")}</td>`
+                html += `<td style="${tdS}white-space:nowrap;">${dir}</td>`
+                html += `</tr>`
+            })
+            html += `</tbody></table></div>`
+            if (v.description) html += `<div style="padding:8px 14px;font-size:11px;color:hsl(var(--muted-foreground));border-top:1px solid hsl(var(--border));background:hsl(var(--muted));">${escapeHtml(v.description)}</div>`
+            html += `</div>`
+            return html
+        }
+
         const vizHtml = (viz: AnyVisualization): string => {
             if (viz.type === "static_plot") return plotImgHtml(viz)
             if (viz.type === "drug_target_grid") return drugTargetGridHtml(viz)
             if (viz.type === "target_search_table") return targetSearchTableHtml(viz)
+            if (viz.type === "predictive_results_table") return predictiveResultsTableHtml(viz)
             return ""
         }
 
-        // Split content on [PLOT:id] lines — render text segments as markdown, plot segments as images
+        // Split content on inline visualization markers for export HTML rendering.
         const PLOT_RE = /^\[PLOT:([^\]]+)\]$/
+        const NETWORK_RE = /^\[NETWORK:([^\]]+)\]$/
+        const TABLE_RE = /^\[TABLE:([^\]]+)\]$/
         const inlinedIds = new Set<string>()
         const contentSegments: string[] = []
         let textBuf: string[] = []
         for (const line of (msg.content || "").split("\n")) {
-            const m = line.trim().match(PLOT_RE)
-            if (m) {
+            const trimmed = line.trim()
+            const plotMatch = trimmed.match(PLOT_RE)
+            const networkMatch = trimmed.match(NETWORK_RE)
+            const tableMatch = trimmed.match(TABLE_RE)
+            const markerMatch = plotMatch || networkMatch || tableMatch
+            if (markerMatch) {
                 if (textBuf.length) {
                     try { contentSegments.push(await renderMarkdownForExport(textBuf.join("\n"), msg.toolSources)) }
                     catch { contentSegments.push(`<div class="export-markdown">${escapeHtml(textBuf.join("\n")).replace(/\n/g, "<br>")}</div>`) }
                     textBuf = []
                 }
-                inlinedIds.add(m[1])
-                contentSegments.push(vizMap[m[1]] ? vizHtml(vizMap[m[1]]) : "")
+                inlinedIds.add(markerMatch[1])
+                contentSegments.push(vizMap[markerMatch[1]] ? vizHtml(vizMap[markerMatch[1]]) : "")
             } else {
                 textBuf.push(line)
             }
