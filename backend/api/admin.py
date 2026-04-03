@@ -56,7 +56,6 @@ def _build_dashboard_payload(
     token_usage_rows: List[TokenUsage],
     guest_usage_rows: List[GuestTokenUsage],
     feedback_rows: List[MessageFeedback],
-    days: int = 14,
 ) -> Dict[str, Any]:
     users_by_id = {user.id: user for user in users}
     sessions_by_id = {session.id: session for session in sessions}
@@ -268,7 +267,7 @@ def _build_dashboard_payload(
 
     sorted_days = sorted(daily_rollup.items())
     daily_activity = []
-    for day, values in sorted_days[-days:]:
+    for day, values in sorted_days:
         daily_activity.append(
             {
                 "date": day,

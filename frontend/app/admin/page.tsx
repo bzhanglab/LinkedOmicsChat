@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation"
 import {
     Activity,
     ArrowLeft,
+    ArrowUpDown,
+    ChevronDown,
+    ChevronUp,
     MessageSquareText,
     RefreshCw,
     Shield,
@@ -19,10 +22,16 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
     adminAPI,
+    type AdminDailyActivity,
     type AdminDashboardResponse,
     type AdminFeedbackItem,
     type AdminRecentTurn,
 } from "@/lib/api"
+
+type DailyActivitySortKey = "date" | "active_users" | "queries" | "feedback_count" | "tokens"
+type SortDirection = "asc" | "desc"
+
+const DAILY_ACTIVITY_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const
 
 function formatNumber(value: number): string {
     return new Intl.NumberFormat().format(value)
@@ -136,12 +145,54 @@ function RecentTurnRow({ item }: { item: AdminRecentTurn }) {
     )
 }
 
+function getDailyActivityValue(day: AdminDailyActivity, key: DailyActivitySortKey): number | string {
+    if (key === "queries") {
+        return day.registered_queries + day.guest_queries
+    }
+    if (key === "tokens") {
+        return day.input_tokens + day.output_tokens
+    }
+    return day[key]
+}
+
+function SortHeader({
+    label,
+    sortKey,
+    activeKey,
+    direction,
+    onToggle,
+}: {
+    label: string
+    sortKey: DailyActivitySortKey
+    activeKey: DailyActivitySortKey
+    direction: SortDirection
+    onToggle: (key: DailyActivitySortKey) => void
+}) {
+    const isActive = sortKey === activeKey
+    const Icon = !isActive ? ArrowUpDown : direction === "asc" ? ChevronUp : ChevronDown
+
+    return (
+        <button
+            type="button"
+            onClick={() => onToggle(sortKey)}
+            className="inline-flex items-center gap-1 font-medium transition-colors hover:text-slate-700 dark:hover:text-slate-200"
+        >
+            <span>{label}</span>
+            <Icon className={`h-3.5 w-3.5 ${isActive ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
+        </button>
+    )
+}
+
 export default function AdminPage() {
     const { user, loading, isAuthenticated, isResolvingUser, authError, logout } = useAuth()
     const router = useRouter()
     const [dashboard, setDashboard] = useState<AdminDashboardResponse | null>(null)
     const [pageLoading, setPageLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [dailyActivitySortKey, setDailyActivitySortKey] = useState<DailyActivitySortKey>("date")
+    const [dailyActivitySortDirection, setDailyActivitySortDirection] = useState<SortDirection>("desc")
+    const [dailyActivityPage, setDailyActivityPage] = useState(1)
+    const [dailyActivityRowsPerPage, setDailyActivityRowsPerPage] = useState<number>(20)
 
     const loadDashboard = useCallback(async () => {
         setPageLoading(true)
@@ -236,6 +287,37 @@ export default function AdminPage() {
 
     const overview = dashboard?.overview
     const quality = dashboard?.quality_signals
+    const sortedDailyActivity = [...(dashboard?.daily_activity || [])].sort((left, right) => {
+        const leftValue = getDailyActivityValue(left, dailyActivitySortKey)
+        const rightValue = getDailyActivityValue(right, dailyActivitySortKey)
+
+        if (typeof leftValue === "string" && typeof rightValue === "string") {
+            const result = leftValue.localeCompare(rightValue)
+            return dailyActivitySortDirection === "asc" ? result : -result
+        }
+
+        const result = Number(leftValue) - Number(rightValue)
+        return dailyActivitySortDirection === "asc" ? result : -result
+    })
+
+    const toggleDailyActivitySort = (key: DailyActivitySortKey) => {
+        if (key === dailyActivitySortKey) {
+            setDailyActivitySortDirection((current) => (current === "asc" ? "desc" : "asc"))
+            setDailyActivityPage(1)
+            return
+        }
+        setDailyActivitySortKey(key)
+        setDailyActivitySortDirection(key === "date" ? "desc" : "desc")
+        setDailyActivityPage(1)
+    }
+
+    const dailyActivityTotalPages = Math.max(1, Math.ceil(sortedDailyActivity.length / dailyActivityRowsPerPage))
+    const currentDailyActivityPage = Math.min(dailyActivityPage, dailyActivityTotalPages)
+    const dailyActivityPageStart = (currentDailyActivityPage - 1) * dailyActivityRowsPerPage
+    const paginatedDailyActivity = sortedDailyActivity.slice(
+        dailyActivityPageStart,
+        dailyActivityPageStart + dailyActivityRowsPerPage
+    )
 
     return (
         <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(13,148,136,0.14),transparent_30%),linear-gradient(180deg,#f8fafc_0%,#eef6f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top_left,_rgba(45,212,191,0.12),transparent_30%),linear-gradient(180deg,#020617_0%,#0f172a_100%)] sm:px-6 lg:px-8">
@@ -290,21 +372,61 @@ export default function AdminPage() {
                             <Card className="border-slate-200/80 bg-white/85 dark:border-slate-800 dark:bg-slate-950/70">
                                 <CardHeader>
                                     <CardTitle className="text-slate-900 dark:text-white">Daily activity</CardTitle>
-                                    <CardDescription>Last {dashboard.daily_activity.length} days of query volume, token usage, and feedback.</CardDescription>
+                                    <CardDescription>All {dashboard.daily_activity.length} activity days. Click a column header to sort.</CardDescription>
                                 </CardHeader>
                                 <CardContent className="overflow-x-auto">
                                     <table className="min-w-full text-sm">
                                         <thead className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                             <tr>
-                                                <th className="px-4 pb-3">Date</th>
-                                                <th className="px-4 pb-3">Users</th>
-                                                <th className="px-4 pb-3">Queries</th>
-                                                <th className="px-4 pb-3">Feedback</th>
-                                                <th className="px-4 pb-3">Tokens</th>
+                                                <th className="px-4 pb-3" aria-sort={dailyActivitySortKey === "date" ? (dailyActivitySortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                                                    <SortHeader
+                                                        label="Date"
+                                                        sortKey="date"
+                                                        activeKey={dailyActivitySortKey}
+                                                        direction={dailyActivitySortDirection}
+                                                        onToggle={toggleDailyActivitySort}
+                                                    />
+                                                </th>
+                                                <th className="px-4 pb-3" aria-sort={dailyActivitySortKey === "active_users" ? (dailyActivitySortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                                                    <SortHeader
+                                                        label="Users"
+                                                        sortKey="active_users"
+                                                        activeKey={dailyActivitySortKey}
+                                                        direction={dailyActivitySortDirection}
+                                                        onToggle={toggleDailyActivitySort}
+                                                    />
+                                                </th>
+                                                <th className="px-4 pb-3" aria-sort={dailyActivitySortKey === "queries" ? (dailyActivitySortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                                                    <SortHeader
+                                                        label="Queries"
+                                                        sortKey="queries"
+                                                        activeKey={dailyActivitySortKey}
+                                                        direction={dailyActivitySortDirection}
+                                                        onToggle={toggleDailyActivitySort}
+                                                    />
+                                                </th>
+                                                <th className="px-4 pb-3" aria-sort={dailyActivitySortKey === "feedback_count" ? (dailyActivitySortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                                                    <SortHeader
+                                                        label="Feedback"
+                                                        sortKey="feedback_count"
+                                                        activeKey={dailyActivitySortKey}
+                                                        direction={dailyActivitySortDirection}
+                                                        onToggle={toggleDailyActivitySort}
+                                                    />
+                                                </th>
+                                                <th className="px-4 pb-3" aria-sort={dailyActivitySortKey === "tokens" ? (dailyActivitySortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                                                    <SortHeader
+                                                        label="Tokens"
+                                                        sortKey="tokens"
+                                                        activeKey={dailyActivitySortKey}
+                                                        direction={dailyActivitySortDirection}
+                                                        onToggle={toggleDailyActivitySort}
+                                                    />
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {dashboard.daily_activity.map((day) => (
+                                            {paginatedDailyActivity.map((day) => (
                                                 <tr key={day.date} className="border-t border-slate-200/70 dark:border-slate-800">
                                                     <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{day.date}</td>
                                                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{formatNumber(day.active_users)}</td>
@@ -318,6 +440,75 @@ export default function AdminPage() {
                                             ))}
                                         </tbody>
                                     </table>
+                                    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200/70 pt-4 text-sm text-slate-600 dark:border-slate-800 dark:text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <label htmlFor="daily-activity-rows-per-page" className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                Rows per page
+                                            </label>
+                                            <select
+                                                id="daily-activity-rows-per-page"
+                                                value={dailyActivityRowsPerPage}
+                                                onChange={(event) => {
+                                                    setDailyActivityRowsPerPage(Number(event.target.value))
+                                                    setDailyActivityPage(1)
+                                                }}
+                                                className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-200 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:focus:border-teal-400 dark:focus:ring-teal-900"
+                                            >
+                                                {DAILY_ACTIVITY_PAGE_SIZE_OPTIONS.map((option) => (
+                                                    <option key={option} value={option}>
+                                                        {option}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <span>
+                                                Showing {formatNumber(dailyActivityPageStart + 1)}-
+                                                {formatNumber(Math.min(dailyActivityPageStart + dailyActivityRowsPerPage, sortedDailyActivity.length))} of {formatNumber(sortedDailyActivity.length)} days
+                                            </span>
+                                        </div>
+                                        {sortedDailyActivity.length > dailyActivityRowsPerPage && (
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setDailyActivityPage(1)}
+                                                    disabled={currentDailyActivityPage === 1}
+                                                >
+                                                    First
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setDailyActivityPage((current) => Math.max(1, current - 1))}
+                                                    disabled={currentDailyActivityPage === 1}
+                                                >
+                                                    Previous
+                                                </Button>
+                                                <span className="px-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                    Page {formatNumber(currentDailyActivityPage)} / {formatNumber(dailyActivityTotalPages)}
+                                                </span>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setDailyActivityPage((current) => Math.min(dailyActivityTotalPages, current + 1))}
+                                                    disabled={currentDailyActivityPage === dailyActivityTotalPages}
+                                                >
+                                                    Next
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setDailyActivityPage(dailyActivityTotalPages)}
+                                                    disabled={currentDailyActivityPage === dailyActivityTotalPages}
+                                                >
+                                                    Last
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </div>
                                 </CardContent>
                             </Card>
 
