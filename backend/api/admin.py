@@ -83,6 +83,10 @@ def _build_dashboard_payload(
             "feedback_count": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "registered_input_tokens": 0,
+            "registered_output_tokens": 0,
+            "guest_input_tokens": 0,
+            "guest_output_tokens": 0,
         }
     )
 
@@ -134,6 +138,8 @@ def _build_dashboard_payload(
         day_key = _date_key(float(row.timestamp or 0))
         daily_rollup[day_key]["input_tokens"] += int(row.input_tokens or 0)
         daily_rollup[day_key]["output_tokens"] += int(row.output_tokens or 0)
+        daily_rollup[day_key]["registered_input_tokens"] += int(row.input_tokens or 0)
+        daily_rollup[day_key]["registered_output_tokens"] += int(row.output_tokens or 0)
         model_name = str(row.model or "unknown")
         model_rollup[model_name]["queries"] += 1
         model_rollup[model_name]["input_tokens"] += int(row.input_tokens or 0)
@@ -152,6 +158,8 @@ def _build_dashboard_payload(
         daily_rollup[day_key]["guest_queries"] += 1
         daily_rollup[day_key]["input_tokens"] += int(row.input_tokens or 0)
         daily_rollup[day_key]["output_tokens"] += int(row.output_tokens or 0)
+        daily_rollup[day_key]["guest_input_tokens"] += int(row.input_tokens or 0)
+        daily_rollup[day_key]["guest_output_tokens"] += int(row.output_tokens or 0)
         model_name = str(row.model or "unknown")
         model_rollup[model_name]["queries"] += 1
         model_rollup[model_name]["input_tokens"] += int(row.input_tokens or 0)
@@ -277,6 +285,10 @@ def _build_dashboard_payload(
                 "feedback_count": values["feedback_count"],
                 "input_tokens": values["input_tokens"],
                 "output_tokens": values["output_tokens"],
+                "registered_input_tokens": values["registered_input_tokens"],
+                "registered_output_tokens": values["registered_output_tokens"],
+                "guest_input_tokens": values["guest_input_tokens"],
+                "guest_output_tokens": values["guest_output_tokens"],
             }
         )
 

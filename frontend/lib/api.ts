@@ -444,6 +444,10 @@ export interface AdminDailyActivity {
     feedback_count: number
     input_tokens: number
     output_tokens: number
+    registered_input_tokens: number
+    registered_output_tokens: number
+    guest_input_tokens: number
+    guest_output_tokens: number
 }
 
 export interface AdminModelUsage {

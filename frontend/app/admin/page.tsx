@@ -16,6 +16,19 @@ import {
     ThumbsUp,
     Users,
 } from "lucide-react"
+import {
+    Bar,
+    BarChart,
+    Brush,
+    CartesianGrid,
+    ComposedChart,
+    Legend,
+    Line,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from "recharts"
 
 import { useAuth } from "@/components/AuthContext"
 import { Button } from "@/components/ui/button"
@@ -30,6 +43,7 @@ import {
 
 type DailyActivitySortKey = "date" | "active_users" | "queries" | "feedback_count" | "tokens"
 type SortDirection = "asc" | "desc"
+type TokenUsageScope = "all" | "registered" | "guest"
 
 const DAILY_ACTIVITY_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const
 
@@ -40,6 +54,12 @@ function formatNumber(value: number): string {
 function formatTimestamp(timestamp?: number | null): string {
     if (!timestamp) return "N/A"
     return new Date(timestamp * 1000).toLocaleString()
+}
+
+function formatChartDate(date: string, compact = false): string {
+    const [year, month, day] = date.split("-")
+    if (!year || !month || !day) return date
+    return compact ? `${month}/${day}` : `${month}/${day}/${year}`
 }
 
 function confidenceLabel(confidence?: string | null): string {
@@ -193,6 +213,7 @@ export default function AdminPage() {
     const [dailyActivitySortDirection, setDailyActivitySortDirection] = useState<SortDirection>("desc")
     const [dailyActivityPage, setDailyActivityPage] = useState(1)
     const [dailyActivityRowsPerPage, setDailyActivityRowsPerPage] = useState<number>(20)
+    const [tokenUsageScope, setTokenUsageScope] = useState<TokenUsageScope>("all")
 
     const loadDashboard = useCallback(async () => {
         setPageLoading(true)
@@ -318,6 +339,31 @@ export default function AdminPage() {
         dailyActivityPageStart,
         dailyActivityPageStart + dailyActivityRowsPerPage
     )
+    const activityTrendData = (dashboard?.daily_activity || []).map((day) => ({
+        ...day,
+        total_queries: day.registered_queries + day.guest_queries,
+        total_tokens: day.input_tokens + day.output_tokens,
+    }))
+    const tokenUsageChartData = (dashboard?.daily_activity || []).map((day) => {
+        let inputTokens = day.input_tokens
+        let outputTokens = day.output_tokens
+
+        if (tokenUsageScope === "registered") {
+            inputTokens = day.registered_input_tokens
+            outputTokens = day.registered_output_tokens
+        } else if (tokenUsageScope === "guest") {
+            inputTokens = day.guest_input_tokens
+            outputTokens = day.guest_output_tokens
+        }
+
+        return {
+            ...day,
+            chart_input_tokens: inputTokens,
+            chart_output_tokens: outputTokens,
+            chart_total_tokens: inputTokens + outputTokens,
+        }
+    })
+    const toolUsageChartData = dashboard?.tool_usage || []
 
     return (
         <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(13,148,136,0.14),transparent_30%),linear-gradient(180deg,#f8fafc_0%,#eef6f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top_left,_rgba(45,212,191,0.12),transparent_30%),linear-gradient(180deg,#020617_0%,#0f172a_100%)] sm:px-6 lg:px-8">
@@ -329,7 +375,7 @@ export default function AdminPage() {
                                 <Shield className="h-3.5 w-3.5" />
                                 Internal admin
                             </div>
-                            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 dark:text-white">Operations Dashboard</h1>
+                            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 dark:text-white">Admin Dashboard</h1>
                             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">
                                 Monitor usage, token spend, feedback trends, and recent turns from one place without digging through SQLite tables or ad hoc scripts.
                             </p>
@@ -367,6 +413,235 @@ export default function AdminPage() {
                             <MetricCard label="Approval rate" value={`${overview.positive_feedback_rate.toFixed(1)}%`} hint={`${formatNumber(overview.positive_feedback)} up / ${formatNumber(overview.negative_feedback)} down`} icon={ThumbsUp} />
                             <MetricCard label="Quality flags" value={formatNumber(quality.low_confidence_responses + quality.no_data_responses)} hint={`${formatNumber(quality.partial_confidence_responses)} partial and ${formatNumber(quality.general_knowledge_responses)} general knowledge`} icon={ThumbsDown} />
                         </div>
+
+                        <Card className="border-slate-200/80 bg-white/85 dark:border-slate-800 dark:bg-slate-950/70">
+                            <CardHeader>
+                                <CardTitle className="text-slate-900 dark:text-white">Daily trends</CardTitle>
+                                <CardDescription>
+                                    Total queries are shown as bars, while active users and feedback counts are tracked as lines. Drag the slider below the chart to zoom through long histories.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                {activityTrendData.length > 0 ? (
+                                    <div className="h-[360px] w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart
+                                                data={activityTrendData}
+                                                margin={{ top: 12, right: 18, left: 0, bottom: 12 }}
+                                            >
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" opacity={0.28} />
+                                                <XAxis
+                                                    dataKey="date"
+                                                    tickFormatter={(value: string) => formatChartDate(value, true)}
+                                                    minTickGap={28}
+                                                    stroke="#64748b"
+                                                    tick={{ fontSize: 12 }}
+                                                />
+                                                <YAxis
+                                                    yAxisId="left"
+                                                    stroke="#0f766e"
+                                                    tick={{ fontSize: 12 }}
+                                                    allowDecimals={false}
+                                                    width={52}
+                                                />
+                                                <YAxis
+                                                    yAxisId="right"
+                                                    orientation="right"
+                                                    stroke="#475569"
+                                                    tick={{ fontSize: 12 }}
+                                                    allowDecimals={false}
+                                                    width={44}
+                                                />
+                                                <Tooltip
+                                                    labelFormatter={(value: string) => formatChartDate(value)}
+                                                    formatter={(value: number, name: string) => {
+                                                        const labels: Record<string, string> = {
+                                                            total_queries: "Queries",
+                                                            active_users: "Active users",
+                                                            feedback_count: "Feedback",
+                                                        }
+                                                        return [formatNumber(value), labels[name] || name]
+                                                    }}
+                                                    contentStyle={{
+                                                        borderRadius: "16px",
+                                                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                                                        background: "rgba(255, 255, 255, 0.96)",
+                                                        boxShadow: "0 12px 30px rgba(15, 23, 42, 0.12)",
+                                                    }}
+                                                />
+                                                <Legend />
+                                                <Bar
+                                                    yAxisId="left"
+                                                    dataKey="total_queries"
+                                                    name="Queries"
+                                                    fill="#14b8a6"
+                                                    radius={[8, 8, 0, 0]}
+                                                    maxBarSize={28}
+                                                    isAnimationActive={false}
+                                                />
+                                                <Line
+                                                    yAxisId="right"
+                                                    type="monotone"
+                                                    dataKey="active_users"
+                                                    name="Active users"
+                                                    stroke="#0f172a"
+                                                    strokeWidth={2.5}
+                                                    dot={false}
+                                                    isAnimationActive={false}
+                                                />
+                                                <Line
+                                                    yAxisId="right"
+                                                    type="monotone"
+                                                    dataKey="feedback_count"
+                                                    name="Feedback"
+                                                    stroke="#f59e0b"
+                                                    strokeWidth={2.5}
+                                                    dot={false}
+                                                    isAnimationActive={false}
+                                                />
+                                                {activityTrendData.length > 20 && (
+                                                    <Brush
+                                                        dataKey="date"
+                                                        height={26}
+                                                        travellerWidth={12}
+                                                        stroke="#0f766e"
+                                                        tickFormatter={(value: string) => formatChartDate(value, true)}
+                                                    />
+                                                )}
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                ) : (
+                                    <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                                        No daily activity data is available yet.
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-slate-200/80 bg-white/85 dark:border-slate-800 dark:bg-slate-950/70">
+                            <CardHeader>
+                                <CardTitle className="text-slate-900 dark:text-white">Token usage over time</CardTitle>
+                                <CardDescription>
+                                    Compare token volume across all traffic, registered users only, or guest traffic only. Input and output are shown separately so each bar maps directly to the y-axis.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                {tokenUsageChartData.length > 0 ? (
+                                    <div className="space-y-4">
+                                        <div className="flex flex-wrap gap-2">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant={tokenUsageScope === "all" ? "default" : "outline"}
+                                                onClick={() => setTokenUsageScope("all")}
+                                            >
+                                                All traffic
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant={tokenUsageScope === "registered" ? "default" : "outline"}
+                                                onClick={() => setTokenUsageScope("registered")}
+                                            >
+                                                Registered
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant={tokenUsageScope === "guest" ? "default" : "outline"}
+                                                onClick={() => setTokenUsageScope("guest")}
+                                            >
+                                                Guest
+                                            </Button>
+                                        </div>
+                                    <div className="h-[340px] w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart
+                                                data={tokenUsageChartData}
+                                                margin={{ top: 12, right: 18, left: 0, bottom: 12 }}
+                                            >
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" opacity={0.28} />
+                                                <XAxis
+                                                    dataKey="date"
+                                                    tickFormatter={(value: string) => formatChartDate(value, true)}
+                                                    minTickGap={28}
+                                                    stroke="#64748b"
+                                                    tick={{ fontSize: 12 }}
+                                                />
+                                                <YAxis
+                                                    stroke="#475569"
+                                                    tick={{ fontSize: 12 }}
+                                                    width={72}
+                                                    tickFormatter={(value: number) => {
+                                                        if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`
+                                                        if (value >= 1_000) return `${Math.round(value / 1_000)}k`
+                                                        return `${value}`
+                                                    }}
+                                                />
+                                                <Tooltip
+                                                    labelFormatter={(value: string) => formatChartDate(value)}
+                                                    formatter={(value: number, name: string) => {
+                                                        const labels: Record<string, string> = {
+                                                            chart_input_tokens: "Input tokens",
+                                                            chart_output_tokens: "Output tokens",
+                                                            chart_total_tokens: "Total tokens",
+                                                        }
+                                                        return [formatNumber(value), labels[name] || name]
+                                                    }}
+                                                    contentStyle={{
+                                                        borderRadius: "16px",
+                                                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                                                        background: "rgba(255, 255, 255, 0.96)",
+                                                        boxShadow: "0 12px 30px rgba(15, 23, 42, 0.12)",
+                                                    }}
+                                                />
+                                                <Legend />
+                                                <Bar
+                                                    dataKey="chart_input_tokens"
+                                                    name="Input tokens"
+                                                    fill="#0f766e"
+                                                    radius={[6, 6, 0, 0]}
+                                                    maxBarSize={20}
+                                                    isAnimationActive={false}
+                                                />
+                                                <Bar
+                                                    dataKey="chart_output_tokens"
+                                                    name="Output tokens"
+                                                    fill="#0ea5e9"
+                                                    radius={[6, 6, 0, 0]}
+                                                    maxBarSize={20}
+                                                    isAnimationActive={false}
+                                                />
+                                                <Line
+                                                    type="monotone"
+                                                    dataKey="chart_total_tokens"
+                                                    name="Total tokens"
+                                                    stroke="#f97316"
+                                                    strokeWidth={2.5}
+                                                    dot={false}
+                                                    isAnimationActive={false}
+                                                />
+                                                {tokenUsageChartData.length > 20 && (
+                                                    <Brush
+                                                        dataKey="date"
+                                                        height={26}
+                                                        travellerWidth={12}
+                                                        stroke="#0f766e"
+                                                        tickFormatter={(value: string) => formatChartDate(value, true)}
+                                                    />
+                                                )}
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    </div>
+                                ) : (
+                                    <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                                        No token usage data is available yet.
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
 
                         <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
                             <Card className="border-slate-200/80 bg-white/85 dark:border-slate-800 dark:bg-slate-950/70">
@@ -630,7 +905,54 @@ export default function AdminPage() {
                                     <CardTitle className="text-slate-900 dark:text-white">Tool usage</CardTitle>
                                     <CardDescription>Most frequently used tool families in saved turns.</CardDescription>
                                 </CardHeader>
-                                <CardContent className="space-y-3">
+                                <CardContent className="space-y-5">
+                                    {toolUsageChartData.length > 0 ? (
+                                        <div className="h-[340px] w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart
+                                                    data={toolUsageChartData}
+                                                    layout="vertical"
+                                                    margin={{ top: 4, right: 18, left: 18, bottom: 4 }}
+                                                >
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" opacity={0.22} horizontal={false} />
+                                                    <XAxis
+                                                        type="number"
+                                                        allowDecimals={false}
+                                                        tick={{ fontSize: 12 }}
+                                                        stroke="#64748b"
+                                                    />
+                                                    <YAxis
+                                                        type="category"
+                                                        dataKey="tool"
+                                                        width={136}
+                                                        tick={{ fontSize: 12 }}
+                                                        stroke="#64748b"
+                                                    />
+                                                    <Tooltip
+                                                        formatter={(value: number) => [formatNumber(value), "Turns"]}
+                                                        contentStyle={{
+                                                            borderRadius: "16px",
+                                                            border: "1px solid rgba(148, 163, 184, 0.35)",
+                                                            background: "rgba(255, 255, 255, 0.96)",
+                                                            boxShadow: "0 12px 30px rgba(15, 23, 42, 0.12)",
+                                                        }}
+                                                    />
+                                                    <Bar
+                                                        dataKey="count"
+                                                        name="Turns"
+                                                        fill="#0f766e"
+                                                        radius={[0, 8, 8, 0]}
+                                                        maxBarSize={24}
+                                                        isAnimationActive={false}
+                                                    />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                                            No tool usage has been recorded yet.
+                                        </div>
+                                    )}
                                     {dashboard.tool_usage.map((item) => (
                                         <div key={item.tool} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/70 p-3 dark:border-slate-800">
                                             <div className="font-medium text-slate-900 dark:text-slate-100">{item.tool}</div>

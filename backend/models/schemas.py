@@ -222,6 +222,10 @@ class AdminDailyActivity(BaseModel):
     feedback_count: int
     input_tokens: int
     output_tokens: int
+    registered_input_tokens: int
+    registered_output_tokens: int
+    guest_input_tokens: int
+    guest_output_tokens: int
 
 
 class AdminModelUsage(BaseModel):
