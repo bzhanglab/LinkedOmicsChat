@@ -161,6 +161,7 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_active: bool
+    is_admin: bool = False
     created_at: float
 
 
@@ -192,3 +193,117 @@ class PublicRuntimeConfig(BaseModel):
     max_tokens: int
     architecture: str
     orchestration: str
+
+
+class AdminOverview(BaseModel):
+    """Top-level admin summary metrics."""
+    total_users: int
+    active_users: int
+    total_sessions: int
+    total_messages: int
+    total_registered_queries: int
+    total_guest_queries: int
+    total_queries: int
+    total_feedback: int
+    positive_feedback: int
+    negative_feedback: int
+    positive_feedback_rate: float
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+
+
+class AdminDailyActivity(BaseModel):
+    """Per-day usage rollup."""
+    date: str
+    active_users: int
+    registered_queries: int
+    guest_queries: int
+    feedback_count: int
+    input_tokens: int
+    output_tokens: int
+
+
+class AdminModelUsage(BaseModel):
+    """Model-level token usage rollup."""
+    model: str
+    queries: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+
+class AdminUserUsage(BaseModel):
+    """Per-user usage ranking row."""
+    user_id: str
+    username: str
+    email: str
+    queries: int
+    sessions: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    last_seen_at: Optional[float] = None
+
+
+class AdminFeedbackItem(BaseModel):
+    """Recent feedback row."""
+    id: int
+    timestamp: float
+    rating: int
+    reason: Optional[str] = None
+    turn_id: Optional[int] = None
+    session_id: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    query_preview: str
+    message_preview: str
+
+
+class AdminFeedbackAggregate(BaseModel):
+    """Aggregated feedback for a query."""
+    query: str
+    positive_count: int
+    negative_count: int
+    total_count: int
+
+
+class AdminToolUsage(BaseModel):
+    """Tool usage leaderboard row."""
+    tool: str
+    count: int
+
+
+class AdminQualitySignals(BaseModel):
+    """Quality and response-type counts derived from saved assistant turns."""
+    low_confidence_responses: int
+    partial_confidence_responses: int
+    general_knowledge_responses: int
+    no_data_responses: int
+
+
+class AdminRecentTurn(BaseModel):
+    """Recent assistant turn for quick review."""
+    turn_id: int
+    timestamp: float
+    username: Optional[str] = None
+    email: Optional[str] = None
+    query_preview: str
+    message_preview: str
+    confidence: Optional[str] = None
+    tools_used: List[str] = []
+    feedback_rating: Optional[int] = None
+
+
+class AdminDashboardResponse(BaseModel):
+    """Read-only admin dashboard payload."""
+    generated_at: float
+    overview: AdminOverview
+    quality_signals: AdminQualitySignals
+    daily_activity: List[AdminDailyActivity]
+    model_usage: List[AdminModelUsage]
+    top_users: List[AdminUserUsage]
+    recent_feedback: List[AdminFeedbackItem]
+    top_feedback_targets: List[AdminFeedbackAggregate]
+    tool_usage: List[AdminToolUsage]
+    recent_turns: List[AdminRecentTurn]

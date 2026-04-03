@@ -42,9 +42,31 @@ class Settings(BaseSettings):
     # Authentication
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ADMIN_EMAILS: Union[List[str], str] = "[]"
     
     # CORS - stored as string, will be parsed to list
     CORS_ORIGINS: Union[List[str], str] = '["http://localhost:3000","http://localhost:3001"]'
+
+    @field_validator("ADMIN_EMAILS", mode="before")
+    @classmethod
+    def parse_admin_emails(cls, value: Any) -> List[str]:
+        """Parse ADMIN_EMAILS from JSON or comma-separated env input."""
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return []
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(item).strip().lower() for item in parsed if str(item).strip()]
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return [item.strip().lower() for item in raw.split(",") if item.strip()]
+        return []
     
     @model_validator(mode='after')
     def parse_cors_origins(self):

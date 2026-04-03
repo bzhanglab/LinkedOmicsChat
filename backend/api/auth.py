@@ -30,7 +30,7 @@ from core.auth import (
     update_user_password,
 )
 from core.config import settings
-from core.dependencies import get_current_user
+from core.dependencies import get_current_user, is_admin_user
 from core.database import SessionLocal
 from models.database import User, TokenUsage
 import time
@@ -97,6 +97,7 @@ async def register(
             username=user.username,
             email=user.email,
             is_active=user.is_active,
+            is_admin=is_admin_user(user),
             created_at=user.created_at
         )
     except Exception as e:
@@ -189,6 +190,7 @@ async def get_current_user_info(
         username=current_user.username,
         email=current_user.email,
         is_active=current_user.is_active,
+        is_admin=is_admin_user(current_user),
         created_at=current_user.created_at
     )
 

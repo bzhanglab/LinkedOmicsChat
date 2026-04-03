@@ -13,6 +13,8 @@ interface AuthContextType {
     logout: () => void
     enterGuestMode: () => void
     isAuthenticated: boolean
+    isResolvingUser: boolean
+    authError: string | null
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -37,6 +39,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false
     })
     const [loading, setLoading] = useState(true)
+    const [isResolvingUser, setIsResolvingUser] = useState(false)
+    const [authError, setAuthError] = useState<string | null>(null)
     const router = useRouter()
 
     // Load user on mount if token exists
@@ -45,6 +49,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Guest mode is already restored synchronously above; just stop loading.
         if (isGuest) {
+            if (!cancelled) {
+                setIsResolvingUser(false)
+                setAuthError(null)
+            }
             if (!cancelled) setLoading(false)
             return () => { cancelled = true }
         }
@@ -58,11 +66,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!cancelled) setLoading(false)
 
         if (token) {
+            if (!cancelled) {
+                setIsResolvingUser(true)
+                setAuthError(null)
+            }
             authAPI
                 .getCurrentUser()
                 .then((u) => {
                     if (!cancelled && getAuthToken() === token) {
                         setUser(u)
+                        setAuthError(null)
                     }
                 })
                 .catch((err) => {
@@ -74,12 +87,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         if (!cancelled) {
                             setUser(null)
                             setHasStoredToken(false)
+                            setAuthError("Your session expired. Please sign in again.")
                         }
+                    } else if (!cancelled && getAuthToken() === token) {
+                        setAuthError(err?.response?.data?.detail || err?.message || "Could not refresh your account session.")
                     }
                     // For all other errors (network, 5xx, timeout) keep the token and stay logged in.
                 })
+                .finally(() => {
+                    if (!cancelled) {
+                        setIsResolvingUser(false)
+                    }
+                })
         } else {
             setUser(null)
+            setIsResolvingUser(false)
+            setAuthError(null)
         }
 
         return () => {
@@ -98,6 +121,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
             setIsGuest(false)
             setUser(userData)
+            setAuthError(null)
+            setIsResolvingUser(false)
             localStorage.setItem("linkedomicsai-has-visited", "1")
         } catch (error: any) {
             throw new Error(error.response?.data?.detail || "Login failed")
@@ -118,6 +143,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         removeAuthToken()
         setUser(null)
         setHasStoredToken(false)
+        setAuthError(null)
+        setIsResolvingUser(false)
         setLoading(false)
         if (typeof window !== "undefined") {
             sessionStorage.setItem(GUEST_KEY, "true")
@@ -132,6 +159,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(null)
             setIsGuest(false)
             setHasStoredToken(false)
+            setAuthError(null)
+            setIsResolvingUser(false)
             if (typeof window !== "undefined") {
                 sessionStorage.removeItem(GUEST_KEY)
                 localStorage.removeItem(CURRENT_SESSION_KEY)
@@ -156,6 +185,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 logout,
                 enterGuestMode,
                 isAuthenticated: user !== null || isGuest || hasStoredToken,
+                isResolvingUser,
+                authError,
             }}
         >
             {children}

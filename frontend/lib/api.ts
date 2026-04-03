@@ -412,6 +412,110 @@ export interface ChatResponse {
     metadata?: Record<string, unknown>
 }
 
+export interface AdminOverview {
+    total_users: number
+    active_users: number
+    total_sessions: number
+    total_messages: number
+    total_registered_queries: number
+    total_guest_queries: number
+    total_queries: number
+    total_feedback: number
+    positive_feedback: number
+    negative_feedback: number
+    positive_feedback_rate: number
+    total_input_tokens: number
+    total_output_tokens: number
+    total_tokens: number
+}
+
+export interface AdminQualitySignals {
+    low_confidence_responses: number
+    partial_confidence_responses: number
+    general_knowledge_responses: number
+    no_data_responses: number
+}
+
+export interface AdminDailyActivity {
+    date: string
+    active_users: number
+    registered_queries: number
+    guest_queries: number
+    feedback_count: number
+    input_tokens: number
+    output_tokens: number
+}
+
+export interface AdminModelUsage {
+    model: string
+    queries: number
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+}
+
+export interface AdminUserUsage {
+    user_id: string
+    username: string
+    email: string
+    queries: number
+    sessions: number
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    last_seen_at?: number | null
+}
+
+export interface AdminFeedbackItem {
+    id: number
+    timestamp: number
+    rating: 1 | -1
+    reason?: string | null
+    turn_id?: number | null
+    session_id?: string | null
+    username?: string | null
+    email?: string | null
+    query_preview: string
+    message_preview: string
+}
+
+export interface AdminFeedbackAggregate {
+    query: string
+    positive_count: number
+    negative_count: number
+    total_count: number
+}
+
+export interface AdminToolUsage {
+    tool: string
+    count: number
+}
+
+export interface AdminRecentTurn {
+    turn_id: number
+    timestamp: number
+    username?: string | null
+    email?: string | null
+    query_preview: string
+    message_preview: string
+    confidence?: "high" | "partial" | "low" | "general_knowledge" | null
+    tools_used: string[]
+    feedback_rating?: 1 | -1 | null
+}
+
+export interface AdminDashboardResponse {
+    generated_at: number
+    overview: AdminOverview
+    quality_signals: AdminQualitySignals
+    daily_activity: AdminDailyActivity[]
+    model_usage: AdminModelUsage[]
+    top_users: AdminUserUsage[]
+    recent_feedback: AdminFeedbackItem[]
+    top_feedback_targets: AdminFeedbackAggregate[]
+    tool_usage: AdminToolUsage[]
+    recent_turns: AdminRecentTurn[]
+}
+
 export interface Dataset {
     id: string
     name: string
@@ -603,6 +707,13 @@ export const chatAPI = {
             query: string
             count: number
         }>("/api/v1/chat/search", { params: { q, limit } })
+        return response.data
+    },
+}
+
+export const adminAPI = {
+    async getDashboard(): Promise<AdminDashboardResponse> {
+        const response = await api.get<AdminDashboardResponse>("/api/v1/admin/dashboard")
         return response.data
     },
 }

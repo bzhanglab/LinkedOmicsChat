@@ -9,6 +9,7 @@ import {
     LogOut,
     Wrench,
     Lightbulb,
+    Shield,
     Sun,
     Moon,
     Monitor,
@@ -192,6 +193,17 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                 {/* Theme toggle */}
                 {!isCollapsed ? (
                     <div className="px-4 py-2">
+                        {user?.is_admin && (
+                            <a
+                                href="/admin"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                            >
+                                <Shield className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                                Admin Dashboard
+                            </a>
+                        )}
                         <p className="text-xs text-muted-foreground mb-2">Theme</p>
                         <div className="grid grid-cols-3 gap-1">
                             {([
@@ -217,13 +229,26 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                         </div>
                     </div>
                 ) : (
-                    <button
-                        onClick={() => setTheme(theme === "light" ? "dark" : theme === "dark" ? "system" : "light")}
-                        className="w-full flex justify-center p-3 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                        title={`Theme: ${theme}`}
-                    >
-                        {theme === "dark" ? <Moon className="h-5 w-5" /> : theme === "light" ? <Sun className="h-5 w-5" /> : <Monitor className="h-5 w-5" />}
-                    </button>
+                    <div className="space-y-2">
+                        {user?.is_admin && (
+                            <a
+                                href="/admin"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full flex justify-center p-3 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                                title="Admin dashboard"
+                            >
+                                <Shield className="h-5 w-5" />
+                            </a>
+                        )}
+                        <button
+                            onClick={() => setTheme(theme === "light" ? "dark" : theme === "dark" ? "system" : "light")}
+                            className="w-full flex justify-center p-3 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                            title={`Theme: ${theme}`}
+                        >
+                            {theme === "dark" ? <Moon className="h-5 w-5" /> : theme === "light" ? <Sun className="h-5 w-5" /> : <Monitor className="h-5 w-5" />}
+                        </button>
+                    </div>
                 )}
                 <button
                     onClick={isGuest ? () => { window.location.href = "/login" } : logout}

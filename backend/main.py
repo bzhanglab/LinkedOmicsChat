@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import logging
 from typing import AsyncGenerator
 
-from api import chat, auth, tools
+from api import admin, chat, auth, tools
 from core.config import settings
 from core.database import init_db
 from services.mcp_orchestrator import MCPOrchestrator
@@ -138,6 +138,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["Tools"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
 
 @app.exception_handler(Exception)

@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 
+def is_admin_user(user: Optional[User]) -> bool:
+    """Return True when the user is allowed to access internal admin routes."""
+    if user is None or not user.email:
+        return False
+    return user.email.strip().lower() in set(settings.ADMIN_EMAILS)
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
@@ -78,3 +85,15 @@ async def get_current_user_optional(
         return await get_current_user(credentials, db)
     except HTTPException:
         return None
+
+
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Require an authenticated admin user."""
+    if not is_admin_user(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
