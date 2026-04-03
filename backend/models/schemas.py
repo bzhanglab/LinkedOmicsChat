@@ -58,6 +58,11 @@ class ChatResponse(BaseModel):
     suggestions: List[str] = []
     clarification_options: List[str] = []
     tool_sources: Dict[str, str] = {}
+    tools_used: List[str] = []
+    no_collapse: Optional[bool] = None
+    is_general_knowledge: Optional[bool] = None
+    execution_trace: List[Dict[str, Any]] = []
+    confidence: Optional[str] = None  # "high" | "partial" | "low" | "general_knowledge"
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -169,6 +174,14 @@ class ResetPasswordRequest(BaseModel):
     """Reset password request schema"""
     token: str
     new_password: str = Field(..., min_length=8)
+
+
+class FeedbackRequest(BaseModel):
+    """Request schema for submitting response feedback"""
+    turn_id: Optional[int] = None
+    session_id: Optional[str] = None
+    rating: int  # 1 = thumbs up, -1 = thumbs down
+    reason: Optional[str] = None  # "wrong_data" | "not_relevant" | "hallucination"
 
 
 class PublicRuntimeConfig(BaseModel):

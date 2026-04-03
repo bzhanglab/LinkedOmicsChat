@@ -287,6 +287,21 @@ export type AnyVisualization =
     | TargetSearchVisualization
     | PredictiveResultsTableVisualization
 
+export interface ExecutionTraceToolCall {
+    tool: string
+    latency_ms: number
+    status: "ok" | "error" | "missing" | "empty"
+}
+
+export interface ExecutionTraceStep {
+    node: "agent" | "tools"
+    step: number
+    latency_ms: number
+    tool_calls?: ExecutionTraceToolCall[]
+    input_tokens?: number
+    output_tokens?: number
+}
+
 export interface ChatMessage {
     role: "user" | "assistant" | "system"
     content: string
@@ -299,6 +314,7 @@ export interface ChatMessage {
     noCollapse?: boolean  // when true, never show "Show details" button
     wasPreview?: boolean  // when true, was fetched on demand — keep collapsible regardless of length
     isGeneralKnowledge?: boolean  // true when LLM answered from training knowledge, not LinkedOmics data
+    confidence?: "high" | "partial" | "low" | "general_knowledge"
     timestamp?: Date
     papers?: Paper[]
     analyses?: AnalysisResult[]
@@ -307,6 +323,7 @@ export interface ChatMessage {
     toolSources?: Record<string, string>
     toolsUsed?: string[]
     visualizations?: AnyVisualization[]
+    executionTrace?: ExecutionTraceStep[]
 }
 
 /** Map a tool name to its human-readable data source with a URL. */
@@ -390,6 +407,8 @@ export interface ChatResponse {
     tools_used?: string[]
     no_collapse?: boolean
     is_general_knowledge?: boolean
+    confidence?: "high" | "partial" | "low" | "general_knowledge"
+    execution_trace?: ExecutionTraceStep[]
     metadata?: Record<string, unknown>
 }
 
@@ -413,15 +432,18 @@ export const chatAPI = {
 
     async streamMessage(
         request: ChatRequest,
-        onStatus: (status: string) => void
+        onStatus: (status: string) => void,
+        onTextDelta?: (delta: string) => void
     ): Promise<ChatResponse> {
         const token = getAuthToken()
         const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
             method: "POST",
             headers: {
+                "Accept": "text/event-stream",
                 "Content-Type": "application/json",
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
+            cache: "no-store",
             body: JSON.stringify(request),
         })
 
@@ -458,6 +480,8 @@ export const chatAPI = {
                             const data = JSON.parse(chunk.slice(6))
                             if (data.type === "status") {
                                 onStatus(friendlyStatus(data.content))
+                            } else if (data.type === "text_delta") {
+                                onTextDelta?.(data.content as string)
                             } else if (data.type === "final") {
                                 finalResponse = data.content as ChatResponse
                             }
@@ -555,6 +579,15 @@ export const chatAPI = {
     async getVisualization(vizId: string): Promise<Record<string, unknown>> {
         const response = await api.get(`/api/v1/chat/visualizations/${vizId}`)
         return response.data
+    },
+
+    async submitFeedback(payload: {
+        turn_id?: number
+        session_id?: string
+        rating: 1 | -1
+        reason?: string
+    }): Promise<void> {
+        await api.post("/api/v1/chat/feedback", payload)
     },
 
     async searchMessages(q: string, limit = 20) {

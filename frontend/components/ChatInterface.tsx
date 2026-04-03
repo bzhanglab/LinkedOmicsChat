@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -22,6 +22,7 @@ import { TargetSearchTable } from "@/components/TargetSearchTable"
 import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
 import { useAuth } from "@/components/AuthContext"
 import { EnrichmentRenderer } from "./ToolExplorer"
+import ExecutionTrace from "./ExecutionTrace"
 import axios from "axios"
 import { cn } from "@/lib/utils"
 import ReactMarkdown from "react-markdown"
@@ -683,6 +684,22 @@ const MessagesPane = memo(function MessagesPane({
     messageRefs: React.MutableRefObject<(HTMLDivElement | null)[]>
 }) {
     const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+    const [feedbackState, setFeedbackState] = useState<Record<number, 1 | -1>>({})
+
+    const handleFeedback = async (message: ChatMessage, index: number, rating: 1 | -1) => {
+        const key = message.turnId ?? index
+        if (feedbackState[key] != null) return
+        setFeedbackState(prev => ({ ...prev, [key]: rating }))
+        try {
+            await chatAPI.submitFeedback({
+                turn_id: message.turnId,
+                rating,
+            })
+        } catch {
+            // Silently ignore — feedback is best-effort
+        }
+    }
+
     return (
         <ScrollArea ref={scrollAreaRootRef} className="flex-1 p-6">
             <div className="space-y-4 max-w-4xl mx-auto">
@@ -764,11 +781,27 @@ const MessagesPane = memo(function MessagesPane({
                                         )}
                                     >
                                         <CardContent className="p-4 leading-relaxed tracking-wide">
-                                            {message.role === "assistant" && message.isGeneralKnowledge && (
+                                            {message.role === "assistant" && (message.isGeneralKnowledge || message.confidence === "general_knowledge") && (
                                                 <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
                                                     <span className="mt-0.5 shrink-0">⚠️</span>
                                                     <span>
                                                         <span className="font-semibold">General knowledge response</span> — this answer is based on the AI&apos;s training data, not LinkedOmics database. It may be incomplete or outdated.
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {message.role === "assistant" && message.confidence === "low" && !message.isGeneralKnowledge && (
+                                                <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
+                                                    <span className="mt-0.5 shrink-0">⚠️</span>
+                                                    <span>
+                                                        <span className="font-semibold">Limited data</span> — the queried tools returned no usable results. This response may rely on general knowledge.
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {message.role === "assistant" && message.confidence === "partial" && (
+                                                <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300 text-xs">
+                                                    <span className="mt-0.5 shrink-0">ℹ️</span>
+                                                    <span>
+                                                        <span className="font-semibold">Partial data</span> — some tools returned results while others found no data. Conclusions are based on available evidence only.
                                                     </span>
                                                 </div>
                                             )}
@@ -1094,18 +1127,20 @@ const MessagesPane = memo(function MessagesPane({
                                         </div>
                                     )}
                                     {message.role === "assistant" && (
-                                        <button
-                                            type="button"
-                                            onClick={() => onCopy(message.content, index)}
-                                            className={cn("hidden md:block mt-1 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-opacity duration-150", hoveredIndex === index ? "opacity-100" : "opacity-0 pointer-events-none")}
-                                            title="Copy to clipboard"
-                                        >
-                                            {copiedIndex === index ? (
-                                                <Check className="w-3.5 h-3.5 text-green-500" />
-                                            ) : (
-                                                <Copy className="w-3.5 h-3.5" />
-                                            )}
-                                        </button>
+                                        <div className={cn("hidden md:flex items-center gap-0.5 mt-1 transition-opacity duration-150", hoveredIndex === index ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                                            <button
+                                                type="button"
+                                                onClick={() => onCopy(message.content, index)}
+                                                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+                                                title="Copy to clipboard"
+                                            >
+                                                {copiedIndex === index ? (
+                                                    <Check className="w-3.5 h-3.5 text-green-500" />
+                                                ) : (
+                                                    <Copy className="w-3.5 h-3.5" />
+                                                )}
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                                 {message.role === "user" && (
@@ -1161,6 +1196,46 @@ const MessagesPane = memo(function MessagesPane({
                                             {s}
                                         </button>
                                     ))}
+                                </div>
+                            )}
+                            {message.role === "assistant" && message.executionTrace && (
+                                <ExecutionTrace trace={message.executionTrace} />
+                            )}
+                            {message.role === "assistant" && message.turnId != null && (
+                                <div className="flex items-center gap-1 ml-11 mt-1">
+                                    <span className="text-xs text-muted-foreground/50 mr-0.5">Helpful?</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleFeedback(message, index, 1)}
+                                        className={cn(
+                                            "p-1 rounded-md text-xs transition-colors",
+                                            feedbackState[message.turnId] === 1
+                                                ? "text-emerald-500"
+                                                : feedbackState[message.turnId] != null
+                                                ? "text-muted-foreground/30 cursor-default"
+                                                : "text-muted-foreground hover:text-emerald-500 hover:bg-muted",
+                                        )}
+                                        title="Helpful"
+                                        disabled={feedbackState[message.turnId] != null}
+                                    >
+                                        <ThumbsUp className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleFeedback(message, index, -1)}
+                                        className={cn(
+                                            "p-1 rounded-md text-xs transition-colors",
+                                            feedbackState[message.turnId] === -1
+                                                ? "text-rose-500"
+                                                : feedbackState[message.turnId] != null
+                                                ? "text-muted-foreground/30 cursor-default"
+                                                : "text-muted-foreground hover:text-rose-500 hover:bg-muted",
+                                        )}
+                                        title="Not helpful"
+                                        disabled={feedbackState[message.turnId] != null}
+                                    >
+                                        <ThumbsDown className="w-3.5 h-3.5" />
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -1223,9 +1298,14 @@ function mapHistoryItemToMessages(item: { id: number; query: string; response: a
             hasImages: typeof resp === "string" ? false : !!resp?.has_images,
             hasVisualizations: typeof resp === "string" ? false : !!resp?.has_visualizations,
             timestamp,
+            clarificationOptions: typeof resp === "string" ? undefined : (resp?.clarification_options?.length ? resp.clarification_options : undefined),
+            noCollapse: typeof resp === "string" ? undefined : (resp?.no_collapse === true),
+            isGeneralKnowledge: typeof resp === "string" ? undefined : (resp?.is_general_knowledge === true),
+            confidence: typeof resp === "string" ? undefined : resp?.confidence,
             toolSources: resp?.tool_sources && Object.keys(resp.tool_sources).length ? resp.tool_sources : undefined,
             toolsUsed: typeof resp === "string" ? undefined : (resp?.tools_used?.length ? resp.tools_used : undefined),
             visualizations: typeof resp === "string" ? undefined : stripVizBinary(resp?.visualizations?.length ? resp.visualizations as AnyVisualization[] : undefined),
+            executionTrace: typeof resp === "string" ? undefined : (resp?.execution_trace?.length ? resp.execution_trace : undefined),
         },
     ]
 }
@@ -1265,11 +1345,18 @@ async function fetchExportMessages(sessionId: string): Promise<ChatMessage[]> {
             msg.summary = (resp?.summary as string | undefined) ?? msg.summary
             msg.papers = Array.isArray(resp?.papers) && resp.papers.length > 0 ? resp.papers as Paper[] : msg.papers
             msg.analyses = Array.isArray(resp?.analyses) && resp.analyses.length > 0 ? resp.analyses as AnalysisResult[] : msg.analyses
+            msg.clarificationOptions = resp?.clarification_options?.length ? resp.clarification_options : msg.clarificationOptions
+            msg.noCollapse = resp?.no_collapse === true ? true : msg.noCollapse
+            msg.isGeneralKnowledge = resp?.is_general_knowledge === true ? true : msg.isGeneralKnowledge
+            msg.confidence = resp?.confidence ?? msg.confidence
             msg.toolsUsed = resp?.tools_used?.length ? resp.tools_used : msg.toolsUsed
             msg.toolSources = resp?.tool_sources && Object.keys(resp.tool_sources).length ? resp.tool_sources : msg.toolSources
             msg.visualizations = Array.isArray(resp?.visualizations) && resp.visualizations.length > 0
                 ? stripVizBinary(resp.visualizations as AnyVisualization[])
                 : msg.visualizations
+            msg.executionTrace = Array.isArray(resp?.execution_trace) && resp.execution_trace.length > 0
+                ? resp.execution_trace
+                : msg.executionTrace
             msg.hasFullContent = true
             msg.hasVisualizations = Array.isArray(resp?.visualizations) && resp.visualizations.length > 0
             msg.hasImages = !!resp?.has_images || msg.hasImages
@@ -1922,6 +2009,7 @@ export const ChatInterface = memo(function ChatInterface({
     const messageRefs = useRef<(HTMLDivElement | null)[]>([])
     const scrollAreaRootRef = useRef<any>(null)
     const historyLoadTokenRef = useRef(0)
+    const adoptedSessionIdRef = useRef<string | null>(null)
     const activeSearchJumpKeyRef = useRef<string | null>(null)
     const jumpHighlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [suggestions] = useState([
@@ -1985,6 +2073,7 @@ export const ChatInterface = memo(function ChatInterface({
         setEditDraft("")
         setIsTruncating(false)
         if (!sessionId) {
+            adoptedSessionIdRef.current = null
             // New chat - show welcome message and create session
             setMessages([
                 {
@@ -1996,6 +2085,10 @@ export const ChatInterface = memo(function ChatInterface({
             // Create a new session immediately so it appears in sidebar
             createNewSession()
         } else if (!isGuest) {
+            if (adoptedSessionIdRef.current === sessionId) {
+                adoptedSessionIdRef.current = null
+                return
+            }
             setMessages([])
             setIsHistoryLoading(true)
             // Load session history (guests have no persistent history)
@@ -2190,6 +2283,13 @@ export const ChatInterface = memo(function ChatInterface({
                                         summary: fullSummary ?? message.summary,
                                         papers: fullPapers,
                                         analyses: fullAnalyses,
+                                        clarificationOptions: resp?.clarification_options?.length ? resp.clarification_options : message.clarificationOptions,
+                                        noCollapse: resp?.no_collapse === true ? true : message.noCollapse,
+                                        isGeneralKnowledge: resp?.is_general_knowledge === true ? true : message.isGeneralKnowledge,
+                                        confidence: resp?.confidence ?? message.confidence,
+                                        executionTrace: Array.isArray(resp?.execution_trace) && resp.execution_trace.length > 0
+                                            ? resp.execution_trace
+                                            : message.executionTrace,
                                         ...(fullVisualizations ? { visualizations: fullVisualizations } : {}),
                                         hasFullContent: true,
                                         wasPreview: true,
@@ -2421,6 +2521,13 @@ export const ChatInterface = memo(function ChatInterface({
                                     summary: fullSummary ?? current.summary,
                                     papers: fullPapers,
                                     analyses: fullAnalyses,
+                                    clarificationOptions: resp?.clarification_options?.length ? resp.clarification_options : current.clarificationOptions,
+                                    noCollapse: resp?.no_collapse === true ? true : current.noCollapse,
+                                    isGeneralKnowledge: resp?.is_general_knowledge === true ? true : current.isGeneralKnowledge,
+                                    confidence: resp?.confidence ?? current.confidence,
+                                    executionTrace: Array.isArray(resp?.execution_trace) && resp.execution_trace.length > 0
+                                        ? resp.execution_trace
+                                        : current.executionTrace,
                                     ...(fullVisualizations ? { visualizations: fullVisualizations } : {}),
                                     hasFullContent: true,
                                     wasPreview: true,
@@ -2513,6 +2620,9 @@ export const ChatInterface = memo(function ChatInterface({
         // Scroll to the user's new message before waiting for the assistant's response
         requestAnimationFrame(() => scrollToBottom())
 
+        // Unique marker so we can find and replace the streaming placeholder
+        const STREAM_PLACEHOLDER = "__streaming__"
+
         try {
             const response = await chatAPI.streamMessage(
                 {
@@ -2521,10 +2631,28 @@ export const ChatInterface = memo(function ChatInterface({
                 },
                 (status) => {
                     setStreamStatus(status)
+                },
+                (delta) => {
+                    // Append text deltas to a streaming placeholder message
+                    setMessages((prev) => {
+                        const last = prev[prev.length - 1]
+                        if (last?.role === "assistant" && last.content === STREAM_PLACEHOLDER) {
+                            // First delta — replace the sentinel with actual text
+                            return [...prev.slice(0, -1), { ...last, content: delta }]
+                        }
+                        if (last?.role === "assistant" && last.turnId === undefined && !last.isGeneralKnowledge) {
+                            // Subsequent deltas — accumulate
+                            return [...prev.slice(0, -1), { ...last, content: last.content + delta }]
+                        }
+                        // No placeholder yet — create one
+                        return [...prev, { role: "assistant", content: delta, timestamp: new Date() }]
+                    })
+                    requestAnimationFrame(() => scrollToBottom())
                 }
             )
 
             if (response.session_id && response.session_id !== sessionId) {
+                adoptedSessionIdRef.current = response.session_id
                 onSessionChange(response.session_id)
             }
 
@@ -2565,6 +2693,7 @@ export const ChatInterface = memo(function ChatInterface({
                 content: response.message || ((response.tools_used?.length ?? 0) > 0 ? `Tools executed: ${response.tools_used!.map(t => t.replace("::", " › ")).join(", ")}. No summary was generated — the tool may have returned no data.` : "I've processed your request."),
                 summary: response.summary || undefined,
                 turnId: response.turn_id,
+                sourceMessageId: response.turn_id,
                 timestamp: new Date(),
                 papers: papers.length > 0 ? papers : undefined,
                 analyses: analyses.length > 0 ? analyses : undefined,
@@ -2574,7 +2703,9 @@ export const ChatInterface = memo(function ChatInterface({
                 toolsUsed: response.tools_used?.length ? response.tools_used : undefined,
                 noCollapse: response.no_collapse === true,
                 isGeneralKnowledge: response.is_general_knowledge === true,
+                confidence: response.confidence,
                 visualizations: (response.visualizations || []) as unknown as AnyVisualization[],
+                executionTrace: response.execution_trace?.length ? response.execution_trace : undefined,
             }
 
             setMessages((prev) => {
@@ -2588,7 +2719,13 @@ export const ChatInterface = memo(function ChatInterface({
                         }
                     }
                 }
-                next.push(assistantMessage)
+                // Replace streaming placeholder (if any) with the fully-formatted message
+                const lastIdx = next.length - 1
+                if (lastIdx >= 0 && next[lastIdx].role === "assistant" && next[lastIdx].turnId == null) {
+                    next[lastIdx] = assistantMessage
+                } else {
+                    next.push(assistantMessage)
+                }
                 return next
             })
         } catch (error) {

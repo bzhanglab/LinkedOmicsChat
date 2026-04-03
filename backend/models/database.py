@@ -85,3 +85,17 @@ class GuestTokenUsage(Base):
     output_tokens = Column(Integer, nullable=False, default=0)
     model = Column(String, nullable=True)
     timestamp = Column(Float, nullable=False)
+
+
+class MessageFeedback(Base):
+    """Thumbs-up / thumbs-down feedback on individual assistant messages"""
+    __tablename__ = "message_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # turn_id corresponds to ChatMessage.id; nullable for guest sessions
+    turn_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    user_id = Column(String, nullable=True, index=True)
+    rating = Column(Integer, nullable=False)  # 1 = thumbs up, -1 = thumbs down
+    reason = Column(String, nullable=True)    # optional: "wrong_data" | "not_relevant" | "hallucination"
+    timestamp = Column(Float, nullable=False)

@@ -52,8 +52,8 @@ def _check_guest_rate_limit(ip: str) -> None:
 
     timestamps.append(now)
 
-from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest
-from models.database import User, ChatSession, ChatMessage as DBChatMessage
+from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest
+from models.database import User, ChatSession, ChatMessage as DBChatMessage, MessageFeedback
 from services.mcp_orchestrator import MCPOrchestrator
 from core.config import settings
 from core.database import get_db, SessionLocal
@@ -200,6 +200,13 @@ async def chat_query(
             visualizations=result.get("visualizations", []),
             analyses=result.get("analyses", []),  # Include analysis results
             suggestions=result.get("suggestions", []),
+            clarification_options=result.get("clarification_options", []),
+            tool_sources=result.get("tool_sources", {}),
+            tools_used=result.get("tools_used", []),
+            no_collapse=result.get("no_collapse"),
+            is_general_knowledge=result.get("is_general_knowledge"),
+            execution_trace=result.get("execution_trace", []),
+            confidence=result.get("confidence"),
             metadata={
                 "datasets": result.get("datasets", []),
                 "papers": result.get("papers", [])
@@ -244,7 +251,12 @@ async def chat_stream(
                     session_id=request.session_id,
                     client_ip=client_ip,
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
             )
         else:
             # Fallback for legacy orchestrator that doesn't support streaming
@@ -258,7 +270,15 @@ async def chat_stream(
                 )
                 yield f"data: {json.dumps({'type': 'final', 'content': result})}\n\n"
 
-            return StreamingResponse(fake_stream(), media_type="text/event-stream")
+            return StreamingResponse(
+                fake_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
             
     except Exception as e:
         logger.error(f"Error starting chat stream: {e}")
@@ -943,3 +963,34 @@ async def get_shared_session(token: str):
     except Exception as e:
         logger.error(f"Error fetching shared session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    feedback: FeedbackRequest,
+    request: Request,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Record thumbs-up / thumbs-down feedback on an assistant response."""
+    if feedback.rating not in (1, -1):
+        raise HTTPException(status_code=422, detail="rating must be 1 (up) or -1 (down)")
+
+    db: Session = SessionLocal()
+    try:
+        record = MessageFeedback(
+            turn_id=feedback.turn_id,
+            session_id=feedback.session_id,
+            user_id=current_user.id if current_user else None,
+            rating=feedback.rating,
+            reason=feedback.reason,
+            timestamp=time.time(),
+        )
+        db.add(record)
+        db.commit()
+        return {"status": "ok"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving feedback: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save feedback")
+    finally:
+        db.close()
