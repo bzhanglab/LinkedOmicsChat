@@ -1543,6 +1543,14 @@ class MCPOrchestrator:
             
             # Use LLM to determine which tools to call
             tools_to_call = await self._determine_tools(query, intent, session, usage_tracker=usage_tracker)
+
+            from services.langgraph_orchestrator import (
+                _extract_query_identifiers,
+                _query_uses_active_gene_reference,
+                _validate_tool_identifier_integrity,
+            )
+            requested_identifiers = _extract_query_identifiers(query)
+            allow_active_gene_reference = _query_uses_active_gene_reference(query)
             
             # Execute tools
             results = {}
@@ -1562,6 +1570,15 @@ class MCPOrchestrator:
                 else:
                     tool_call_counts[tool_id] = 0
                     unique_key = f"{tool_id}#0"
+
+                validation_error = _validate_tool_identifier_integrity(
+                    tool_name=tool_id,
+                    args=args,
+                    requested_identifiers=requested_identifiers,
+                    active_gene=active_gene,
+                    allow_active_gene_reference=allow_active_gene_reference,
+                    tool_results=results,
+                )
                 
                 # Update active gene tracking from tool arguments
                 # Most genomic tools use 'protein' or 'gene_symbol'; batch tools use 'proteins'
@@ -1573,11 +1590,21 @@ class MCPOrchestrator:
                     active_gene = proteins_arg[0].upper()
                     gene_arg = None  # keep None so renderers detect batch via data structure
                 
+                if validation_error:
+                    logger.warning(f"Blocked invalid tool call {tool_id}: {validation_error}")
+                    results[unique_key] = {
+                        "_gene": gene_arg,
+                        "_args": args,
+                        "_result": {"error": validation_error},
+                    }
+                    continue
+
                 try:
                     result = await self.mcp_aggregator.call_tool(tool_id, args)
                     # Wrap result with metadata for formatting
                     results[unique_key] = {
                         "_gene": gene_arg,  # Store gene name for display
+                        "_args": args,
                         "_result": result
                     }
                     logger.info(f"Tool {tool_id} executed successfully (stored as {unique_key})")
@@ -1585,6 +1612,7 @@ class MCPOrchestrator:
                     logger.error(f"Error calling tool {tool_id}: {e}")
                     results[unique_key] = {
                         "_gene": gene_arg,
+                        "_args": args,
                         "_result": {"error": str(e)}
                     }
             
@@ -2332,6 +2360,7 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
                 f"{self.BIO_GUIDELINES}\n"
                 "Rules:\n"
                 "- Only use tools from the provided catalog.\n"
+                "- Never silently replace one gene / protein / identifier with a different symbol. Use the exact user-provided token unless a dedicated resolver tool returns a validated replacement for that exact token.\n"
                 "- Output must be valid JSON. No markdown, no explanations.\n"
                 "- Output shape: {\"reasoning\": \"...\", \"calls\": [{\"tool\": \"tool_name\", \"arguments\": {\"arg\": \"val\"}}]}.\n"
                 "- IMPORTANT: If the user is just saying hello, asking who you are, or asking a general question that doesn't require genomic data, output an EMPTY calls list: {\"reasoning\": \"...\", \"calls\": []}.\n"
@@ -3975,11 +4004,22 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         """Update session with query and response. Guest sessions skip DB persistence."""
         import asyncio
 
+        def _make_turn_summary(resp: dict, max_chars: int = 600) -> str:
+            """Extract a compact summary for history context injection."""
+            import re as _re
+            content = resp.get("summary") or resp.get("message") or ""
+            if not content or len(content) <= max_chars:
+                return content
+            parts = _re.split(r'(?<=[.!?])\s+', content.strip())
+            short = " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
+            return (short + " [...]") if len(short) <= max_chars else content[:max_chars] + "..."
+
         # Guest sessions: update in-memory + record token usage to DB
         if session.get("user_id") == "guest":
             session.setdefault("history", []).append({
                 "query": query,
                 "response": response,
+                "turn_summary": _make_turn_summary(response),
                 "timestamp": time.time(),
             })
             session["last_updated"] = time.time()
@@ -4053,7 +4093,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             ))
 
                     db.commit()
-                    
+
                     # Update in-memory session if it exists
                     if session_id in self.sessions:
                         self.sessions[session_id]["last_updated"] = db_session.last_updated
@@ -4063,9 +4103,10 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             "id": turn_id,
                             "query": query,
                             "response": response,
+                            "turn_summary": _make_turn_summary(response),
                             "timestamp": message.timestamp
                         })
-                        
+
                     # Generate title after first message
                     if is_first_message and db_session.title == "New Chat":
                         # Set a quick title immediately (truncated query) so the UI
@@ -4136,7 +4177,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             ))
 
                     await db.commit()
-                    
+
                     # Update in-memory session if it exists
                     if session_id in self.sessions:
                         self.sessions[session_id]["last_updated"] = db_session.last_updated
@@ -4146,9 +4187,10 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             "id": turn_id,
                             "query": query,
                             "response": response,
+                            "turn_summary": _make_turn_summary(response),
                             "timestamp": message.timestamp
                         })
-                        
+
                     # Generate title after first message
                     if is_first_message and db_session.title == "New Chat":
                         # Set a quick title immediately (truncated query) so the UI

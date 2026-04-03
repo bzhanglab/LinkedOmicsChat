@@ -54,6 +54,14 @@ class AgentState(TypedDict):
     output_tokens: int
     # Per-node execution trace for observability and tuning
     execution_trace: List[Dict[str, Any]]
+    # Ordered unique gene symbols detected in the current user query
+    requested_genes: List[str]
+    # Ordered unique user-provided gene / identifier tokens detected in the current query
+    requested_identifiers: List[str]
+    # Whether this query explicitly refers back to the session's active gene ("it", "the gene", etc.)
+    allow_active_gene_reference: bool
+    # Conservative routing scope inferred from the user query
+    tool_scope: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,6 +179,180 @@ def _normalize_runtime_tool_name(tool_name: str) -> str:
     return tool_name.replace("__", "::").rsplit("#", 1)[0]
 
 
+def _bare_tool_name(tool_name: str) -> str:
+    """Return the namespace-free, index-free tool name."""
+    return tool_name.replace("::", "__").split("__")[-1].rsplit("#", 1)[0]
+
+
+def _string_has_usable_data(value: str) -> bool:
+    stripped = (value or "").strip()
+    if not stripped:
+        return False
+    if stripped.upper() in {"NA", "N/A", "NONE", "NULL"}:
+        return False
+    lower = stripped.lower()
+    return not any(marker in lower for marker in _EMPTY_TEXT_MARKERS)
+
+
+def _expression_payload_has_data(payload: Any) -> bool:
+    def _level_has_data(level: Any) -> bool:
+        if not isinstance(level, dict):
+            return False
+        if str(level.get("status", "")).lower() != "available":
+            return False
+        data = level.get("data")
+        return isinstance(data, dict) and any(_string_has_usable_data(str(v)) for v in data.values())
+
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        return any(_expression_payload_has_data(item) for item in payload["data"].values())
+    return isinstance(payload, dict) and (
+        _level_has_data(payload.get("RNA_level")) or _level_has_data(payload.get("protein_level"))
+    )
+
+
+def _trial_payload_has_data(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("data"), dict) and "top_sensitive" not in payload["data"] and "top_resistant" not in payload["data"]:
+        return any(_trial_payload_has_data(item) for item in payload["data"].values())
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        return False
+    if (data.get("total_studies") or 0) > 0:
+        return True
+    return bool(data.get("top_sensitive") or data.get("top_resistant"))
+
+
+def _correlation_payload_has_data(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("data"), dict):
+        values = list(payload["data"].values())
+        if values and all(isinstance(item, dict) for item in values):
+            return any(_correlation_payload_has_data(item) for item in values)
+        return any(isinstance(records, list) and len(records) > 0 for records in values)
+    return False
+
+
+def _target_payload_has_data(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("data"), dict):
+        return any(_target_payload_has_data(item) for item in payload["data"].values())
+
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    if not isinstance(result, dict):
+        return False
+
+    tier = str(result.get("tier", "")).strip().upper()
+    if tier and tier != "NA":
+        return True
+    if _string_has_usable_data(str(result.get("drugs", ""))):
+        return True
+    if isinstance(result.get("drug_details"), list) and len(result["drug_details"]) > 0:
+        return True
+    if any(bool(item) for item in result.get("hyper_sites") or []):
+        return True
+    if isinstance(result.get("presence"), list) and any(any(bool(cell) for cell in row or []) for row in result["presence"]):
+        return True
+    if isinstance(result.get("plot_map"), dict) and result["plot_map"]:
+        return True
+    if isinstance(result.get("table_map"), dict) and result["table_map"]:
+        return True
+    return False
+
+
+def _generic_payload_has_data(payload: Any, *, parent_key: str = "", depth: int = 0) -> bool:
+    if depth > 6:
+        return False
+    if payload is None:
+        return False
+    if isinstance(payload, bool):
+        return payload is True
+    if isinstance(payload, (int, float)):
+        return True
+    if isinstance(payload, str):
+        return _string_has_usable_data(payload)
+    if isinstance(payload, list):
+        return any(_generic_payload_has_data(item, parent_key=parent_key, depth=depth + 1) for item in payload)
+    if not isinstance(payload, dict):
+        return bool(payload)
+
+    if payload.get("error"):
+        return False
+    status = str(payload.get("status", "")).lower()
+    if status in _RESULT_EMPTY_STATUS and not any(
+        _generic_payload_has_data(v, parent_key=k, depth=depth + 1)
+        for k, v in payload.items()
+        if k not in {"status", "error", "message"}
+    ):
+        return False
+
+    ignored = {
+        "status", "message", "query", "filters", "applied_filters", "filter_label",
+        "study_id", "series", "treatment", "disease", "subtype", "clinical_trial_id",
+        "gene", "protein", "cohort", "omics", "title", "description",
+    }
+    for key, value in payload.items():
+        if key.startswith("_") or key in ignored:
+            continue
+        if _generic_payload_has_data(value, parent_key=key, depth=depth + 1):
+            return True
+    return False
+
+
+def _classify_tool_result_payload(tool_name: str, payload: Any) -> str:
+    """Classify a tool payload as usable data, empty/no-data, or error."""
+    bare = _bare_tool_name(tool_name)
+    if isinstance(payload, dict) and payload.get("error"):
+        return "error"
+
+    if bare in {"cancer_gene_expression", "batch_cancer_gene_expression", "overall_survival_per_cancer", "batch_overall_survival_per_cancer"}:
+        return "ok" if _expression_payload_has_data(payload) else "empty"
+    if bare in {"clinical_trial_information", "batch_clinical_trial_information"}:
+        return "ok" if _trial_payload_has_data(payload) else "empty"
+    if bare in {"get_cis_correlations", "batch_get_cis_correlations"}:
+        return "ok" if _correlation_payload_has_data(payload) else "empty"
+    if bare in {"get_target", "batch_get_target"}:
+        return "ok" if _target_payload_has_data(payload) else "empty"
+    if bare == "funmap_neighborhood":
+        if isinstance(payload, dict) and (payload.get("neighborhood") or payload.get("nodes") or payload.get("edges")):
+            return "ok"
+        return "empty"
+    if bare == "webgestalt":
+        if isinstance(payload, dict) and isinstance(payload.get("data"), list) and payload["data"]:
+            return "ok"
+        return "empty"
+    if bare == "tcga_survival_analysis":
+        if isinstance(payload, dict) and isinstance(payload.get("results"), list) and payload["results"]:
+            return "ok"
+        return "empty"
+
+    return "ok" if _generic_payload_has_data(payload) else "empty"
+
+
+def _build_no_data_message(raw_results: Dict[str, Any]) -> str:
+    """Create a deterministic response when tools ran but returned no usable data."""
+    lines = ["No matching data was returned by the requested tools.", ""]
+    lines.append("Checked:")
+    for key, value in raw_results.items():
+        if not isinstance(value, dict):
+            continue
+        tool_label = _bare_tool_name(key).replace("_", " ")
+        gene = value.get("_gene")
+        payload = value.get("_result", {})
+        data_status = value.get("_data_status") or _classify_tool_result_payload(key, payload)
+        if data_status == "error" and isinstance(payload, dict):
+            reason = payload.get("error") or payload.get("message") or "tool error"
+        else:
+            reason = "no usable rows returned"
+        suffix = f" for {gene}" if gene else ""
+        lines.append(f"- `{tool_label}`{suffix}: {reason}")
+    lines.append("")
+    lines.append("This means the queried datasets/tools did not return usable results for the requested input.")
+    return "\n".join(lines)
+
+
 def _format_execution_trace(execution_trace: Sequence[Dict[str, Any]]) -> str:
     """Render a compact one-line summary of per-step LangGraph execution."""
     if not execution_trace:
@@ -226,6 +408,127 @@ def _should_continue(state: AgentState) -> str:
     if isinstance(last, AIMessage) and last.tool_calls:
         return "tools"
     return END
+
+
+def _resolved_identifier_map(tool_results: Dict[str, Any]) -> Dict[str, str]:
+    """Map exact resolver inputs from this turn to resolver-approved HGNC symbols."""
+    resolved: Dict[str, str] = {}
+    for key, value in tool_results.items():
+        if _bare_tool_name(key) != "resolve_gene_identifier":
+            continue
+        if not isinstance(value, dict):
+            continue
+        args = value.get("_args") or {}
+        payload = value.get("_result") or {}
+        identifier = _normalize_identifier_token(args.get("identifier"))
+        hgnc_symbol = _normalize_identifier_token(
+            payload.get("hgnc_symbol") if isinstance(payload, dict) else None
+        )
+        if identifier and hgnc_symbol and not (isinstance(payload, dict) and payload.get("error")):
+            resolved[identifier] = hgnc_symbol
+    return resolved
+
+
+def _format_identifier_choices(values: Sequence[str]) -> str:
+    """Render a short human-readable list of identifiers."""
+    unique_values: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _normalize_identifier_token(value)
+        if normalized and normalized not in seen:
+            unique_values.append(normalized)
+            seen.add(normalized)
+    if not unique_values:
+        return "no approved identifiers"
+    return ", ".join(f"'{value}'" for value in unique_values)
+
+
+def _validate_tool_identifier_integrity(
+    *,
+    tool_name: str,
+    args: Dict[str, Any],
+    requested_identifiers: Sequence[str],
+    active_gene: Optional[str],
+    allow_active_gene_reference: bool,
+    tool_results: Dict[str, Any],
+) -> Optional[str]:
+    """Reject silent gene rewrites before a tool call is executed."""
+    bare = _bare_tool_name(tool_name)
+
+    resolved_map = _resolved_identifier_map(tool_results)
+    requested_normalized = [
+        _normalize_identifier_token(token) for token in requested_identifiers
+        if _normalize_identifier_token(token)
+    ]
+    explicit_gene_symbols = [
+        token for token in requested_normalized
+        if not _is_external_gene_identifier(token)
+    ]
+
+    context_values: List[str] = []
+    active_gene_normalized = _normalize_identifier_token(active_gene)
+    if active_gene_normalized and (allow_active_gene_reference or not requested_normalized):
+        context_values.append(active_gene_normalized)
+
+    allowed_nonresolver_values = set(explicit_gene_symbols)
+    allowed_nonresolver_values.update(resolved_map.values())
+    allowed_nonresolver_values.update(context_values)
+
+    if bare == "resolve_gene_identifier":
+        identifier = _normalize_identifier_token(args.get("identifier"))
+        if not identifier:
+            return None
+        allowed_resolver_inputs = set(requested_normalized)
+        allowed_resolver_inputs.update(context_values)
+        if allowed_resolver_inputs and identifier not in allowed_resolver_inputs:
+            return (
+                "Blocked silent gene rewrite: "
+                f"`resolve_gene_identifier` tried to resolve '{identifier}', but this turn only provided "
+                f"{_format_identifier_choices(sorted(allowed_resolver_inputs))}. "
+                "Use the exact user-supplied identifier or ask the user to confirm a different symbol."
+            )
+        return None
+
+    arg_values: List[str] = []
+    gene_arg = args.get("protein") or args.get("gene_symbol") or args.get("gene")
+    if isinstance(gene_arg, str):
+        normalized = _normalize_identifier_token(gene_arg)
+        if normalized:
+            arg_values.append(normalized)
+    proteins_arg = args.get("proteins")
+    if isinstance(proteins_arg, list):
+        for item in proteins_arg:
+            if isinstance(item, str):
+                normalized = _normalize_identifier_token(item)
+                if normalized:
+                    arg_values.append(normalized)
+
+    if not arg_values:
+        return None
+
+    if not allowed_nonresolver_values:
+        return (
+            "Blocked unexpected gene selection: "
+            f"`{bare}` tried to use {_format_identifier_choices(arg_values)}, but the user did not provide "
+            "a gene identifier in this turn and there is no active gene reference to reuse."
+        )
+
+    for value in arg_values:
+        if value in allowed_nonresolver_values:
+            continue
+        if value in requested_normalized and _is_external_gene_identifier(value):
+            return (
+                "Blocked external identifier passthrough: "
+                f"'{value}' must be resolved with `resolve_gene_identifier` before calling `{bare}`."
+            )
+        return (
+            "Blocked silent gene rewrite: "
+            f"`{bare}` tried to use '{value}', but this turn only authorized "
+            f"{_format_identifier_choices(sorted(allowed_nonresolver_values))}. "
+            "Use the exact user-provided gene symbol, or first call `resolve_gene_identifier` "
+            "and then use its returned `hgnc_symbol`."
+        )
+    return None
 
 
 _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
@@ -320,12 +623,21 @@ _TRIAL_KEYWORDS = (
     "clinical trial", "clinical trials", "drug", "drugs", "treatment", "treatments",
     "resistant", "resistance", "sensitive", "sensitivity", "biomarker", "biomarkers",
     "predict response", "predict treatment", "response to", "therapy",
+    # Additional: predictive value / chemotherapy / immunotherapy contexts
+    "predictive", "chemo", "chemotherapy", "immunotherapy", "targeted therapy",
+    "drug response", "drug sensitivity", "drug resistance", "chemoresist",
+    "treatment response", "treatment resistance", "treatment sensitivity",
+    "anticancer", "anti-cancer", "antitumor", "anti-tumor",
 )
 
 _FUNMAP_KEYWORDS = (
     "funmap", "functional neighbor", "functional neighbourhood", "gene network",
     "protein network", "co-functional", "network neighbor", "network neighbourhood",
     "interaction network", "functional interaction",
+    # Additional: common bioinformatics phrasings
+    "functional partner", "functional association", "protein partner",
+    "protein-protein interaction", "protein interaction network",
+    "interactor", "interactome",
 )
 
 _CORRELATION_KEYWORDS = (
@@ -334,25 +646,148 @@ _CORRELATION_KEYWORDS = (
     "translation efficiency",
     "rna vs protein", "rna-protein correlation",
     "copy number effect", "dosage effect",
+    # Additional: co-expression / multi-omics correlation phrasing
+    "co-expression", "coexpression", "co expression",
+    "mrna protein correlation", "rna protein",
+    "regulated by copy number", "methylation effect",
 )
 
 _PATHWAY_KEYWORDS = (
     "pathway", "enrichment", "gsea", "gene ontology", "go term",
     "kegg", "webgestalt", "ora ", "wikipathway",
+    # Additional
+    "gene set", "gene sets", "biological process", "molecular function",
+    "pathway analysis", "overrepresentation",
 )
 
 _EXPRESSION_KEYWORDS = (
     "tumor vs normal", "expression", "expressed", "overexpress", "underexpress",
     "upregulat", "downregulat", "tumour vs normal",
+    # Additional: common expression-query phrasings
+    "differentially expressed", "differential expression",
+    "transcript level", "mrna level", "protein level", "protein abundance",
+    "high expression", "low expression", "expression level",
 )
 
 _SURVIVAL_KEYWORDS = (
     "survival", "overall survival", "prognos", "kaplan", "km curve", "hazard ratio", "os ",
+    # Additional: common survival/outcome phrasings
+    "prognostic value", "prognostic impact", "prognostic significance",
+    "outcome", "patient outcome", "mortality", "recurrence",
+    "disease-free", "progression-free", "relapse-free",
 )
 
 _SURVIVAL_OMICS_KEYWORDS = (
     "methylation", "mirna", "mirnaseq", "scna", "copy number", "rppa", "rnaseq", "tcga",
 )
+
+
+# Regex pattern that matches alphanumeric tokens that could plausibly be a gene symbol
+# or external gene identifier when judged alongside the original token casing.
+_IDENTIFIER_TOKEN_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]{1,15})\b")
+_ENSG_IDENTIFIER_RE = re.compile(r"^ENSG\d+$", re.IGNORECASE)
+_UNIPROT_IDENTIFIER_RE = re.compile(
+    r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})$",
+    re.IGNORECASE,
+)
+_ACTIVE_GENE_REFERENCE_RE = re.compile(
+    r"\b(it|its|this gene|the gene|that gene|this protein|that protein|the protein)\b",
+    re.IGNORECASE,
+)
+_NON_GENE_ACCESSION_RE = re.compile(
+    r"^(GSE|GSM|SRP|PRJNA|NCT|PMID)\d+$",
+    re.IGNORECASE,
+)
+_GENE_STOPWORDS = {
+    "RNA", "DNA", "ATP", "GTP", "PCR", "LLM", "AI", "API",
+    "TCGA", "CPTAC", "WHO", "FDA", "USA", "UK", "OR", "AND",
+    "NOT", "FOR", "THE", "WITH", "FROM", "BRCA", "LUAD", "LUSC",
+    "HNSC", "HNSCC", "CCRCC", "UCEC", "PDAC", "COAD", "LSCC",
+}
+_AUTO_BATCH_SINGLE_TOOL_MAP: Dict[str, str] = {
+    "linkedomics__cancer_gene_expression": "linkedomics__batch_cancer_gene_expression",
+    "linkedomics__overall_survival_per_cancer": "linkedomics__batch_overall_survival_per_cancer",
+    "linkedomics__get_target": "linkedomics__batch_get_target",
+    "linkedomics__get_cis_correlations": "linkedomics__batch_get_cis_correlations",
+    "linkedomics__clinical_trial_information": "linkedomics__batch_clinical_trial_information",
+}
+_AUTO_BATCH_SCOPES = {"expression", "survival", "targets", "trials", "correlation"}
+_RESULT_EMPTY_STATUS = {"error", "unavailable", "missing", "not_found", "no_studies", "no_data"}
+_EMPTY_TEXT_MARKERS = (
+    "data unavailable",
+    "no data",
+    "no matching data",
+    "not found",
+    "no studies found",
+    "no significant results found",
+)
+
+
+def _normalize_identifier_token(value: Any) -> str:
+    """Normalize a gene / identifier token for strict comparisons."""
+    return str(value or "").strip().upper()
+
+
+def _is_external_gene_identifier(token: str) -> bool:
+    """Return True for Ensembl or UniProt-style gene identifiers."""
+    normalized = _normalize_identifier_token(token)
+    return bool(
+        normalized
+        and (
+            _ENSG_IDENTIFIER_RE.fullmatch(normalized)
+            or _UNIPROT_IDENTIFIER_RE.fullmatch(normalized)
+        )
+    )
+
+
+def _looks_like_explicit_gene_token(token: str) -> bool:
+    """Heuristic for explicit gene-like tokens typed by the user."""
+    normalized = _normalize_identifier_token(token)
+    if not normalized or normalized in _GENE_STOPWORDS:
+        return False
+    if _NON_GENE_ACCESSION_RE.fullmatch(normalized):
+        return False
+    if _is_external_gene_identifier(normalized):
+        return True
+    if not any(ch.isalpha() for ch in normalized):
+        return False
+    # Accept unambiguous alphanumeric symbols like TP53 / BRCA1 / C11ORF1 even
+    # when the user types them in lowercase, but avoid plain lowercase words.
+    if any(ch.isdigit() for ch in normalized):
+        return True
+    # Accept already-capitalized symbol-like tokens (EGFR, MET, KRAS, etc.).
+    return token.isupper() and 2 <= len(normalized) <= 10
+
+
+def _extract_query_identifiers(query: str) -> List[str]:
+    """Return ordered unique gene / identifier tokens explicitly provided by the user."""
+    identifiers: List[str] = []
+    seen: set[str] = set()
+    for token in _IDENTIFIER_TOKEN_RE.findall(query or ""):
+        if not _looks_like_explicit_gene_token(token):
+            continue
+        normalized = _normalize_identifier_token(token)
+        if normalized not in seen:
+            identifiers.append(normalized)
+            seen.add(normalized)
+    return identifiers
+
+
+def _extract_query_genes(query: str) -> List[str]:
+    """Return ordered unique explicit HGNC-like symbols mentioned in the query."""
+    return [
+        token for token in _extract_query_identifiers(query)
+        if not _is_external_gene_identifier(token)
+    ]
+
+
+def _query_uses_active_gene_reference(query: str) -> bool:
+    """Return True when the user explicitly refers back to the previous gene context."""
+    return bool(_ACTIVE_GENE_REFERENCE_RE.search(query or ""))
+
+def _detect_multi_gene(query: str) -> bool:
+    """Return True when the query contains 2+ likely gene symbols."""
+    return len(_extract_query_genes(query)) >= 2
 
 
 def _looks_conversational(query: str) -> bool:
@@ -559,13 +994,44 @@ def _compact_tcga_survival(content: str) -> str:
     return json.dumps(compacted)
 
 
+def _annotate_empty_result(content: str, tool_name: str) -> str:
+    """
+    If a tool returned no usable data, prepend a clear marker so the LLM
+    says "no data available" rather than hallucinating a summary.
+    """
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content
+
+    if not isinstance(data, dict):
+        return content
+
+    # Explicit error or unavailable status
+    if data.get("error") or data.get("status") in ("error", "unavailable"):
+        bare = tool_name.split("__")[-1]
+        marker = f"[NO DATA — {bare} returned no results or an error]"
+        return f"{marker}\n{content}"
+
+    # Empty results list / dict
+    results = data.get("results") or data.get("articles") or data.get("genes") or data.get("data")
+    if results is not None and len(results) == 0:
+        bare = tool_name.split("__")[-1]
+        marker = f"[NO SIGNIFICANT RESULTS FOUND — {bare} returned an empty dataset]"
+        return f"{marker}\n{content}"
+
+    return content
+
+
 def _compact_tool_message(tool_name: str, content: str) -> str:
     """Shrink tool outputs for the LLM while keeping raw payloads elsewhere."""
     if tool_name in ("literature__search_pubmed", "literature__get_pubmed_abstract"):
-        return _compact_literature(content)
-    if tool_name == "linkedomics__tcga_survival_analysis":
-        return _compact_tcga_survival(content)
-    return content
+        compacted = _compact_literature(content)
+    elif tool_name == "linkedomics__tcga_survival_analysis":
+        compacted = _compact_tcga_survival(content)
+    else:
+        compacted = content
+    return _annotate_empty_result(compacted, tool_name)
 
 
 def _make_tool_node(tools: List[BaseTool]):
@@ -607,16 +1073,66 @@ def _make_tool_node(tools: List[BaseTool]):
         tool_messages: List[ToolMessage] = []
         new_results = dict(state.get("tool_results") or {})
         active_gene = state.get("active_gene")
+        requested_genes = list(state.get("requested_genes") or [])
+        requested_identifiers = list(state.get("requested_identifiers") or [])
+        allow_active_gene_reference = bool(state.get("allow_active_gene_reference"))
+        tool_scope = state.get("tool_scope", "full")
         call_counts: Dict[str, int] = {}
         step_tool_metrics: List[Dict[str, Any]] = []
         started = time.perf_counter()
+        single_tool_counts: Dict[str, int] = {}
+
+        for tc in getattr(last_ai, "tool_calls", []) or []:
+            single_name = tc.get("name", "").replace("::", "__").rsplit("#", 1)[0]
+            if single_name in _AUTO_BATCH_SINGLE_TOOL_MAP:
+                single_tool_counts[single_name] = single_tool_counts.get(single_name, 0) + 1
+
+        batch_tools_emitted: set[str] = set()
 
         for tc in last_ai.tool_calls:
             original_tool_name = tc["name"]
-            tool_name, tool = _resolve_tool(original_tool_name)
-            args = tc["args"]
+            rewritten_tool_name = original_tool_name.replace("::", "__").rsplit("#", 1)[0]
+            args = dict(tc["args"])
             call_id = tc["id"]
-            if not tool:
+
+            batch_tool_name = _AUTO_BATCH_SINGLE_TOOL_MAP.get(rewritten_tool_name)
+            should_batch = bool(
+                batch_tool_name
+                and len(requested_genes) >= 2
+                and (
+                    single_tool_counts.get(rewritten_tool_name, 0) >= 2
+                    or tool_scope in _AUTO_BATCH_SCOPES
+                )
+            )
+
+            if should_batch:
+                if batch_tool_name in batch_tools_emitted:
+                    logger.info(
+                        "[LangGraph] Skipping duplicate single-gene tool call %r after batch rewrite",
+                        original_tool_name,
+                    )
+                    continue
+                batch_tools_emitted.add(batch_tool_name)
+                original_tool_name = batch_tool_name
+                args = {"proteins": requested_genes}
+                call_id = f"{call_id}-batch"
+
+            validation_error = _validate_tool_identifier_integrity(
+                tool_name=original_tool_name,
+                args=args,
+                requested_identifiers=requested_identifiers,
+                active_gene=active_gene,
+                allow_active_gene_reference=allow_active_gene_reference,
+                tool_results=new_results,
+            )
+
+            tool_name, tool = _resolve_tool(original_tool_name)
+            if validation_error:
+                raw_content = json.dumps({"error": validation_error})
+                content = raw_content
+                tool_latency_ms = 0
+                status = "error"
+            elif not tool:
                 raw_content = json.dumps({"error": f"Unknown tool: {original_tool_name}"})
                 content = raw_content
                 tool_latency_ms = 0
@@ -648,6 +1164,9 @@ def _make_tool_node(tools: List[BaseTool]):
             except Exception:
                 result_dict = {"raw": raw_content}
 
+            data_status = status if status in {"error", "missing"} else _classify_tool_result_payload(tool_name, result_dict)
+            trace_status = data_status if data_status != "error" else "error"
+
             # Extract gene from args (protein, gene_symbol, gene, or proteins list for batch tools)
             gene_arg = args.get("protein") or args.get("gene_symbol") or args.get("gene")
             proteins_arg = args.get("proteins")  # batch tools use a list
@@ -661,6 +1180,7 @@ def _make_tool_node(tools: List[BaseTool]):
                 "_gene": gene_arg,
                 "_args": args,
                 "_result": result_dict,
+                "_data_status": data_status,
             }
 
             tool_messages.append(
@@ -670,7 +1190,7 @@ def _make_tool_node(tools: List[BaseTool]):
                 {
                     "tool": mcp_tool_id,
                     "latency_ms": tool_latency_ms,
-                    "status": status,
+                    "status": trace_status,
                 }
             )
             logger.info(f"[LangGraph] Tool {mcp_tool_id} executed → stored as {unique_key}")
@@ -706,9 +1226,12 @@ def _make_tool_node(tools: List[BaseTool]):
 # Maps bare tool names → inline source key (used in #source:X hrefs)
 _TOOL_SOURCE_KEY: dict = {
     "cancer_gene_expression":      "linkedomics",
+    "batch_cancer_gene_expression": "linkedomics",
     "get_cis_correlations":        "linkedomics",
+    "batch_get_cis_correlations":  "linkedomics",
     "get_trans_correlations":      "linkedomics",
     "overall_survival_per_cancer": "linkedomics",
+    "batch_overall_survival_per_cancer": "linkedomics",
     "tcga_survival_analysis":      "linkedomics",
     "clinical_trial_information":       "trials",
     "batch_clinical_trial_information": "trials",
@@ -721,6 +1244,7 @@ _TOOL_SOURCE_KEY: dict = {
     "meta_analysis_predictive_gene_sets":   "trials",
     "funmap_neighborhood":              "funmap",
     "get_target":                  "targets",
+    "batch_get_target":            "targets",
     "search_targets":              "targets",
     "rank_targets":                "targets",
     "webgestalt":                  "webgestalt",
@@ -741,12 +1265,16 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
     gene = str(gene).upper() if gene else None
     _TEMPLATES: Dict[str, Any] = {
         "cancer_gene_expression":      lambda g: f"https://kb.linkedomics.org/data/tn/gene?gene={g}&sort=metap&order=asc&offset=0&limit=10",
+        "batch_cancer_gene_expression": lambda _: "https://kb.linkedomics.org/data/tn/gene",
         "get_cis_correlations":        lambda g: f"https://kb.linkedomics.org/gene/{g}",
+        "batch_get_cis_correlations":  lambda _: "https://kb.linkedomics.org/gene",
         "get_trans_correlations":      lambda g: f"https://kb.linkedomics.org/gene/{g}",
         "overall_survival_per_cancer": lambda g: f"https://kb.linkedomics.org/data/associations/phenotype/gene?phenotype=clinical__overall_survival&gene={g}",
+        "batch_overall_survival_per_cancer": lambda _: "https://kb.linkedomics.org/data/associations/phenotype/gene?phenotype=clinical__overall_survival",
         "tcga_survival_analysis":      lambda g: f"http://aws1.zhang-lab.org:8236/api/survival?gene={g}" if g else "http://aws1.zhang-lab.org:8236/api/survival",
         "funmap_neighborhood":         lambda g: f"https://funmap.linkedomics.org/data/dag/gene/{g}.json",
         "get_target":                  lambda g: f"https://targets.linkedomics.org/{g}/",
+        "batch_get_target":            lambda _: "https://targets.linkedomics.org",
         "search_targets":              lambda _: "https://targets.linkedomics.org",
         "rank_targets":                lambda _: "https://targets.linkedomics.org",
         "clinical_trial_information":       lambda g: f"https://trials.linkedomics.org/api/table/gene/{g}",
@@ -811,6 +1339,68 @@ def _strip_invalid_source_citations(text: str, tools_used: list) -> str:
         lambda m: m.group(0) if m.group(2) in valid_keys else "",
         text,
     )
+
+
+def _inlineize_source_blockquotes(text: str) -> str:
+    """Convert formatter-emitted `> **Source:** ...` blockquotes into inline citations."""
+    lines = text.splitlines()
+    output: List[str] = []
+
+    for line in lines:
+        match = re.match(r'^\s*>\s*\*\*Source:\*\*\s*(.+?)\s*$', line)
+        if not match:
+            output.append(line)
+            continue
+
+        source_markup = match.group(1).strip()
+        attached = False
+        for idx in range(len(output) - 1, -1, -1):
+            stripped = output[idx].strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("#", ">", "|", "[PLOT:", "[NETWORK:", "[TABLE:", "```")):
+                continue
+            if "#source:" not in stripped:
+                output[idx] = output[idx].rstrip() + f" {source_markup}"
+            attached = True
+            break
+        if not attached:
+            output.append(source_markup)
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+
+
+def _ensure_inline_source_citations(text: str, tools_used: list) -> str:
+    """Add deterministic inline source citations when a tool-backed response lacks them."""
+    if not text.strip() or "#source:" in text:
+        return text
+
+    source_keys: List[str] = []
+    for tool in tools_used:
+        key = _TOOL_SOURCE_KEY.get(_bare_tool_name(tool))
+        if key and key not in source_keys:
+            source_keys.append(key)
+    if not source_keys:
+        return text
+
+    citation_markup = " ".join(f"[Source](#source:{key})" for key in source_keys)
+    lines = text.splitlines()
+    paragraph_last_idx: Optional[int] = None
+
+    for idx, line in enumerate(lines + [""]):
+        stripped = line.strip()
+        if not stripped:
+            if paragraph_last_idx is not None and "#source:" not in lines[paragraph_last_idx]:
+                lines[paragraph_last_idx] = lines[paragraph_last_idx].rstrip() + f" {citation_markup}"
+            paragraph_last_idx = None
+            continue
+        if stripped.startswith(("```", "|", "[PLOT:", "[NETWORK:", "[TABLE:", ">")):
+            continue
+        if stripped.startswith("#"):
+            continue
+        paragraph_last_idx = idx
+
+    return "\n".join(lines)
 
 
 def _parse_clarification_options(text: str) -> list:
@@ -906,6 +1496,36 @@ def _normalize_content(content: Any) -> str:
     return str(content)
 
 
+def _iter_stream_chunks(text: str, target_size: int = 72) -> List[str]:
+    """
+    Split text into readable chunks for SSE fallback streaming.
+
+    LangGraph token streaming is not always available when the agent node wraps
+    the model in a custom async function. In that case we still emit small text
+    chunks so the UI renders incrementally instead of all at once.
+    """
+    if not text:
+        return []
+
+    chunks: List[str] = []
+    current = ""
+    for token in re.findall(r"\S+\s*|\n", text):
+        if token == "\n":
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append("\n")
+            continue
+        if current and len(current) + len(token) > target_size:
+            chunks.append(current)
+            current = token
+        else:
+            current += token
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LangGraphOrchestrator (public API matches MCPOrchestrator)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -970,9 +1590,12 @@ DATA GROUNDING:
 - For claims about expression, survival, drug targets, pathway enrichment, literature, or available data coverage, use tools.
 - If the needed capability is unavailable, say so plainly. Do not answer that data question from training knowledge.
 - If any tool result contains an "error" key, stop and report the error instead of continuing.
+- If a tool result begins with [NO DATA] or [NO SIGNIFICANT RESULTS FOUND], explicitly tell the user that no data was available for that query — do NOT summarize, extrapolate, or fill the gap with training knowledge.
+- When results are sparse or limited, say so clearly before interpreting them. Uncertainty is more useful than false confidence.
 
 GENE IDENTIFIERS:
 - Accepted inputs may be HGNC symbols, Ensembl gene IDs (ENSG...), or UniProt accessions.
+- Never silently replace one gene / protein / identifier with a different symbol based on memory or guesswork. Use the exact user-provided token unless `resolve_gene_identifier` returns a validated `hgnc_symbol` for that exact token.
 - If the user provides Ensembl or UniProt identifiers, call `resolve_gene_identifier` first and use the returned `hgnc_symbol`.
 - For multi-gene comparisons, resolve every gene before running analysis. If any gene fails, stop and report all failures; do not return partial comparisons.
 - If an identifier does not plausibly match HGNC / ENSG / UniProt format, ask the user to double-check it instead of calling tools.
@@ -1007,6 +1630,7 @@ RESPONSE STYLE:
 - Never dump raw JSON, Python objects, or raw tool output.
 - Do NOT end your response with suggested follow-up questions or "you might also want to ask" prompts.
 - When replying directly without tools, short markdown is enough.
+- INLINE CITATIONS: After each factual claim that comes from a tool result, add a short inline source tag using this exact format: [Source](#source:KEY) where KEY is one of: linkedomics, pubmed, funmap, webgestalt, cptac, targets, trials. Use the key that matches the tool you called. For example: "TP53 is significantly overexpressed in LUAD [Source](#source:linkedomics)." Only cite sources that were actually queried — do not cite sources for general knowledge statements.
 """
 
     DIRECT_RESPONSE_PROMPT_TEMPLATE = """\
@@ -1110,23 +1734,60 @@ DIRECT RESPONSE RULES:
             )
         return "\n".join(lines)
 
-    def _build_system_prompt(self, active_gene: str = "unknown", *, tool_scope: str = "full") -> str:
+    def _build_scope_constraint(self, tool_scope: str) -> str:
+        """Return an explicit tool restriction line for non-full scopes."""
+        if tool_scope in ("full", "none"):
+            return ""
+        allowed = _TOOL_SCOPE_MAP.get(tool_scope, ())
+        if not allowed:
+            return ""
+        bare_names = [t.split("::")[-1] for t in allowed if "::" in t]
+        if not bare_names:
+            return ""
+        return (
+            f"\nTOOL RESTRICTION: For this query you are bound exclusively to: "
+            f"{', '.join(f'`{n}`' for n in bare_names)}. "
+            "Do NOT call any tool outside this list — if the query would require a different tool, "
+            "explain what you cannot answer in this context and offer `Answer using general knowledge` "
+            "or redirect the user.\n"
+        )
+
+    def _build_system_prompt(
+        self,
+        active_gene: str = "unknown",
+        *,
+        tool_scope: str = "full",
+        multi_gene: bool = False,
+    ) -> str:
         """Build a scope-aware system prompt."""
         if tool_scope == "none":
             return self.DIRECT_RESPONSE_PROMPT_TEMPLATE.format(
                 data_access=self._build_data_access_section(compact=True),
             )
-        return self.SYSTEM_PROMPT_TEMPLATE.format(
+        scope_constraint = self._build_scope_constraint(tool_scope)
+        base = self.SYSTEM_PROMPT_TEMPLATE.format(
             bio_guidelines=self.BIO_GUIDELINES,
             active_gene=active_gene or "unknown",
             data_access=self._build_data_access_section(),
         )
+        prompt = base + scope_constraint
+        if multi_gene:
+            prompt += (
+                "\nMULTI-GENE QUERY DETECTED: The user is asking about multiple genes. "
+                "Use batch variants of tools (e.g. `batch_cancer_gene_expression`, "
+                "`batch_overall_survival_per_cancer`, `batch_clinical_trial_information`, "
+                "`batch_get_target`, `batch_get_cis_correlations`) instead of calling "
+                "single-gene tools repeatedly. A single batch call is preferred over "
+                "multiple sequential single-gene calls.\n"
+            )
+        return prompt
 
     def _rebuild_graph(
         self,
         active_gene: str = "unknown",
         *,
         tool_scope: str = "full",
+        multi_gene: bool = False,
     ):
         """(Re)build the compiled LangGraph with current MCP tools."""
         if not self.llm:
@@ -1135,11 +1796,14 @@ DIRECT RESPONSE RULES:
         scoped_tool_ids = _TOOL_SCOPE_MAP.get(tool_scope)
         self._tool_scope = tool_scope
         self._tools = build_mcp_tools(self.mcp_aggregator, allowed_tool_ids=scoped_tool_ids)
-        system_prompt = self._build_system_prompt(active_gene=active_gene, tool_scope=tool_scope)
+        system_prompt = self._build_system_prompt(
+            active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene
+        )
         self._graph = build_graph(self.llm, self._tools, system_prompt)
         logger.info(
-            "[LangGraph] Rebuilt graph | scope=%s | bound_tools=%s",
+            "[LangGraph] Rebuilt graph | scope=%s | multi_gene=%s | bound_tools=%s",
             tool_scope,
+            multi_gene,
             [tool.name.replace("__", "::") for tool in self._tools],
         )
 
@@ -1170,26 +1834,56 @@ DIRECT RESPONSE RULES:
         if self._parent is not None:
             return await self._parent._update_session(session, query, response)
         else:
+            raw_content = response.get("summary") or response.get("message") or ""
             session.setdefault("history", []).append({
                 "query": query,
                 "response": response,
+                "turn_summary": self._extract_turn_summary(raw_content),
                 "timestamp": time.time(),
             })
             return None
 
+    @staticmethod
+    def _extract_turn_summary(content: str, max_chars: int = 600) -> str:
+        """
+        Extract a compact summary for history injection.
+
+        Priority:
+        1. First 2 complete sentences (preserves key findings better than char-truncation)
+        2. Hard truncation at max_chars if sentences can't be split cleanly
+        """
+        if not content:
+            return ""
+        if len(content) <= max_chars:
+            return content
+        # Try to grab the first 2 sentences (ending in .!?)
+        parts = re.split(r'(?<=[.!?])\s+', content.strip())
+        summary = " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
+        if len(summary) <= max_chars:
+            return summary + " [...]"
+        # Fall back to char limit
+        return content[:max_chars] + "... (truncated)"
+
     def _format_history(self, session: Dict[str, Any], limit: int = 10) -> List[BaseMessage]:
-        """Convert session history into LangChain messages for graph input."""
+        """Convert session history into LangChain messages for graph input.
+
+        Uses stored `turn_summary` when available (generated at save time),
+        otherwise extracts a compact summary from the response text.
+        """
         messages: List[BaseMessage] = []
         for item in session.get("history", [])[-limit:]:
             q = item.get("query", "")
             resp = item.get("response", {})
-            content = ""
-            if isinstance(resp, dict):
-                content = resp.get("summary") or resp.get("message") or ""
-            elif isinstance(resp, str):
-                content = resp
-            if len(content) > 800:
-                content = content[:800] + "... (truncated)"
+            # Prefer an explicit turn_summary stored at save time
+            content = item.get("turn_summary", "")
+            if not content:
+                if isinstance(resp, dict):
+                    raw = resp.get("summary") or resp.get("message") or ""
+                elif isinstance(resp, str):
+                    raw = resp
+                else:
+                    raw = ""
+                content = self._extract_turn_summary(raw)
             if q:
                 messages.append(HumanMessage(content=q))
             if content:
@@ -1221,9 +1915,15 @@ DIRECT RESPONSE RULES:
             effective_query,
             active_gene if active_gene != "unknown" else None,
         )
+        requested_genes = _extract_query_genes(effective_query)
+        requested_identifiers = _extract_query_identifiers(effective_query)
+        allow_active_gene_reference = _query_uses_active_gene_reference(effective_query)
+
+        # Detect multi-gene queries so the LLM is told to prefer batch tools
+        multi_gene = len(requested_genes) >= 2
 
         # Rebuild graph with current active_gene in system prompt
-        self._rebuild_graph(active_gene=active_gene, tool_scope=tool_scope)
+        self._rebuild_graph(active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene)
 
         history_limit = self._history_limit_for_scope(tool_scope)
         history_messages = self._format_history(session, limit=history_limit)
@@ -1236,6 +1936,10 @@ DIRECT RESPONSE RULES:
             "input_tokens": 0,
             "output_tokens": 0,
             "execution_trace": [],
+            "requested_genes": requested_genes,
+            "requested_identifiers": requested_identifiers,
+            "allow_active_gene_reference": allow_active_gene_reference,
+            "tool_scope": tool_scope,
         }
         return session, effective_query, active_gene, initial_state
 
@@ -1247,7 +1951,7 @@ DIRECT RESPONSE RULES:
         *,
         log_prefix: str,
         original_query: str,
-    ) -> tuple[str, bool, Dict[str, Any], List[str], Dict[str, Any]]:
+    ) -> tuple[str, bool, Dict[str, Any], List[str], Dict[str, Any], List[Dict[str, Any]]]:
         """Normalize the final graph state into a response-building context."""
         final_messages = final_state.get("messages", [])
         final_ai_msg = next(
@@ -1286,7 +1990,7 @@ DIRECT RESPONSE RULES:
             usage_tracker["output_tokens"],
             _format_execution_trace(execution_trace),
         )
-        return llm_summary, is_general_knowledge, raw_results, tools_used, usage_tracker
+        return llm_summary, is_general_knowledge, raw_results, tools_used, usage_tracker, execution_trace
 
     async def _build_response_from_final_state(
         self,
@@ -1306,6 +2010,7 @@ DIRECT RESPONSE RULES:
             raw_results,
             tools_used,
             usage_tracker,
+            execution_trace,
         ) = self._extract_final_state_context(
             final_state,
             active_gene,
@@ -1376,7 +2081,9 @@ DIRECT RESPONSE RULES:
             if clarification_options:
                 llm_summary = _strip_options_line(llm_summary)
                 rich_message = _strip_options_line(rich_message)
+            rich_message = _inlineize_source_blockquotes(rich_message)
             rich_message = _strip_invalid_source_citations(rich_message, tools_used_final)
+            rich_message = _ensure_inline_source_citations(rich_message, tools_used_final)
             tool_sources = _build_tool_sources(raw_results_final)
 
         is_literature_only = bool(tools_used_final) and all(
@@ -1386,8 +2093,40 @@ DIRECT RESPONSE RULES:
             isinstance(v.get("_result"), dict) and "error" in v.get("_result", {})
             for v in raw_results_final.values()
         )
+        result_data_statuses = [
+            (v.get("_data_status") if isinstance(v, dict) else None) or _classify_tool_result_payload(
+                key,
+                v.get("_result") if isinstance(v, dict) else v,
+            )
+            for key, v in raw_results_final.items()
+        ]
+        results_with_data = sum(1 for status in result_data_statuses if status == "ok")
+        no_data_only = bool(raw_results_final) and results_with_data == 0
+
+        # Confidence: measure how much data the tools actually returned
+        if is_general_knowledge:
+            confidence = "general_knowledge"
+        elif not raw_results_final:
+            confidence = "general_knowledge"
+        elif any_errors and results_with_data == 0:
+            confidence = "low"
+        else:
+            total_results = len(raw_results_final)
+            if results_with_data == total_results:
+                confidence = "high"
+            elif results_with_data > 0:
+                confidence = "partial"
+            else:
+                confidence = "low"
+
+        if no_data_only:
+            explicit_no_data = _build_no_data_message(raw_results_final)
+            rich_message = explicit_no_data
+            display_summary = "No matching data was returned by the requested tools."
+            suggestions = []
+
         show_summary = bool(
-            not any_errors
+            not no_data_only
             and raw_results_final
             and rich_message.strip()
             and display_summary.strip()
@@ -1411,6 +2150,8 @@ DIRECT RESPONSE RULES:
             "papers": [],
             "no_collapse": is_literature_only,
             "is_general_knowledge": is_general_knowledge,
+            "confidence": confidence,
+            "execution_trace": execution_trace,
             "_input_tokens": input_tokens,
             "_output_tokens": output_tokens,
             "_model": model_name,
@@ -1464,6 +2205,7 @@ DIRECT RESPONSE RULES:
                 active_gene=active_gene,
                 final_state=final_state,
                 log_prefix="[LangGraph]",
+                include_stream_metadata=True,
             )
 
             # Persist to DB (or memory in standalone mode)
@@ -1516,34 +2258,49 @@ DIRECT RESPONSE RULES:
             logger.info("[LangGraph Stream] Starting execution...")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing query requirements...'})}\n\n"
 
-            # Stream the execution graph state completely
+            # Stream using dual modes:
+            #   "values"   — full state snapshots to detect tool calls and emit status events
+            #   "messages" — AIMessage chunks to emit text_delta events for typewriter effect
+            # We run a single astream call with both modes and route by event type.
             final_state = None
-            # Using stream_mode="values" yields the FULL state after every node executes.
-            async for current_state in self._graph.astream(initial_state, stream_mode="values"):
-                final_state = current_state
-                
-                # We can determine what just happened by looking at the last message
-                messages = current_state.get("messages", [])
-                if not messages:
-                    continue
-                    
-                last_msg = messages[-1]
-                if isinstance(last_msg, AIMessage):
-                    if last_msg.tool_calls:
-                        for idx, tc in enumerate(last_msg.tool_calls):
-                            tool_name = tc.get("name", "tool").split("#")[0]
-                            # Only emit status for the first tool call in a parallel batch to avoid spam
-                            if idx == 0:
-                                yield f"data: {json.dumps({'type': 'status', 'content': f'Running {tool_name}...'})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
-                        
-                elif isinstance(last_msg, HumanMessage):
-                    # Initial state
-                    pass
-                elif isinstance(last_msg, ToolMessage):
-                    yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing tool results...'})}\n\n"
-            
+            _text_streaming_started = False
+            emitted_text_delta = False
+
+            async for stream_mode_key, chunk in self._graph.astream(
+                initial_state,
+                stream_mode=["values", "messages"],
+            ):
+                if stream_mode_key == "values":
+                    # Full state snapshot — use for status signals
+                    current_state = chunk
+                    final_state = current_state
+                    messages = current_state.get("messages", [])
+                    if not messages:
+                        continue
+                    last_msg = messages[-1]
+                    if isinstance(last_msg, AIMessage):
+                        if last_msg.tool_calls:
+                            _text_streaming_started = False
+                            for idx, tc in enumerate(last_msg.tool_calls):
+                                tool_name = tc.get("name", "tool").split("#")[0]
+                                if idx == 0:
+                                    yield f"data: {json.dumps({'type': 'status', 'content': f'Running {tool_name}...'})}\n\n"
+                        # No else — text streaming is handled by "messages" mode below
+                    elif isinstance(last_msg, ToolMessage):
+                        yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing tool results...'})}\n\n"
+
+                elif stream_mode_key == "messages":
+                    # Incremental AIMessage chunk — emit text_delta for typewriter effect
+                    msg_chunk, _ = chunk
+                    if isinstance(msg_chunk, AIMessage):
+                        text = _normalize_content(msg_chunk.content)
+                        if text and not getattr(msg_chunk, "tool_calls", None):
+                            if not _text_streaming_started:
+                                _text_streaming_started = True
+                                yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
+                            emitted_text_delta = True
+                            yield f"data: {json.dumps({'type': 'text_delta', 'content': text})}\n\n"
+
             if not final_state:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'No output generated.', 'query': query}})}\n\n"
                 return
@@ -1559,6 +2316,17 @@ DIRECT RESPONSE RULES:
                 log_prefix="[LangGraph Stream]",
                 include_stream_metadata=True,
             )
+
+            # Fallback incremental rendering when the graph/model path did not
+            # surface token chunks during execution.
+            fallback_text = (formatted_response.get("message") or "").strip()
+            if fallback_text and not emitted_text_delta:
+                fallback_chunks = _iter_stream_chunks(fallback_text)
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
+                for idx, text_chunk in enumerate(fallback_chunks):
+                    yield f"data: {json.dumps({'type': 'text_delta', 'content': text_chunk})}\n\n"
+                    if idx < len(fallback_chunks) - 1:
+                        await asyncio.sleep(0.005)
 
             turn_id = await self._save_query(session, query, formatted_response)
             
