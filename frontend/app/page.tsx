@@ -154,6 +154,7 @@ export default function Home() {
 
     const handleSessionChange = useCallback((id: string | null) => {
         setPendingSearchTarget(null)
+        setRightPanelContext(null)
         setSessionId(id)
     }, [])
 

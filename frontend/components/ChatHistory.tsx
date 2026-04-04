@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { Trash2, MessageSquare, Plus, Pencil, Check, X, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -45,6 +45,18 @@ interface SearchResult {
     timestamp: number
 }
 
+/** Wrap each occurrence of `term` in <mark> for inline highlighting. */
+function highlightText(text: string, term: string): React.ReactNode {
+    if (!term.trim()) return text
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const parts = text.split(new RegExp(`(${escaped})`, "gi"))
+    return parts.map((part, i) =>
+        part.toLowerCase() === term.toLowerCase()
+            ? <mark key={i} className="bg-amber-200 dark:bg-amber-700/60 text-inherit rounded-sm px-0.5">{part}</mark>
+            : part
+    )
+}
+
 export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultSelect }: ChatHistoryProps) {
     const [sessions, setSessions] = useState<ChatSession[]>([])
     const [isLoading, setIsLoading] = useState(true) // Initial load only
@@ -62,6 +74,11 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
         const interval = setInterval(() => loadSessions(false), 30000)
         return () => clearInterval(interval)
     }, [])
+
+    // Clear search when the user switches to a different session
+    useEffect(() => {
+        setSearchQuery("")
+    }, [currentSessionId])
 
     // Refresh only when the selected session is new or still using the placeholder title.
     // Switching between existing named chats should not reload the whole session list.
@@ -252,8 +269,8 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                     className="cursor-pointer p-3 rounded-lg hover:bg-accent transition-all border border-transparent hover:border-border"
                                 >
                                     <p className="text-xs font-semibold text-primary truncate mb-1">{result.session_title}</p>
-                                    <p className="text-xs font-medium truncate">{result.query}</p>
-                                    <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{result.excerpt}</p>
+                                    <p className="text-xs font-medium truncate">{highlightText(result.query, searchQuery)}</p>
+                                    <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{highlightText(result.excerpt, searchQuery)}</p>
                                 </div>
                             ))}
                         </div>

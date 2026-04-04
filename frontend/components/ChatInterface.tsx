@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -769,6 +769,26 @@ const MessagesPane = memo(function MessagesPane({
                                     </div>
                                 )}
                                 <div className={userBubbleWrapperClass}>
+                                    {message.isError ? (
+                                        <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-4 text-sm text-red-800 dark:text-red-300 shadow-sm">
+                                            <div className="flex items-start gap-2.5">
+                                                <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="font-semibold mb-1">Something went wrong</p>
+                                                    <p className="text-xs text-red-700 dark:text-red-400 leading-relaxed">{message.content}</p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => sendMessageText(lastUserQueryRef.current)}
+                                                disabled={isLoading || !lastUserQueryRef.current}
+                                                className="mt-3 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/70 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <RefreshCw className="h-3 w-3" />
+                                                Retry
+                                            </button>
+                                        </div>
+                                    ) : (
                                     <Card
                                         className={cn(
                                             "relative shadow-sm hover:shadow-md transition-shadow duration-300",
@@ -1095,8 +1115,9 @@ const MessagesPane = memo(function MessagesPane({
                                             )}
                                         </CardContent>
                                     </Card>
+                                    )}
                                     {message.role === "user" && !isEditingUserMessage && (
-                                        <div className={cn("hidden md:flex items-center gap-1 mt-1 transition-opacity duration-150", hoveredIndex === index ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                                        <div className={cn("flex items-center gap-1 mt-1 transition-opacity duration-150 opacity-60 md:opacity-0 md:pointer-events-none", hoveredIndex === index ? "md:opacity-100 md:pointer-events-auto" : "")}>
                                             <Button
                                                 type="button"
                                                 size="sm"
@@ -1126,8 +1147,8 @@ const MessagesPane = memo(function MessagesPane({
                                             )}
                                         </div>
                                     )}
-                                    {message.role === "assistant" && (
-                                        <div className={cn("hidden md:flex items-center gap-0.5 mt-1 transition-opacity duration-150", hoveredIndex === index ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                                    {message.role === "assistant" && !message.isError && (
+                                        <div className={cn("flex items-center gap-0.5 mt-1 transition-opacity duration-150 opacity-60 md:opacity-0 md:pointer-events-none", hoveredIndex === index ? "md:opacity-100 md:pointer-events-auto" : "")}>
                                             <button
                                                 type="button"
                                                 onClick={() => onCopy(message.content, index)}
@@ -1172,30 +1193,41 @@ const MessagesPane = memo(function MessagesPane({
                                 )
                             })()}
                             {message.role === "assistant" && message.clarificationOptions && message.clarificationOptions.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mt-2 pl-11">
-                                    <span className="text-xs text-muted-foreground self-center mr-1">Choose:</span>
-                                    {message.clarificationOptions.map((opt, oi) => (
-                                        <button
-                                            key={oi}
-                                            onClick={() => onSend(opt)}
-                                            className="text-xs px-3 py-1.5 rounded-full border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 font-medium transition-all duration-200 hover:scale-[1.02] shadow-sm hover:shadow"
-                                        >
-                                            {opt}
-                                        </button>
-                                    ))}
+                                <div className="mt-2 pl-11 border-l-2 border-amber-400 dark:border-amber-600 ml-11 pl-3">
+                                    <div className="flex items-center gap-1 mb-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                                        <HelpCircle className="w-3.5 h-3.5" />
+                                        Choose one:
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {message.clarificationOptions.map((opt, oi) => (
+                                            <button
+                                                key={oi}
+                                                onClick={() => onSend(opt)}
+                                                className="text-xs px-3 py-1.5 rounded-full border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 font-medium transition-all duration-200 hover:scale-[1.02] shadow-sm hover:shadow"
+                                            >
+                                                {opt}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                             {message.role === "assistant" && message.suggestions && message.suggestions.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mt-1 pl-11">
-                                    {message.suggestions.map((s, si) => (
-                                        <button
-                                            key={si}
-                                            onClick={() => onSend(s)}
-                                            className="text-xs px-3 py-1.5 rounded-full border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition-all duration-200 hover:scale-[1.02] shadow-sm hover:shadow text-left"
-                                        >
-                                            {s}
-                                        </button>
-                                    ))}
+                                <div className="mt-1 pl-11">
+                                    <div className="flex items-center gap-1 mb-1.5 text-xs font-medium text-teal-600 dark:text-teal-400">
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                        Try next:
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {message.suggestions.map((s, si) => (
+                                            <button
+                                                key={si}
+                                                onClick={() => onSend(s)}
+                                                className="text-xs px-3 py-1.5 rounded-full border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition-all duration-200 hover:scale-[1.02] shadow-sm hover:shadow text-left"
+                                            >
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                             {message.role === "assistant" && message.executionTrace && (
@@ -2008,6 +2040,7 @@ export const ChatInterface = memo(function ChatInterface({
     const searchInputRef = useRef<HTMLInputElement>(null)
     const messageRefs = useRef<(HTMLDivElement | null)[]>([])
     const scrollAreaRootRef = useRef<any>(null)
+    const lastUserQueryRef = useRef<string>("")
     const historyLoadTokenRef = useRef(0)
     const adoptedSessionIdRef = useRef<string | null>(null)
     const activeSearchJumpKeyRef = useRef<string | null>(null)
@@ -2605,6 +2638,8 @@ export const ChatInterface = memo(function ChatInterface({
             return
         }
 
+        lastUserQueryRef.current = messageText
+
         const userMessage: ChatMessage = {
             role: "user",
             content: messageText,
@@ -2758,6 +2793,7 @@ export const ChatInterface = memo(function ChatInterface({
                 role: "assistant",
                 content: errorContent,
                 timestamp: new Date(),
+                isError: true,
             }
             setMessages((prev) => [...prev, errorMessage])
         } finally {

@@ -1,10 +1,10 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Copy, X, LayoutGrid, Table2, Network, BarChart2 } from "lucide-react"
+import { Copy, Check, X, LayoutGrid, Table2, Network, BarChart2 } from "lucide-react"
 import type { Paper, AnalysisResult, AnyVisualization, StaticVisualization } from "@/lib/api"
 // Paper and AnalysisResult kept for RightPanelContext interface compatibility
 import { StaticPlot } from "@/components/StaticPlot"
@@ -48,6 +48,8 @@ export function RightPanel({
   className?: string
   onClose?: () => void
 }) {
+  const [copiedSessionId, setCopiedSessionId] = useState(false)
+
   const images = useMemo(() => {
     const fromCtx = context?.lastAssistantImages ?? []
     if (fromCtx.length) return fromCtx
@@ -78,10 +80,21 @@ export function RightPanel({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigator.clipboard.writeText(sessionId)}
+                onClick={() => {
+                  navigator.clipboard.writeText(sessionId)
+                  setCopiedSessionId(true)
+                  setTimeout(() => setCopiedSessionId(false), 2000)
+                }}
                 title="Copy session id"
               >
-                <Copy className="h-4 w-4" />
+                {copiedSessionId ? (
+                  <>
+                    <Check className="h-4 w-4 text-green-500 mr-1" />
+                    <span className="text-xs text-green-500">Copied!</span>
+                  </>
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
               </Button>
             )}
             {onClose && (

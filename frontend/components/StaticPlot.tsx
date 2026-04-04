@@ -145,7 +145,12 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
 
     return (
         <div ref={containerRef} className={className}>
-            {isVisible && (
+            {!isVisible ? (
+                // Skeleton placeholder keeps layout stable before the plot scrolls into view
+                <div className="rounded-lg border border-border bg-muted/20 animate-pulse min-h-48 flex items-center justify-center text-xs text-muted-foreground/40">
+                    {viz.title ? viz.title : "Chart"}
+                </div>
+            ) : isVisible && (
                 resolvedViz ? (
                     <div className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden">
                         {/* Plot image — click to expand */}
@@ -268,7 +273,7 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
                         {viz.title ? `Chart: ${viz.title}` : "Chart"} — file not available (re-run query to regenerate)
                     </div>
                 ) : (
-                    <div className="text-xs text-muted-foreground italic px-3 py-2 border rounded-lg border-border bg-muted/20 animate-pulse">
+                    <div className="text-xs text-muted-foreground italic px-3 py-2 border rounded-lg border-border bg-muted/20 animate-pulse min-h-48 flex items-center">
                         Loading chart{viz.title ? `: ${viz.title}` : ""}…
                     </div>
                 )

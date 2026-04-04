@@ -315,6 +315,7 @@ export interface ChatMessage {
     wasPreview?: boolean  // when true, was fetched on demand — keep collapsible regardless of length
     isGeneralKnowledge?: boolean  // true when LLM answered from training knowledge, not LinkedOmics data
     confidence?: "high" | "partial" | "low" | "general_knowledge"
+    isError?: boolean  // true when this message represents an error with a retry option
     timestamp?: Date
     papers?: Paper[]
     analyses?: AnalysisResult[]
