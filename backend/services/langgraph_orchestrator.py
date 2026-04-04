@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import pathlib
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, Type
@@ -331,7 +332,51 @@ def _classify_tool_result_payload(tool_name: str, payload: Any) -> str:
     return "ok" if _generic_payload_has_data(payload) else "empty"
 
 
-def _build_no_data_message(raw_results: Dict[str, Any]) -> str:
+_NO_DATA_SUGGESTIONS: Dict[str, str] = {
+    "expression": (
+        "- Try a different cancer cohort (e.g. BRCA, LUAD, COAD).\n"
+        "- Verify the gene symbol is a valid HGNC official name.\n"
+        "- Check if expression data exists for this gene in LinkedOmics."
+    ),
+    "survival": (
+        "- Try the complementary dataset: if CPTAC returned nothing, TCGA may have data (add 'in TCGA').\n"
+        "- Specify a different omics layer (e.g. protein, methylation, miRNA).\n"
+        "- Check that the cohort name is supported (e.g. BRCA, LUAD, OV)."
+    ),
+    "tcga_survival": (
+        "- Confirm the TCGA cohort abbreviation (e.g. BRCA, LUAD, SKCM).\n"
+        "- Try specifying the omics type explicitly (e.g. 'mRNA', 'methylation', 'copy number').\n"
+        "- Some genes may not have significant associations in all cohorts."
+    ),
+    "correlation": (
+        "- Verify the gene symbol is correct.\n"
+        "- Try a different cohort — cis-correlation data varies by cancer type.\n"
+        "- RNA-protein correlations require the gene to be measured in both omics layers."
+    ),
+    "targets": (
+        "- The gene may not be in the LinkedOmics drug target index.\n"
+        "- Try `search_targets` with a broader filter (e.g. omit tier or drug name).\n"
+        "- Consider looking up a related gene or a pathway instead."
+    ),
+    "trials": (
+        "- This gene may not have predictive data in the current clinical trial studies.\n"
+        "- Try a broader search: remove specific drug or cancer-type filters.\n"
+        "- Use `filter_clinical_trials` to see which studies are available first."
+    ),
+    "funmap": (
+        "- The gene may not be present in the FunMap co-functional network.\n"
+        "- Try calling `resolve_gene_identifier` first to confirm the official symbol.\n"
+        "- Some lowly-expressed or non-protein-coding genes are excluded from FunMap."
+    ),
+    "pathway": (
+        "- WebGestalt requires a list of genes — a single gene or empty list returns no results.\n"
+        "- Try a broader gene set, or specify a different database (e.g. KEGG, GO Biological Process).\n"
+        "- Ensure the gene symbols are HGNC official names."
+    ),
+}
+
+
+def _build_no_data_message(raw_results: Dict[str, Any], tool_scope: Optional[str] = None) -> str:
     """Create a deterministic response when tools ran but returned no usable data."""
     lines = ["No matching data was returned by the requested tools.", ""]
     lines.append("Checked:")
@@ -350,6 +395,11 @@ def _build_no_data_message(raw_results: Dict[str, Any]) -> str:
         lines.append(f"- `{tool_label}`{suffix}: {reason}")
     lines.append("")
     lines.append("This means the queried datasets/tools did not return usable results for the requested input.")
+    suggestion_block = _NO_DATA_SUGGESTIONS.get(tool_scope or "")
+    if suggestion_block:
+        lines.append("")
+        lines.append("**Suggestions:**")
+        lines.append(suggestion_block)
     return "\n".join(lines)
 
 
@@ -698,11 +748,51 @@ _NON_GENE_ACCESSION_RE = re.compile(
     r"^(GSE|GSM|SRP|PRJNA|NCT|PMID)\d+$",
     re.IGNORECASE,
 )
+def _load_valid_genes() -> frozenset[str]:
+    """Load the HGNC gene symbol list from valid_genes.txt (uppercase, one per line)."""
+    candidates = [
+        pathlib.Path(__file__).parent.parent.parent / "valid_genes.txt",
+        pathlib.Path(__file__).parent.parent / "valid_genes.txt",
+        pathlib.Path(__file__).parent / "valid_genes.txt",
+    ]
+    for path in candidates:
+        if path.exists():
+            with path.open() as f:
+                return frozenset(line.strip().upper() for line in f if line.strip())
+    logger.warning("valid_genes.txt not found — lowercase gene normalization disabled")
+    return frozenset()
+
+
+_VALID_GENES: frozenset[str] = _load_valid_genes()
+
 _GENE_STOPWORDS = {
     "RNA", "DNA", "ATP", "GTP", "PCR", "LLM", "AI", "API",
     "TCGA", "CPTAC", "WHO", "FDA", "USA", "UK", "OR", "AND",
     "NOT", "FOR", "THE", "WITH", "FROM", "BRCA", "LUAD", "LUSC",
     "HNSC", "HNSCC", "CCRCC", "UCEC", "PDAC", "COAD", "LSCC",
+}
+_CANCER_TYPE_MAP: Dict[str, str] = {
+    "BRCA": "breast cancer (BRCA)",
+    "LUAD": "lung adenocarcinoma (LUAD)",
+    "LUSC": "lung squamous cell carcinoma (LUSC)",
+    "HNSC": "head and neck squamous cell carcinoma (HNSCC)",
+    "HNSCC": "head and neck squamous cell carcinoma (HNSCC)",
+    "CCRCC": "clear cell renal cell carcinoma (CCRCC)",
+    "UCEC": "uterine corpus endometrial carcinoma (UCEC)",
+    "PDAC": "pancreatic ductal adenocarcinoma (PDAC)",
+    "COAD": "colon adenocarcinoma (COAD)",
+    "LSCC": "lung squamous cell carcinoma (LSCC)",
+    "GBM": "glioblastoma (GBM)",
+    "OV": "ovarian serous cystadenocarcinoma (OV)",
+    "STAD": "stomach adenocarcinoma (STAD)",
+    "BLCA": "bladder urothelial carcinoma (BLCA)",
+    "KIRC": "kidney renal clear cell carcinoma (KIRC)",
+    "THCA": "thyroid carcinoma (THCA)",
+    "PRAD": "prostate adenocarcinoma (PRAD)",
+    "LIHC": "liver hepatocellular carcinoma (LIHC)",
+    "SKCM": "skin cutaneous melanoma (SKCM)",
+    "CESC": "cervical squamous cell carcinoma (CESC)",
+    "LAML": "acute myeloid leukemia (LAML)",
 }
 _AUTO_BATCH_SINGLE_TOOL_MAP: Dict[str, str] = {
     "linkedomics__cancer_gene_expression": "linkedomics__batch_cancer_gene_expression",
@@ -756,7 +846,10 @@ def _looks_like_explicit_gene_token(token: str) -> bool:
     if any(ch.isdigit() for ch in normalized):
         return True
     # Accept already-capitalized symbol-like tokens (EGFR, MET, KRAS, etc.).
-    return token.isupper() and 2 <= len(normalized) <= 10
+    if token.isupper() and 2 <= len(normalized) <= 10:
+        return True
+    # Accept lowercase/mixed-case tokens whose uppercase form is a known HGNC symbol.
+    return bool(_VALID_GENES and normalized in _VALID_GENES)
 
 
 def _extract_query_identifiers(query: str) -> List[str]:
@@ -779,6 +872,15 @@ def _extract_query_genes(query: str) -> List[str]:
         token for token in _extract_query_identifiers(query)
         if not _is_external_gene_identifier(token)
     ]
+
+
+def _extract_cancer_type(query: str) -> Optional[str]:
+    """Return a human-readable cancer type label if the query mentions a known cohort abbreviation."""
+    upper = (query or "").upper()
+    for abbrev, label in _CANCER_TYPE_MAP.items():
+        if re.search(r"\b" + re.escape(abbrev) + r"\b", upper):
+            return label
+    return None
 
 
 def _query_uses_active_gene_reference(query: str) -> bool:
@@ -839,6 +941,18 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
     # Bare TCGA mention with no survival keyword still uses full survival scope.
     if "tcga" in normalized:
         return "tcga_survival"
+
+    # Bare gene query (≤5 tokens, has a gene symbol, no action verb) → default to expression.
+    # This avoids firing all tools for simple "tell me about GENE" or bare gene-name queries.
+    _ACTION_VERBS = ("surviv", "correlat", "target", "trial", "pathway", "funmap", "literatur", "paper")
+    tokens = normalized.split()
+    has_explicit_gene = bool(_extract_query_genes(query)) or bool(active_gene and active_gene != "unknown")
+    if (
+        len(tokens) <= 5
+        and has_explicit_gene
+        and not any(v in normalized for v in _ACTION_VERBS)
+    ):
+        return "expression"
 
     return "full"
 
@@ -1403,6 +1517,52 @@ def _ensure_inline_source_citations(text: str, tools_used: list) -> str:
     return "\n".join(lines)
 
 
+_VAGUE_ANALYSIS_RE = re.compile(
+    r"\b(analyz|study|investigat|explor|summar|overview|tell me about|what can you tell|show me everything)",
+    re.IGNORECASE,
+)
+_SPECIFIC_ANALYSIS_KEYWORDS = (
+    "surviv", "express", "correlat", "target", "trial", "pathway",
+    "funmap", "literatur", "tumor vs normal", "prognos", "methyl", "copy number",
+)
+
+
+def _is_vague_analysis_query(query: str, requested_genes: List[str]) -> bool:
+    """Return True if the query is a vague 'analyze/study GENE' with no specific analysis type."""
+    if not requested_genes:
+        return False
+    normalized = query.strip().lower()
+    if len(normalized.split()) > 8:
+        return False
+    if not _VAGUE_ANALYSIS_RE.search(normalized):
+        return False
+    return not any(kw in normalized for kw in _SPECIFIC_ANALYSIS_KEYWORDS)
+
+
+def _build_clarification_response(gene: str, session_id: str, query: str) -> Dict[str, Any]:
+    """Return a pre-built clarification payload for vague analysis queries."""
+    return {
+        "success": True,
+        "message": f"What would you like to know about **{gene}**?",
+        "summary": f"What would you like to know about **{gene}**?",
+        "clarification_options": [
+            "Expression across cancers",
+            "Survival analysis",
+            "Drug targets",
+            "Clinical trials",
+            "Pathway enrichment",
+            "Correlation analysis",
+        ],
+        "tool_sources": {},
+        "visualizations": [],
+        "session_id": session_id,
+        "query": query,
+        "confidence": "general_knowledge",
+        "_input_tokens": 0,
+        "_output_tokens": 0,
+    }
+
+
 def _parse_clarification_options(text: str) -> list:
     """Extract quick-reply options from **Options:** `A` · `B` · `C` format."""
     import re
@@ -1758,6 +1918,8 @@ DIRECT RESPONSE RULES:
         *,
         tool_scope: str = "full",
         multi_gene: bool = False,
+        active_cancer_type: Optional[str] = None,
+        session_goal: Optional[str] = None,
     ) -> str:
         """Build a scope-aware system prompt."""
         if tool_scope == "none":
@@ -1771,6 +1933,17 @@ DIRECT RESPONSE RULES:
             data_access=self._build_data_access_section(),
         )
         prompt = base + scope_constraint
+        if session_goal or active_cancer_type:
+            parts: List[str] = []
+            if session_goal:
+                parts.append(f"research goal: {session_goal}")
+            if active_cancer_type:
+                parts.append(f"cancer type: {active_cancer_type}")
+            prompt += f"\nSESSION CONTEXT: {'; '.join(parts)}. Keep this context in mind across all turns.\n"
+        if active_cancer_type:
+            prompt += (
+                f"Prefer tools and cohorts relevant to {active_cancer_type} when applicable.\n"
+            )
         if multi_gene:
             prompt += (
                 "\nMULTI-GENE QUERY DETECTED: The user is asking about multiple genes. "
@@ -1788,6 +1961,8 @@ DIRECT RESPONSE RULES:
         *,
         tool_scope: str = "full",
         multi_gene: bool = False,
+        active_cancer_type: Optional[str] = None,
+        session_goal: Optional[str] = None,
     ):
         """(Re)build the compiled LangGraph with current MCP tools."""
         if not self.llm:
@@ -1797,7 +1972,8 @@ DIRECT RESPONSE RULES:
         self._tool_scope = tool_scope
         self._tools = build_mcp_tools(self.mcp_aggregator, allowed_tool_ids=scoped_tool_ids)
         system_prompt = self._build_system_prompt(
-            active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene
+            active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene,
+            active_cancer_type=active_cancer_type, session_goal=session_goal,
         )
         self._graph = build_graph(self.llm, self._tools, system_prompt)
         logger.info(
@@ -1869,6 +2045,8 @@ DIRECT RESPONSE RULES:
 
         Uses stored `turn_summary` when available (generated at save time),
         otherwise extracts a compact summary from the response text.
+        A synthetic context message is prepended when session goal or cancer type
+        are known, so early-turn context survives the 10-turn window.
         """
         messages: List[BaseMessage] = []
         for item in session.get("history", [])[-limit:]:
@@ -1910,7 +2088,16 @@ DIRECT RESPONSE RULES:
         effective_query = _expand_contextual_shortcuts(query, session)
         if effective_query != query:
             logger.info(f"{log_prefix} Expanded contextual shortcut for query processing.")
-        active_gene = session.get("context", {}).get("active_gene", "unknown")
+
+        # Persist session goal (first substantive query) and cancer type
+        ctx = session.setdefault("context", {})
+        if not ctx.get("session_goal") and query.strip() and not _looks_conversational(query):
+            ctx["session_goal"] = query.strip()[:200]
+        detected_cancer = _extract_cancer_type(effective_query)
+        if detected_cancer:
+            ctx["active_cancer_type"] = detected_cancer
+
+        active_gene = ctx.get("active_gene", "unknown")
         tool_scope = _infer_tool_scope(
             effective_query,
             active_gene if active_gene != "unknown" else None,
@@ -1922,8 +2109,14 @@ DIRECT RESPONSE RULES:
         # Detect multi-gene queries so the LLM is told to prefer batch tools
         multi_gene = len(requested_genes) >= 2
 
-        # Rebuild graph with current active_gene in system prompt
-        self._rebuild_graph(active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene)
+        # Rebuild graph with current active_gene, cancer type, and session goal in system prompt
+        active_cancer_type = ctx.get("active_cancer_type")
+        session_goal = ctx.get("session_goal", "")
+        self._rebuild_graph(
+            active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene,
+            active_cancer_type=active_cancer_type,
+            session_goal=session_goal or None,
+        )
 
         history_limit = self._history_limit_for_scope(tool_scope)
         history_messages = self._format_history(session, limit=history_limit)
@@ -1966,6 +2159,12 @@ DIRECT RESPONSE RULES:
 
         raw_results = final_state.get("tool_results", {})
         new_active_gene = final_state.get("active_gene") or active_gene
+        # If no tool ran to update active_gene, fall back to the first gene the user explicitly
+        # mentioned in this query.  This keeps context correct even for direct-answer turns.
+        if (not new_active_gene or new_active_gene == active_gene) and not raw_results:
+            fallback_genes = list(final_state.get("requested_genes") or [])
+            if fallback_genes:
+                new_active_gene = fallback_genes[0]
         tools_used = [k.rsplit("#", 1)[0] for k in raw_results.keys()]
         execution_trace = list(final_state.get("execution_trace", []))
         usage_tracker = {
@@ -2120,7 +2319,9 @@ DIRECT RESPONSE RULES:
                 confidence = "low"
 
         if no_data_only:
-            explicit_no_data = _build_no_data_message(raw_results_final)
+            explicit_no_data = _build_no_data_message(
+                raw_results_final, tool_scope=final_state.get("tool_scope")
+            )
             rich_message = explicit_no_data
             display_summary = "No matching data was returned by the requested tools."
             suggestions = []
@@ -2195,6 +2396,14 @@ DIRECT RESPONSE RULES:
                     "session_id": session["id"],
                 }
 
+            # Short-circuit vague "analyze GENE" queries before running any tools
+            requested_genes = initial_state.get("requested_genes") or []
+            if _is_vague_analysis_query(effective_query, requested_genes):
+                gene = requested_genes[0] if requested_genes else (active_gene if active_gene != "unknown" else "this gene")
+                clarification_response = _build_clarification_response(gene, session["id"], query)
+                turn_id = await self._save_query(session, query, clarification_response)
+                return {**clarification_response, "turn_id": turn_id}
+
             # Run the LangGraph agent
             logger.info("[LangGraph] Starting agent graph execution...")
             final_state = await self._graph.ainvoke(initial_state)
@@ -2253,6 +2462,15 @@ DIRECT RESPONSE RULES:
 
             if not self._graph:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'LangGraph not available.', 'query': query, 'session_id': session['id']}})}\n\n"
+                return
+
+            # Short-circuit vague "analyze GENE" queries before running any tools
+            requested_genes = initial_state.get("requested_genes") or []
+            if _is_vague_analysis_query(effective_query, requested_genes):
+                gene = requested_genes[0] if requested_genes else (active_gene if active_gene != "unknown" else "this gene")
+                clarification_response = _build_clarification_response(gene, session["id"], query)
+                turn_id = await self._save_query(session, query, clarification_response)
+                yield f"data: {json.dumps({'type': 'final', 'content': {**clarification_response, 'turn_id': turn_id}})}\n\n"
                 return
 
             logger.info("[LangGraph Stream] Starting execution...")
