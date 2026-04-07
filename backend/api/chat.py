@@ -4,20 +4,72 @@ Handles conversational interactions with the agent system
 """
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict
 from collections import defaultdict, deque
 import logging
 import time
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, cast, Text as SAText
+from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest
+from models.database import User, ChatSession, ChatMessage as DBChatMessage, MessageFeedback
+from services.mcp_orchestrator import MCPOrchestrator
+from core.config import settings
+from core.database import SessionLocal
+from core.dependencies import get_current_user, get_current_user_optional
 
 from core.artifacts import resolve_visualization_paths
 
-# ── In-memory guest rate limiter (sliding window, per IP) ──────────────────
-# Stores a deque of request timestamps per IP address.
-# On each request we drop timestamps older than 1 hour, then check the count.
+# ── In-memory sliding-window rate limiters ─────────────────────────────────
+# Guest limiter: keyed by client IP address.
+# User limiter:  keyed by authenticated user ID.
+# Each stores a deque of request timestamps; entries outside the 1-hour window
+# are evicted on every check.
 _guest_request_log: Dict[str, deque] = defaultdict(deque)
+_user_request_log: Dict[str, deque] = defaultdict(deque)
+
+_RATE_LIMIT_WINDOW = 3600  # 1 hour in seconds
+
+
+def _check_rate_limit(
+    key: str,
+    log: Dict[str, deque],
+    limit: int,
+    label: str,
+    signup_hint: bool = False,
+) -> None:
+    """Shared sliding-window rate-limit checker.
+
+    Raises HTTP 429 when ``key`` has reached ``limit`` requests within the last
+    hour.  ``label`` is used in the error message; ``signup_hint`` appends the
+    account creation suggestion (for guest users).
+    """
+    now = time.time()
+    timestamps = log[key]
+
+    # Evict timestamps outside the sliding window
+    while timestamps and now - timestamps[0] > _RATE_LIMIT_WINDOW:
+        timestamps.popleft()
+
+    if len(timestamps) >= limit:
+        oldest = timestamps[0]
+        retry_after = int(_RATE_LIMIT_WINDOW - (now - oldest)) + 1
+        minutes = (retry_after + 59) // 60
+        wait_msg = f"in about {minutes} minute{'s' if minutes != 1 else ''}" if minutes > 1 else "shortly"
+        detail = f"You've reached the limit of {limit} queries per hour. You can try again {wait_msg}."
+        if signup_hint:
+            detail = (
+                f"You've used all {limit} free queries for this hour. "
+                f"You can try again {wait_msg}, or create a free account for unlimited access."
+            )
+        raise HTTPException(
+            status_code=429,
+            detail=detail,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    timestamps.append(now)
+
 
 def _check_guest_rate_limit(ip: str) -> None:
     """Raise HTTP 429 if the guest IP has exceeded GUEST_RATE_LIMIT_PER_HOUR.
@@ -27,37 +79,19 @@ def _check_guest_rate_limit(ip: str) -> None:
     from core.config import settings
     if not settings.GUEST_RATE_LIMIT_ENABLED:
         return
+    _check_rate_limit(ip, _guest_request_log, settings.GUEST_RATE_LIMIT_PER_HOUR, "guest", signup_hint=True)
 
-    now = time.time()
-    window = 3600  # 1 hour in seconds
-    timestamps = _guest_request_log[ip]
 
-    # Evict timestamps outside the sliding window
-    while timestamps and now - timestamps[0] > window:
-        timestamps.popleft()
+def _check_user_rate_limit(user_id: str) -> None:
+    """Raise HTTP 429 if the authenticated user has exceeded USER_RATE_LIMIT_PER_HOUR.
 
-    if len(timestamps) >= settings.GUEST_RATE_LIMIT_PER_HOUR:
-        oldest = timestamps[0]
-        retry_after = int(window - (now - oldest)) + 1
-        minutes = (retry_after + 59) // 60  # round up to nearest minute
-        wait_msg = f"in about {minutes} minute{'s' if minutes != 1 else ''}" if minutes > 1 else "shortly"
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"You've used all {settings.GUEST_RATE_LIMIT_PER_HOUR} free queries for this hour. "
-                f"You can try again {wait_msg}, or create a free account for unlimited access."
-            ),
-            headers={"Retry-After": str(retry_after)},
-        )
+    Does nothing when USER_RATE_LIMIT_ENABLED=False (default).
+    """
+    from core.config import settings
+    if not settings.USER_RATE_LIMIT_ENABLED:
+        return
+    _check_rate_limit(str(user_id), _user_request_log, settings.USER_RATE_LIMIT_PER_HOUR, "user")
 
-    timestamps.append(now)
-
-from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest
-from models.database import User, ChatSession, ChatMessage as DBChatMessage, MessageFeedback
-from services.mcp_orchestrator import MCPOrchestrator
-from core.config import settings
-from core.database import get_db, SessionLocal
-from core.dependencies import get_current_user, get_current_user_optional
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +201,8 @@ async def chat_query(
     if user_id == "guest":
         client_ip = http_request.headers.get("X-Forwarded-For", http_request.client.host).split(",")[0].strip()
         _check_guest_rate_limit(client_ip)
+    else:
+        _check_user_rate_limit(user_id)
 
     try:
         # Get active orchestrator (MCP if enabled, otherwise legacy)
@@ -238,6 +274,8 @@ async def chat_stream(
     if user_id == "guest":
         client_ip = http_request.headers.get("X-Forwarded-For", http_request.client.host).split(",")[0].strip()
         _check_guest_rate_limit(client_ip)
+    else:
+        _check_user_rate_limit(user_id)
 
     try:
         active_orchestrator = orchestrator

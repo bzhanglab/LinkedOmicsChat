@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     # Set GUEST_RATE_LIMIT_ENABLED=false in .env to disable during NAR review period
     GUEST_RATE_LIMIT_ENABLED: bool = True
     GUEST_RATE_LIMIT_PER_HOUR: int = 2
+
+    # Registered-user rate limiting (sliding window, per user ID)
+    # Set USER_RATE_LIMIT_ENABLED=true in .env to enable; disabled by default.
+    USER_RATE_LIMIT_ENABLED: bool = False
+    USER_RATE_LIMIT_PER_HOUR: int = 20
     
     model_config = SettingsConfigDict(
         env_file=".env",
