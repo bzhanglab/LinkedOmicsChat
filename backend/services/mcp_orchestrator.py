@@ -733,8 +733,8 @@ def _generate_trials_auroc_chart(data: dict, label: str) -> Optional[dict]:
         import matplotlib.pyplot as plt
         import numpy as np
 
-        resistant = data.get("top_resistant", [])
-        sensitive = data.get("top_sensitive", [])
+        resistant = data.get("resistant", data.get("top_resistant", []))
+        sensitive = data.get("sensitive", data.get("top_sensitive", []))
         if not resistant and not sensitive:
             return None
 
@@ -3204,9 +3204,54 @@ Please provide a clear, informative response about this gene. Include the key de
                         })
                         lines.append(f"[PLOT:{viz_id}]")
                         lines.append("")
-                    lines.extend(_trials_table(data.get("top_resistant", []), "Top Resistant Studies (higher expression → worse response)"))
-                    lines.append("")
-                    lines.extend(_trials_table(data.get("top_sensitive", []), "Top Sensitive Studies (higher expression → better response)"))
+                    resistant = data.get("resistant", data.get("top_resistant", []))
+                    sensitive = data.get("sensitive", data.get("top_sensitive", []))
+                    all_rows = []
+                    for s in resistant:
+                        all_rows.append({
+                            "label": str(s.get("treatment", "") or ""),
+                            "series": s.get("series", ""),
+                            "study_id": s.get("study_id", ""),
+                            "studies": s.get("sample_size", ""),
+                            "avg_auroc": s.get("auroc"),
+                            "meta_fdr": s.get("fdr"),
+                            "p_value": s.get("p_value"),
+                            "response_evaluation": s.get("response_evaluation", ""),
+                            "direction": "resistant",
+                            "disease": s.get("disease", ""),
+                            "subtype": s.get("subtype", ""),
+                        })
+                    for s in sensitive:
+                        all_rows.append({
+                            "label": str(s.get("treatment", "") or ""),
+                            "series": s.get("series", ""),
+                            "study_id": s.get("study_id", ""),
+                            "studies": s.get("sample_size", ""),
+                            "avg_auroc": s.get("auroc"),
+                            "meta_fdr": s.get("fdr"),
+                            "p_value": s.get("p_value"),
+                            "response_evaluation": s.get("response_evaluation", ""),
+                            "direction": "sensitive",
+                            "disease": s.get("disease", ""),
+                            "subtype": s.get("subtype", ""),
+                        })
+                    # Sort by FDR magnitude (most significant first)
+                    all_rows.sort(key=lambda r: abs(float(r.get("meta_fdr") or 1)))
+                    for i, r in enumerate(all_rows, 1):
+                        r["rank"] = i
+                    if all_rows:
+                        table_viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "predictive_results_table",
+                            "variant": "clinical_trial",
+                            "id": table_viz_id,
+                            "title": f"Clinical Trial Associations — {label}",
+                            "row_label": "Treatment",
+                            "gene": label,
+                            "description": f"{total_sig} significant / {total_all} total studies — click a row to view expression plots",
+                            "rows": all_rows,
+                        })
+                        lines.append(f"[TABLE:{table_viz_id}]")
                     return lines
 
                 if is_batch:
@@ -3320,9 +3365,54 @@ Please provide a clear, informative response about this gene. Include the key de
                         })
                         md.append(f"[PLOT:{viz_id}]")
                         md.append("")
-                    md.extend(_trials_table(data.get("top_resistant", []), "Top Resistant Studies (higher activity → worse response)"))
-                    md.append("")
-                    md.extend(_trials_table(data.get("top_sensitive", []), "Top Sensitive Studies (higher activity → better response)"))
+                    resistant_gs = data.get("resistant", data.get("top_resistant", []))
+                    sensitive_gs = data.get("sensitive", data.get("top_sensitive", []))
+                    gs_rows = []
+                    for s in resistant_gs:
+                        gs_rows.append({
+                            "label": str(s.get("treatment", "") or ""),
+                            "series": s.get("series", ""),
+                            "study_id": s.get("study_id", ""),
+                            "studies": s.get("sample_size", ""),
+                            "avg_auroc": s.get("auroc"),
+                            "meta_fdr": s.get("fdr"),
+                            "p_value": s.get("p_value"),
+                            "response_evaluation": s.get("response_evaluation", ""),
+                            "direction": "resistant",
+                            "disease": s.get("disease", ""),
+                            "subtype": s.get("subtype", ""),
+                        })
+                    for s in sensitive_gs:
+                        gs_rows.append({
+                            "label": str(s.get("treatment", "") or ""),
+                            "series": s.get("series", ""),
+                            "study_id": s.get("study_id", ""),
+                            "studies": s.get("sample_size", ""),
+                            "avg_auroc": s.get("auroc"),
+                            "meta_fdr": s.get("fdr"),
+                            "p_value": s.get("p_value"),
+                            "response_evaluation": s.get("response_evaluation", ""),
+                            "direction": "sensitive",
+                            "disease": s.get("disease", ""),
+                            "subtype": s.get("subtype", ""),
+                        })
+                    gs_rows.sort(key=lambda r: abs(float(r.get("meta_fdr") or 1)))
+                    for i, r in enumerate(gs_rows, 1):
+                        r["rank"] = i
+                    if gs_rows:
+                        gs_table_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "predictive_results_table",
+                            "variant": "clinical_trial",
+                            "plot_type": "gene_set",
+                            "id": gs_table_id,
+                            "title": f"Pathway Trial Associations — {gs}",
+                            "row_label": "Treatment",
+                            "gene": gs,
+                            "description": f"{total_sig} significant / {total_all} total studies — click a row to view expression plots",
+                            "rows": gs_rows,
+                        })
+                        md.append(f"[TABLE:{gs_table_id}]")
                 md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
                 sections.append("\n".join(md) + "\n")
                 _rendered_tool_ids.add(tool_id)

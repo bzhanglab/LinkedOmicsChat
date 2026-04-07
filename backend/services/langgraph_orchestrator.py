@@ -214,14 +214,20 @@ def _expression_payload_has_data(payload: Any) -> bool:
 def _trial_payload_has_data(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
-    if isinstance(payload.get("data"), dict) and "top_sensitive" not in payload["data"] and "top_resistant" not in payload["data"]:
+    if isinstance(payload.get("data"), dict) and not (
+        "top_sensitive" in payload["data"] or "top_resistant" in payload["data"]
+        or "sensitive" in payload["data"] or "resistant" in payload["data"]
+    ):
         return any(_trial_payload_has_data(item) for item in payload["data"].values())
     data = payload.get("data") or {}
     if not isinstance(data, dict):
         return False
     if (data.get("total_studies") or 0) > 0:
         return True
-    return bool(data.get("top_sensitive") or data.get("top_resistant"))
+    return bool(
+        data.get("top_sensitive") or data.get("top_resistant")
+        or data.get("sensitive") or data.get("resistant")
+    )
 
 
 def _correlation_payload_has_data(payload: Any) -> bool:
