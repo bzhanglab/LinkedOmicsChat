@@ -402,7 +402,7 @@ export function DrugTargetGrid({ visualization }: Props) {
             {/* Modal */}
             {selected && typeof document !== "undefined" && createPortal(
                 <div
-                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm"
                     onClick={closeModal}
                 >
                     <div

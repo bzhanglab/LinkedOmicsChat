@@ -135,7 +135,7 @@ function QueryModal({
 }) {
     return (
         <div
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/25 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
             onClick={onClose}
         >
             <div

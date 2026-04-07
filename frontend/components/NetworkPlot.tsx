@@ -450,7 +450,7 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
                         {/* Lightbox */}
                         {lightboxOpen && typeof document !== "undefined" && createPortal(
                             <div
-                                className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+                                className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm"
                                 onClick={closeLightbox}
                             >
                                 <div
