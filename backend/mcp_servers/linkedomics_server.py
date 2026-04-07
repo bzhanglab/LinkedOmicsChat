@@ -860,16 +860,17 @@ def batch_overall_survival_per_cancer(proteins: list[str]) -> dict[str, Any]:
 
 
 def get_top_n_trials(
-    data: list[dict[str, Any]], n: int = 10, sig_threshold: float = 0.05
+    data: list[dict[str, Any]], sig_threshold: float = 0.05
 ) -> dict[str, Any]:
-    """Get the top n trials with the most significant association in both directions."""
+    """Get all significant trials in both directions."""
     filtered = [s for s in data if abs(float(s["fdr"])) < sig_threshold]
-    pos = sorted([s for s in filtered if float(s["fdr"]) > 0], key=lambda s: -s["sorted_fdr"])[:n]
-    neg = sorted([s for s in filtered if float(s["fdr"]) < 0], key=lambda s: s["sorted_fdr"])[:n]
+    pos = sorted([s for s in filtered if float(s["fdr"]) > 0], key=lambda s: -s["sorted_fdr"])
+    neg = sorted([s for s in filtered if float(s["fdr"]) < 0], key=lambda s: s["sorted_fdr"])
 
     def _fmt(s: dict[str, Any]) -> dict[str, Any]:
         return {
             "series": s["series"],
+            "study_id": s.get("study_id", ""),
             "treatment": s["treatment"],
             "disease": s.get("disease", ""),
             "subtype": s.get("subtype", ""),
@@ -877,11 +878,13 @@ def get_top_n_trials(
             "sample_size": s.get("sample_size", ""),
             "auroc": round(float(s["auroc"]), 3),
             "fdr": float(s["fdr"]),
+            "p_value": s.get("p_value") or s.get("pvalue") or s.get("pVal") or s.get("p_val"),
+            "response_evaluation": s.get("response_evaluation") or s.get("responseEvaluation") or s.get("response_eval", ""),
         }
 
     return {
-        "top_resistant": [_fmt(s) for s in pos],
-        "top_sensitive": [_fmt(s) for s in neg],
+        "resistant": [_fmt(s) for s in pos],
+        "sensitive": [_fmt(s) for s in neg],
         "total_significant": len(filtered),
         "total_studies": len(data),
     }
