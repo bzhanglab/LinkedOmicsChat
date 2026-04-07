@@ -265,17 +265,35 @@ export interface TargetSearchVisualization {
 
 export interface PredictiveResultsTableVisualization {
     type: "predictive_results_table"
+    /** "clinical_trial" renders production-style columns; default renders meta-analysis columns */
+    variant?: "clinical_trial"
+    /** "gene_set" uses /api/plots/gene_set/ endpoint; default uses /api/plots/gene/ */
+    plot_type?: "gene_set"
     id: string
     title: string
     row_label: string
+    /** Gene or gene-set name used to fetch per-row expression plots */
+    gene?: string
+    /** Optional column header overrides (used in default/meta-analysis variant) */
+    col_studies?: string
+    col_auroc?: string
+    col_fdr?: string
     rows?: Array<{
         rank: number
         label: string
-        studies?: number
+        studies?: number | string
         avg_auroc?: number
         meta_fdr?: number
         meta_fdr_sci?: string
+        p_value?: number | null
         direction?: string
+        /** Study series base ID (e.g. "GSE25066") — display only */
+        series?: string
+        /** Full study ID including treatment suffix (e.g. "GSE194040_Paclitaxel_AMG386.csv") — used for plot API */
+        study_id?: string
+        disease?: string
+        subtype?: string
+        response_evaluation?: string
     }>
     description?: string
 }

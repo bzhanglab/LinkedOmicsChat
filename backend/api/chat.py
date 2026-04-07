@@ -714,6 +714,178 @@ async def proxy_drugtarget_image(gene: str, plot_id: str):
     raise HTTPException(status_code=404, detail="Plot not found")
 
 
+@router.get("/trial-plot")
+async def get_trial_plot(gene: str = Query(...), study: str = Query(...), treatment: str = Query(default=""), plot_type: str = Query(default="gene")):
+    """Fetch clinical trial plot data from LinkedOmics Trials and generate matplotlib plots.
+
+    The API returns JSON with two pre-built plot structures:
+      - boxplot: {responder: [floats], nonresponder: [floats]}
+      - aucplot:  {x: [floats], y: [floats]}  (ROC curve)
+    """
+    import re, io, base64, httpx
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", gene) or not re.fullmatch(r"[A-Za-z0-9_\-\.]+", study):
+        raise HTTPException(status_code=400, detail="Invalid gene or study")
+
+    study_bare = study.removesuffix(".csv")
+    api_segment = "gene_set" if plot_type == "gene_set" else "gene"
+
+    async def _fetch_plot(client: httpx.AsyncClient, study_id_bare: str) -> dict | None:
+        """Fetch plot JSON for a given study ID stem. Returns None if empty or failed."""
+        # Encode the dot so the server treats the whole name as a path segment, not a file
+        url = f"https://trials.linkedomics.org/api/plots/{api_segment}/{gene}/{study_id_bare}%2Ecsv"
+        try:
+            r = await client.get(url, headers={"Accept": "application/json"})
+        except Exception:
+            return None
+        if r.status_code != 200:
+            return None
+        try:
+            d = r.json()
+        except Exception:
+            return None
+        # Treat response as empty if both plot arrays are empty
+        if not d.get("boxplot", {}).get("responder") and not d.get("aucplot", {}).get("x"):
+            return None
+        return d
+
+    async def _resolve_study_ids(client: httpx.AsyncClient, series: str) -> list[str]:
+        """Look up all study_ids sharing this series name, sorted by treatment similarity."""
+        try:
+            table_url = (
+                f"https://trials.linkedomics.org/api/table/gene_set/{gene}"
+                if plot_type == "gene_set"
+                else f"https://trials.linkedomics.org/api/table/gene/{gene}"
+            )
+            r = await client.get(table_url, timeout=15)
+            if r.status_code != 200:
+                return [series]
+            rows = r.json()
+            candidates = [
+                row for row in rows
+                if isinstance(row, dict)
+                and row.get("series") == series
+                and row.get("study_id")
+            ]
+            if not candidates:
+                return [series]
+            # Sort by treatment similarity: exact match wins, then token overlap.
+            # This correctly disambiguates e.g. "...trebananib" vs "...veliparib"
+            # even when they share a long common prefix.
+            if treatment:
+                treat_norm = treatment.lower().replace(",", " ")
+                treat_tokens = set(treat_norm.split())
+                def _score(row: dict) -> tuple[int, int]:
+                    row_treat = (row.get("treatment") or "").lower().replace(",", " ")
+                    exact = 1 if treat_norm == row_treat else 0
+                    overlap = len(treat_tokens & set(row_treat.split()))
+                    return (exact, overlap)
+                candidates.sort(key=_score, reverse=True)
+            return [row["study_id"].removesuffix(".csv") for row in candidates]
+        except Exception:
+            return [series]
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        data = await _fetch_plot(client, study_bare)
+
+        # If no data, look up all study_ids that share this series name and try each one.
+        # This handles both bare series names (e.g. "GSE20271") and full IDs that happen
+        # to return empty data.
+        if data is None:
+            study_ids = await _resolve_study_ids(client, study_bare)
+            for sid in study_ids:
+                if sid != study_bare:
+                    data = await _fetch_plot(client, sid)
+                    if data is not None:
+                        study_bare = sid
+                        break
+
+    if data is None:
+        raise HTTPException(status_code=404, detail="Plot data not available")
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    plots: list[dict] = []
+
+    def _png(fig) -> str:
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode()
+        plt.close(fig)
+        return b64
+
+    # ── Box plot: responder vs non-responder expression ───────────────────────
+    bp_data = data.get("boxplot", {})
+    responder = [float(v) for v in bp_data.get("responder", []) if v is not None]
+    nonresponder = [float(v) for v in bp_data.get("nonresponder", []) if v is not None]
+
+    if responder or nonresponder:
+        groups = []
+        tick_labels = []
+        colors = []
+        if responder:
+            groups.append(responder)
+            tick_labels.append(f"Responder\n(n={len(responder)})")
+            colors.append("#3b82f6")
+        if nonresponder:
+            groups.append(nonresponder)
+            tick_labels.append(f"Non-responder\n(n={len(nonresponder)})")
+            colors.append("#f97316")
+
+        fig, ax = plt.subplots(figsize=(5, 5))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        bp = ax.boxplot(groups, labels=tick_labels, patch_artist=True, widths=0.5,
+                        medianprops={"color": "black", "linewidth": 2},
+                        whiskerprops={"linewidth": 1.2},
+                        capprops={"linewidth": 1.2},
+                        flierprops={"marker": "o", "markersize": 3, "alpha": 0.4, "markeredgewidth": 0})
+        for patch, color in zip(bp["boxes"], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.6)
+        ax.set_title(f"{gene} expression\n{study_bare}", fontsize=10, pad=8)
+        ax.set_ylabel("Expression level", fontsize=9)
+        ax.tick_params(axis="x", labelsize=9)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        plots.append({"png_b64": _png(fig), "title": "Expression by Response"})
+
+    # ── ROC / AUC curve ───────────────────────────────────────────────────────
+    auc_data = data.get("aucplot", {})
+    x_vals = [float(v) for v in auc_data.get("x", []) if v is not None]
+    y_vals = [float(v) for v in auc_data.get("y", []) if v is not None]
+
+    if len(x_vals) > 1 and len(y_vals) > 1:
+        auc_score = float(np.trapz(y_vals, x_vals)) if len(x_vals) == len(y_vals) else None
+        auc_label = f"AUC = {abs(auc_score):.3f}" if auc_score is not None else ""
+        fig, ax = plt.subplots(figsize=(5, 5))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        ax.fill_between(x_vals, y_vals, alpha=0.12, color="#6366f1")
+        ax.plot(x_vals, y_vals, color="#6366f1", linewidth=2, label=auc_label)
+        ax.plot([0, 1], [0, 1], "--", color="#9ca3af", linewidth=1)
+        ax.set_title(f"ROC Curve\n{study_bare}", fontsize=10, pad=8)
+        ax.set_xlabel("1 − Specificity", fontsize=9)
+        ax.set_ylabel("Sensitivity", fontsize=9)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        if auc_label:
+            ax.legend(fontsize=9, frameon=False, loc="lower right")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        plots.append({"png_b64": _png(fig), "title": "ROC Curve"})
+
+    if not plots:
+        raise HTTPException(status_code=404, detail="No plottable data in response")
+
+    return {"plots": plots, "gene": gene, "study": study_bare, "resolved_study_id": study_bare}
+
+
 @router.get("/visualizations/{viz_id}/png")
 async def get_visualization_png(viz_id: str):
     """Serve a plot PNG directly (no auth — IDs are random UUIDs, used by shared session pages)."""
