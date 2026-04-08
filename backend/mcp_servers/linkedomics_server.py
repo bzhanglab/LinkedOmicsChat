@@ -915,9 +915,10 @@ def clinical_trial_information(protein: str) -> dict[str, Any]:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: top_resistant and top_sensitive study lists, each with fields:
-            series, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr.
-            Also includes total_significant and total_studies counts.
+        dict[str, Any]: Significant resistant and sensitive study lists, each with fields:
+            series, study_id, treatment, disease, subtype, clinical_trial_id, sample_size,
+            auroc, fdr, p_value, and response_evaluation. Also includes total_significant
+            and total_studies counts.
     """
     ret_val = {"status": "unavailable", "data": {}}
     req = requests.get(
@@ -954,8 +955,9 @@ def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
         proteins (list[str]): The gene symbols (e.g., ["ESR1", "TP53"]).
 
     Returns:
-        dict[str, Any]: Per-protein results, each with top_resistant and top_sensitive study lists
-            containing fields: series, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr.
+        dict[str, Any]: Per-protein results, each with resistant and sensitive study lists
+            containing fields: series, study_id, treatment, disease, subtype,
+            clinical_trial_id, sample_size, auroc, fdr, p_value, and response_evaluation.
     """
     results = {}
     for protein in proteins:
@@ -1012,7 +1014,8 @@ def gene_set_trial_information(gene_set: str) -> dict[str, Any]:
             Spaces are converted to underscores automatically.
 
     Returns:
-        dict: top_resistant and top_sensitive study lists with disease, treatment, AUROC, NCT ID.
+        dict: Significant resistant and sensitive study lists with disease, treatment, AUROC,
+            study metadata, and NCT ID.
     """
     gs = gene_set.strip().upper().replace(" ", "_")
     req = requests.get(f"https://trials.linkedomics.org/api/table/gene_set/{gs}", timeout=30)
@@ -1168,10 +1171,11 @@ def meta_analysis_predictive_genes(
         treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
             "combinations". Expands to all matching drug substrings automatically.
             Use instead of `drugs` when the user specifies a category rather than a specific drug.
-        top_n (int): Number of top genes to return (default 50).
+        top_n (int): Number of top genes to return (default 200).
 
     Returns:
-        dict: Ranked gene list with meta-analysis statistics (meta_fdr, avg_auc, datasets, direction).
+        dict: Ranked gene list with meta-analysis statistics
+            (meta_fdr, meta_fdr_signed, meta_fdr_sci, avg_auc, datasets, direction).
             "datasets" = number of studies where the gene was significant.
             "avg_auc" = average AUROC across studies (<0.5 = sensitive, >0.5 = resistant).
     """
@@ -1254,7 +1258,7 @@ def meta_analysis_predictive_gene_sets(
         treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
             "combinations". Expands to all matching drug substrings automatically.
             Use instead of `drugs` when the user specifies a category rather than a specific drug.
-        top_n (int): Number of top gene sets to return (default 20).
+        top_n (int): Number of top gene sets to return (default 200).
 
     Returns:
         dict: Ranked gene set list with meta-analysis statistics (meta_fdr, avg_auc, datasets, direction).
