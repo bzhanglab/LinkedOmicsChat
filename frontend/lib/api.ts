@@ -267,13 +267,15 @@ export interface PredictiveResultsTableVisualization {
     type: "predictive_results_table"
     /** "clinical_trial" renders production-style columns; default renders meta-analysis columns */
     variant?: "clinical_trial"
-    /** "gene_set" uses /api/plots/gene_set/ endpoint; default uses /api/plots/gene/ */
-    plot_type?: "gene_set"
+    /** "gene_set" uses /api/plots/gene_set/ endpoint; "treatment_gene"/"treatment_gene_set" use POST; default uses /api/plots/gene/ */
+    plot_type?: "gene_set" | "treatment_gene" | "treatment_gene_set"
     id: string
     title: string
     row_label: string
     /** Gene or gene-set name used to fetch per-row expression plots */
     gene?: string
+    /** Study list for treatment_gene plots — all studies in the meta-analysis */
+    study_list?: string[]
     /** Optional column header overrides (used in default/meta-analysis variant) */
     col_studies?: string
     col_auroc?: string
@@ -284,6 +286,7 @@ export interface PredictiveResultsTableVisualization {
         studies?: number | string
         avg_auroc?: number
         meta_fdr?: number
+        meta_fdr_signed?: number
         meta_fdr_sci?: string
         p_value?: number | null
         direction?: string

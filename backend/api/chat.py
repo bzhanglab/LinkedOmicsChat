@@ -714,15 +714,187 @@ async def proxy_drugtarget_image(gene: str, plot_id: str):
     raise HTTPException(status_code=404, detail="Plot not found")
 
 
-@router.get("/trial-plot")
-async def get_trial_plot(gene: str = Query(...), study: str = Query(...), treatment: str = Query(default=""), plot_type: str = Query(default="gene")):
+@router.api_route("/trial-plot", methods=["GET", "POST"])
+async def get_trial_plot(request: Request, gene: str = Query(...), study: str = Query(default=""), treatment: str = Query(default=""), plot_type: str = Query(default="gene")):
     """Fetch clinical trial plot data from LinkedOmics Trials and generate matplotlib plots.
 
-    The API returns JSON with two pre-built plot structures:
-      - boxplot: {responder: [floats], nonresponder: [floats]}
-      - aucplot:  {x: [floats], y: [floats]}  (ROC curve)
+    GET (gene / gene_set): fetches per-study boxplot + ROC curve.
+    POST (treatment_gene): body must contain {study_list: [...]}, generates grouped strip plot across studies.
     """
     import re, io, base64, httpx
+
+    # ── treatment_gene / treatment_gene_set: POST to /api/plots/treatment_gene[_set] ──
+    if plot_type in ("treatment_gene", "treatment_gene_set"):
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", gene):
+            raise HTTPException(status_code=400, detail="Invalid gene")
+        body = await request.json()
+        study_list: list[str] = body.get("study_list", [])
+        if not study_list:
+            raise HTTPException(status_code=400, detail="study_list required for treatment_gene plots")
+
+        endpoint = (
+            "https://trials.linkedomics.org/api/plots/treatment_gene_set"
+            if plot_type == "treatment_gene_set"
+            else "https://trials.linkedomics.org/api/plots/treatment_gene"
+        )
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                endpoint,
+                json={"analyte": gene.upper(), "study_list": study_list},
+            )
+        if r.status_code != 200:
+            raise HTTPException(status_code=404, detail="Plot data not available")
+        data = r.json()
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        from collections import defaultdict
+        from matplotlib.patches import Patch
+
+        violin_raw = data.get("violin_plot", {})
+        resp_x = violin_raw.get("responder", {}).get("x", [])
+        resp_y = [float(v) for v in violin_raw.get("responder", {}).get("y", []) if v is not None]
+        nonresp_x = violin_raw.get("nonresponder", {}).get("x", [])
+        nonresp_y = [float(v) for v in violin_raw.get("nonresponder", {}).get("y", []) if v is not None]
+
+        study_names = data.get("study_names", [])
+        auc_values = [float(v) for v in data.get("auc_values", []) if v is not None]
+        p_values   = [float(v) for v in data.get("p_values", []) if v is not None]
+
+        plots: list[dict] = []
+
+        def _png(fig) -> str:
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode()
+            plt.close(fig)
+            return b64
+
+        if not (resp_y or nonresp_y or auc_values):
+            pass  # falls through to the 404 below
+        else:
+            all_studies = study_names if study_names else sorted(set(resp_x + nonresp_x))
+            n = len(all_studies)
+            xlabels = [s.removesuffix(".csv") for s in all_studies]
+
+            resp_by  = defaultdict(list)
+            nresp_by = defaultdict(list)
+            for xi, yi in zip(resp_x, resp_y):
+                resp_by[xi].append(yi)
+            for xi, yi in zip(nonresp_x, nonresp_y):
+                nresp_by[xi].append(yi)
+
+            has_pvals = len(p_values) == n and n > 0
+            has_auc   = len(auc_values) == n and n > 0
+
+            # ── single figure: top row = bar charts, bottom row = violin ─────
+            fig_w = max(10, n * 1.8 + 2)
+            fig = plt.figure(figsize=(fig_w, 8), facecolor="white")
+            gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.4], hspace=0.38, wspace=0.28,
+                                  left=0.07, right=0.97, top=0.93, bottom=0.10)
+
+            ax_p   = fig.add_subplot(gs[0, 0])
+            ax_auc = fig.add_subplot(gs[0, 1])
+            ax_vio = fig.add_subplot(gs[1, :])
+
+            bar_w = max(0.3, min(0.65, 4.0 / max(n, 1)))
+            auc_colors = ["#f97316" if v > 0.5 else "#3b82f6" for v in auc_values]
+            p_colors   = ["#f97316" if v > 0 else "#3b82f6" for v in p_values]
+
+            # p-value bars
+            if has_pvals:
+                ax_p.bar(range(n), p_values, color=p_colors, alpha=0.8, width=bar_w)
+            ax_p.axhline(0, color="black", linewidth=0.8)
+            ax_p.set_xticks(range(n))
+            ax_p.set_xticklabels([], fontsize=7)
+            ax_p.set_xlabel("Studies", fontsize=9)
+            ax_p.set_ylabel("−log(|p|)×sign(p)", fontsize=9)
+            ax_p.set_title(f"P-value ranked based on {gene}", fontsize=10)
+            ax_p.yaxis.grid(True, linewidth=0.4, alpha=0.5)
+            ax_p.set_axisbelow(True)
+            for sp in ("top", "right"): ax_p.spines[sp].set_visible(False)
+
+            # AUROC bars
+            if has_auc:
+                ax_auc.bar(range(n), auc_values, color=auc_colors, alpha=0.8, width=bar_w)
+            ax_auc.axhline(0.5, color="black", linewidth=1)
+            ax_auc.set_xticks(range(n))
+            ax_auc.set_xticklabels([], fontsize=7)
+            ax_auc.set_xlabel("Studies", fontsize=9)
+            ax_auc.set_ylabel("AUROC", fontsize=9)
+            ax_auc.set_title(f"AUROC ranked based on {gene}", fontsize=10)
+            if has_auc:
+                margin = max(0.05, (max(auc_values) - min(auc_values)) * 0.2)
+                ax_auc.set_ylim(min(0.0, min(auc_values) - margin),
+                                max(1.0, max(auc_values) + margin))
+            ax_auc.yaxis.grid(True, linewidth=0.4, alpha=0.5)
+            ax_auc.set_axisbelow(True)
+            for sp in ("top", "right"): ax_auc.spines[sp].set_visible(False)
+
+            # violin + embedded boxplot
+            offset = 0.22
+            vio_w  = max(0.18, min(0.38, 1.6 / max(n, 1)))
+            box_w  = vio_w * 0.45
+
+            vio_kw = dict(showmedians=False, showextrema=False)
+            box_kw = dict(
+                patch_artist=True, manage_ticks=False, widths=box_w,
+                medianprops={"color": "black", "linewidth": 1.8},
+                whiskerprops={"linewidth": 1.0, "color": "black"},
+                capprops={"linewidth": 1.0, "color": "black"},
+                flierprops={"marker": "o", "markersize": 2, "alpha": 0.4,
+                            "markeredgewidth": 0, "markerfacecolor": "gray"},
+                boxprops={"linewidth": 0.8},
+            )
+
+            for sn, pos in zip(all_studies, [i - offset for i in range(n)]):
+                vals = resp_by.get(sn, [])
+                if len(vals) >= 3:
+                    parts = ax_vio.violinplot([vals], positions=[pos], widths=vio_w * 2, **vio_kw)
+                    for pc in parts["bodies"]:
+                        pc.set_facecolor("#3b82f6"); pc.set_alpha(0.55)
+                if vals:
+                    bp = ax_vio.boxplot([vals or [np.nan]], positions=[pos], **box_kw)
+                    for patch in bp["boxes"]:
+                        patch.set_facecolor("white"); patch.set_alpha(0.6)
+
+            for sn, pos in zip(all_studies, [i + offset for i in range(n)]):
+                vals = nresp_by.get(sn, [])
+                if len(vals) >= 3:
+                    parts = ax_vio.violinplot([vals], positions=[pos], widths=vio_w * 2, **vio_kw)
+                    for pc in parts["bodies"]:
+                        pc.set_facecolor("#f97316"); pc.set_alpha(0.55)
+                if vals:
+                    bp = ax_vio.boxplot([vals or [np.nan]], positions=[pos], **box_kw)
+                    for patch in bp["boxes"]:
+                        patch.set_facecolor("white"); patch.set_alpha(0.6)
+
+            ax_vio.set_xticks(range(n))
+            ax_vio.set_xticklabels(xlabels, fontsize=max(5, min(8, 60 // max(n, 1))),
+                                   rotation=0 if n <= 6 else 30, ha="center" if n <= 6 else "right")
+            ax_vio.set_xlim(-0.65, n - 0.35)
+            ax_vio.set_ylabel("Gene Expression", fontsize=9)
+            ax_vio.yaxis.grid(True, linewidth=0.4, alpha=0.5)
+            ax_vio.set_axisbelow(True)
+            for sp in ("top", "right"): ax_vio.spines[sp].set_visible(False)
+
+            legend_handles = [
+                Patch(facecolor="#3b82f6", alpha=0.7, label="Responder"),
+                Patch(facecolor="#f97316", alpha=0.7, label="Non-responder"),
+            ]
+            ax_vio.legend(handles=legend_handles, fontsize=9, frameon=False, loc="upper right")
+
+            plots.append({"png_b64": _png(fig), "title": f"{gene} — Expression & Statistics"})
+
+        if not plots:
+            raise HTTPException(status_code=404, detail="No plottable data in response")
+        return {"plots": plots, "gene": gene, "study": gene}
+
+    # ── gene / gene_set (existing GET path) ──────────────────────────────────
     if not re.fullmatch(r"[A-Za-z0-9_\-]+", gene) or not re.fullmatch(r"[A-Za-z0-9_\-\.]+", study):
         raise HTTPException(status_code=400, detail="Invalid gene or study")
 
