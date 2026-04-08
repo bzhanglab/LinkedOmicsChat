@@ -858,7 +858,7 @@ def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Op
         colors   = [colors[i]   for i in order]
         fdrs     = [fdrs[i]     for i in order]
 
-        fig_h = max(3.5, len(labels) * 0.4 + 1.2)
+        fig_h = max(3.5, len(labels) * 0.27 + 1.2)
         fig, ax = plt.subplots(figsize=(9, fig_h))
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
@@ -869,7 +869,7 @@ def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Op
         # Alpha dim for FDR > 0.05
         alphas = [1.0 if abs(float(f)) <= 0.05 else 0.45 for f in fdrs]
         for y, val, col, alpha in zip(y_pos, centered, colors, alphas):
-            ax.barh(y, val, height=0.65, color=col, edgecolor="none", alpha=alpha)
+            ax.barh(y, val, height=0.75, color=col, edgecolor="none", alpha=alpha)
 
         ax.axvline(0, color="#444444", linewidth=1.0)
 
