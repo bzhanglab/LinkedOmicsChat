@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
-import { ChevronDown, ChevronUp, ChevronsUpDown, X, Download } from "lucide-react"
+import { ChevronDown, ChevronUp, ChevronsUpDown, X, Download, Maximize2, Minimize2 } from "lucide-react"
 import type { PredictiveResultsTableVisualization } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
@@ -10,7 +10,7 @@ import { getAuthToken } from "@/lib/auth"
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 const PAGE_SIZE = 15
 
-type SortKey = "rank" | "label" | "studies" | "avg_auroc" | "meta_fdr" | "direction" | "series" | "disease" | "subtype" | "p_value" | "response_evaluation"
+type SortKey = "rank" | "label" | "studies" | "avg_auroc" | "meta_fdr" | "meta_fdr_signed" | "direction" | "series" | "disease" | "subtype" | "p_value" | "response_evaluation"
 type SortDir = "asc" | "desc"
 
 type Row = NonNullable<PredictiveResultsTableVisualization["rows"]>[number]
@@ -42,127 +42,174 @@ interface PlotData {
 
 interface PlotModalProps {
     gene: string
-    plotType?: "gene_set"
+    plotType?: "gene_set" | "treatment_gene" | "treatment_gene_set"
+    studyList?: string[]
     row: Row
     onClose: () => void
 }
 
-function PlotModal({ gene, plotType, row, onClose }: PlotModalProps) {
+function PlotModal({ gene, plotType, studyList, row, onClose }: PlotModalProps) {
     const [plots, setPlots] = useState<PlotData[] | null>(null)
     const [resolvedStudyId, setResolvedStudyId] = useState<string>("")
     const [error, setError] = useState(false)
+    const [fitToWindow, setFitToWindow] = useState(false)
 
     const study = row.study_id || row.series || ""
+    const manyStudies = (studyList?.length ?? 0) > 10
 
     useEffect(() => {
-        if (!study) { setError(true); return }
         const token = getAuthToken()
+        const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+
+        if (plotType === "treatment_gene" || plotType === "treatment_gene_set") {
+            if (!studyList?.length) { setError(true); return }
+            const url = `${API_URL}/api/v1/chat/trial-plot?gene=${encodeURIComponent(gene)}&plot_type=${encodeURIComponent(plotType)}`
+            fetch(url, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({ study_list: studyList }),
+            })
+                .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+                .then(data => {
+                    setPlots(data.plots ?? [])
+                    setResolvedStudyId(gene)
+                })
+                .catch(() => setError(true))
+            return
+        }
+
+        if (!study) { setError(true); return }
         const treatmentParam = row.label ? `&treatment=${encodeURIComponent(row.label)}` : ""
         const plotTypeParam = plotType ? `&plot_type=${encodeURIComponent(plotType)}` : ""
         const url = `${API_URL}/api/v1/chat/trial-plot?gene=${encodeURIComponent(gene)}&study=${encodeURIComponent(study)}${treatmentParam}${plotTypeParam}`
-        fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+        fetch(url, { headers })
             .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
             .then(data => {
                 setPlots(data.plots ?? [])
                 setResolvedStudyId(data.resolved_study_id ?? study)
             })
             .catch(() => setError(true))
-    }, [gene, study])
+    }, [gene, study, plotType, studyList])
 
     const diseaseStr = [row.disease, row.subtype].filter(Boolean).join(" · ")
 
     return createPortal(
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-            onClick={onClose}
-        >
+        <>
+            {/* Main modal */}
             <div
-                className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col"
-                onClick={e => e.stopPropagation()}
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+                onClick={onClose}
             >
-                {/* Header */}
-                <div className="flex items-start justify-between px-6 py-4 border-b border-border/60 shrink-0">
-                    <div className="min-w-0 pr-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-base text-foreground">{gene}</span>
-                            <span className="text-muted-foreground">·</span>
-                            <span className="font-medium text-sm text-foreground/80">{resolvedStudyId || study}</span>
+                <div
+                    className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full flex flex-col"
+                    style={{ width: "min(88vw, 1200px)", maxHeight: "85vh" }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {/* Header */}
+                    <div className="flex items-start justify-between px-6 py-4 border-b border-border/60 shrink-0">
+                        <div className="min-w-0 pr-4">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-base text-foreground">{gene}</span>
+                                <span className="text-muted-foreground">·</span>
+                                <span className="font-medium text-sm text-foreground/80">
+                                    {(plotType === "treatment_gene" || plotType === "treatment_gene_set")
+                                        ? `${studyList?.length ?? 0} studies`
+                                        : (resolvedStudyId || study)}
+                                </span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                                {row.label && (
+                                    <span className="text-xs text-muted-foreground">{row.label}</span>
+                                )}
+                                {diseaseStr && (
+                                    <span className="text-xs text-muted-foreground/70">{diseaseStr}</span>
+                                )}
+                            </div>
                         </div>
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                            {row.label && (
-                                <span className="text-xs text-muted-foreground">{row.label}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                            {plots && plots.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setFitToWindow(v => !v)}
+                                    className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground text-xs"
+                                    title={fitToWindow ? "Show actual size" : "Fit to window"}
+                                >
+                                    {fitToWindow
+                                        ? <><Maximize2 className="w-3.5 h-3.5" /><span>Actual size</span></>
+                                        : <><Minimize2 className="w-3.5 h-3.5" /><span>Fit to window</span></>}
+                                </button>
                             )}
-                            {diseaseStr && (
-                                <span className="text-xs text-muted-foreground/70">{diseaseStr}</span>
-                            )}
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="shrink-0 p-1.5 rounded-lg hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
-                    >
-                        <X className="w-4 h-4" />
-                    </button>
-                </div>
 
-                {/* Body */}
-                <div className="overflow-y-auto p-6">
-                    {!plots && !error && (
-                        <div className="grid grid-cols-2 gap-4">
-                            {[0, 1].map(i => (
-                                <div key={i} className="rounded-xl bg-muted/25 animate-pulse aspect-square" />
-                            ))}
-                        </div>
-                    )}
+                    {/* Body */}
+                    <div className="overflow-y-auto p-6 flex flex-col gap-6">
+                        {!plots && !error && (
+                            <div className="flex flex-col items-center gap-4 py-10">
+                                <svg className="animate-spin w-8 h-8 text-teal-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                                </svg>
+                                <span className="text-sm text-muted-foreground">Loading plots…</span>
+                            </div>
+                        )}
 
-                    {error && (
-                        <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-                            <span className="text-sm">Plot data not available for this study.</span>
-                        </div>
-                    )}
+                        {error && (
+                            <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+                                <span className="text-sm">Plot data not available for this study.</span>
+                            </div>
+                        )}
 
-                    {plots && plots.length === 0 && (
-                        <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-                            <span className="text-sm">No plottable data returned for this study.</span>
-                        </div>
-                    )}
+                        {plots && plots.length === 0 && (
+                            <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+                                <span className="text-sm">No plottable data returned for this study.</span>
+                            </div>
+                        )}
 
-                    {plots && plots.length > 0 && (
-                        <div className={plots.length >= 2 ? "grid grid-cols-2 gap-4" : "flex justify-center"}>
-                            {plots.map((p, i) => {
-                                const filename = `${gene}_${study}_${p.title?.replace(/\s+/g, "_") ?? i}.png`
-                                return (
-                                    <div key={i} className="flex flex-col gap-2">
-                                        <div className="flex items-center justify-between px-0.5">
-                                            {p.title && (
-                                                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                                                    {p.title}
-                                                </div>
-                                            )}
-                                            <a
-                                                href={`data:image/png;base64,${p.png_b64}`}
-                                                download={filename}
-                                                className="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                                title="Download PNG"
-                                            >
-                                                <Download className="w-3.5 h-3.5" />
-                                            </a>
-                                        </div>
+                        {plots && plots.map((p, i) => {
+                            const filename = `${gene}_${study}_${p.title?.replace(/\s+/g, "_") ?? i}.png`
+                            return (
+                                <div key={i} className="flex flex-col gap-2">
+                                    <div className="flex items-center gap-2 px-0.5">
+                                        {p.title && (
+                                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex-1">
+                                                {p.title}
+                                            </div>
+                                        )}
+                                        <a
+                                            href={`data:image/png;base64,${p.png_b64}`}
+                                            download={filename}
+                                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                            title="Download PNG"
+                                        >
+                                            <Download className="w-3.5 h-3.5" />
+                                        </a>
+                                    </div>
+                                    <div className={`rounded-xl border border-border/50 shadow-sm bg-white dark:bg-gray-950 ${fitToWindow ? "flex items-center justify-center overflow-hidden" : "overflow-x-auto"}`}>
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
                                             src={`data:image/png;base64,${p.png_b64}`}
                                             alt={p.title}
-                                            className="rounded-xl border border-border/50 w-full shadow-sm"
+                                            style={fitToWindow
+                                                ? { display: "block", maxWidth: "100%", maxHeight: "calc(85vh - 100px)", width: "auto", height: "auto" }
+                                                : { display: "block", maxWidth: "none", height: "auto" }}
                                         />
                                     </div>
-                                )
-                            })}
-                        </div>
-                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
                 </div>
             </div>
-        </div>,
+
+        </>,
         document.body
     )
 }
@@ -200,11 +247,16 @@ export function PredictiveResultsTable({ visualization }: Props) {
     const rows = resolvedViz.rows ?? []
 
     const sortedRows = useMemo(() => {
-        const numericKeys = new Set<SortKey>(["rank", "studies", "avg_auroc", "meta_fdr", "p_value"])
+        const numericKeys = new Set<SortKey>(["rank", "studies", "avg_auroc", "meta_fdr", "meta_fdr_signed", "p_value"])
         return [...rows].sort((a, b) => {
             if (numericKeys.has(sortKey)) {
-                const av = Number((a as Record<string, unknown>)[sortKey] ?? 0)
-                const bv = Number((b as Record<string, unknown>)[sortKey] ?? 0)
+                let av = Number((a as Record<string, unknown>)[sortKey] ?? 0)
+                let bv = Number((b as Record<string, unknown>)[sortKey] ?? 0)
+                // meta_fdr sorts by absolute value (smallest = most significant first)
+                if (sortKey === "meta_fdr") {
+                    av = Math.abs(Number((a as Record<string, unknown>).meta_fdr_signed ?? av))
+                    bv = Math.abs(Number((b as Record<string, unknown>).meta_fdr_signed ?? bv))
+                }
                 return sortDir === "asc" ? av - bv : bv - av
             }
             const av = String((a as Record<string, unknown>)[sortKey] ?? "")
@@ -237,7 +289,8 @@ export function PredictiveResultsTable({ visualization }: Props) {
     const thCls = "px-3 py-2 text-left font-semibold text-xs text-foreground whitespace-nowrap select-none"
 
     const gene = resolvedViz.gene
-    const isClickable = !!gene
+    const isTreatmentGene = resolvedViz.plot_type === "treatment_gene" || resolvedViz.plot_type === "treatment_gene_set"
+    const isClickable = !!gene || isTreatmentGene
     const isClinicalTrial = resolvedViz.variant === "clinical_trial"
     const colStudies = resolvedViz.col_studies ?? "Studies"
     const colAuroc = resolvedViz.col_auroc ?? "Avg AUROC"
@@ -382,10 +435,11 @@ export function PredictiveResultsTable({ visualization }: Props) {
                 )}
             </div>
 
-            {selectedRow && gene && (
+            {selectedRow && (gene || isTreatmentGene) && (
                 <PlotModal
-                    gene={gene}
+                    gene={isTreatmentGene ? (selectedRow.label || gene || "") : (gene || "")}
                     plotType={resolvedViz.plot_type}
+                    studyList={resolvedViz.study_list}
                     row={selectedRow}
                     onClose={() => setSelectedRow(null)}
                 />
