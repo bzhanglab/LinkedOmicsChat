@@ -455,7 +455,7 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
                             >
                                 <div
                                     className="relative bg-white dark:bg-gray-950 rounded-lg shadow-2xl"
-                                    style={{ width: "90vw", height: "90vh" }}
+                                    style={{ width: "min(88vw, 1200px)", height: "85vh" }}
                                     onClick={e => e.stopPropagation()}
                                 >
                                     <button

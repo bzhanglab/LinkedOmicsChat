@@ -1,7 +1,7 @@
 "use client"
 import { useState, useCallback, useEffect, Fragment } from "react"
 import { createPortal } from "react-dom"
-import { X, ChevronDown, ChevronRight } from "lucide-react"
+import { X, ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react"
 import type { DrugTargetVisualization, DrugDetail } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
@@ -102,7 +102,8 @@ export function DrugTargetGrid({ visualization }: Props) {
         })
     }, [plot_map, table_map])
 
-    const closeModal = useCallback(() => setSelected(null), [])
+    const closeModal = useCallback(() => { setSelected(null); setModalFit(false) }, [])
+    const [modalFit, setModalFit] = useState(false)
 
     useEffect(() => {
         if (!selected) return
@@ -407,25 +408,36 @@ export function DrugTargetGrid({ visualization }: Props) {
                 >
                     <div
                         className="relative bg-white dark:bg-gray-950 rounded-lg shadow-2xl flex flex-col"
-                        style={{ maxWidth: "92vw", maxHeight: "92vh" }}
+                        style={{ width: "min(88vw, 1200px)", maxHeight: "85vh" }}
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30 rounded-t-lg flex-shrink-0">
                             <span className="text-sm font-medium flex-1 truncate">
                                 {gene} — {selected.label} — {selected.cohort}
                             </span>
+                            {selected.plot_ids && (
+                                <button
+                                    onClick={() => setModalFit(v => !v)}
+                                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-accent text-muted-foreground text-xs"
+                                    title={modalFit ? "Show actual size" : "Fit to window"}
+                                >
+                                    {modalFit ? <><Maximize2 className="h-3 w-3" /><span>Actual size</span></> : <><Minimize2 className="h-3 w-3" /><span>Fit to window</span></>}
+                                </button>
+                            )}
                             <button onClick={closeModal} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Close">
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
                         {selected.plot_ids && (
-                            <div className="overflow-auto p-4 flex flex-wrap gap-4 justify-center">
+                            <div className={`p-4 flex flex-wrap gap-4 justify-center ${modalFit ? "overflow-hidden items-center" : "overflow-auto"}`}>
                                 {selected.plot_ids.map((pid, i) => (
                                     <img
                                         key={i}
                                         src={`${API_URL}/api/v1/chat/drugtargets/${gene}/${pid}`}
                                         alt={pid.replace(/_/g, " ")}
-                                        className="max-h-[75vh] w-auto"
+                                        style={modalFit
+                                            ? { maxWidth: "100%", maxHeight: "calc(85vh - 56px)", width: "auto", height: "auto" }
+                                            : { maxWidth: "none", height: "auto" }}
                                         onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
                                     />
                                 ))}

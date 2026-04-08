@@ -1,7 +1,7 @@
 "use client"
 import { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { Download, Table, Maximize2, X } from "lucide-react"
+import { Download, Table, Maximize2, Minimize2, X } from "lucide-react"
 import type { AnyVisualization, StaticVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
 
@@ -89,6 +89,7 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
     const [fetchError, setFetchError] = useState(false)
     const [showAtRisk, setShowAtRisk] = useState(false)
     const [lightboxOpen, setLightboxOpen] = useState(false)
+    const [lightboxFit, setLightboxFit] = useState(false)
 
     const openLightbox  = useCallback(() => setLightboxOpen(true), [])
     const closeLightbox = useCallback(() => setLightboxOpen(false), [])
@@ -177,20 +178,32 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
                             >
                                 <div
                                     className="relative rounded-lg bg-white dark:bg-gray-950 shadow-2xl flex flex-col"
-                                    style={{ maxWidth: "95vw", maxHeight: "95vh" }}
+                                    style={{ width: "min(88vw, 1200px)", maxHeight: "85vh" }}
                                     onClick={e => e.stopPropagation()}
                                 >
                                     {/* Lightbox toolbar */}
                                     <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/30 rounded-t-lg flex-shrink-0">
                                         <span className="text-xs text-muted-foreground flex-1 truncate px-1">{resolvedViz.title}</span>
+                                        <button
+                                            onClick={() => setLightboxFit(v => !v)}
+                                            className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-accent text-muted-foreground text-xs"
+                                            title={lightboxFit ? "Show actual size" : "Fit to window"}
+                                        >
+                                            {lightboxFit ? <><Maximize2 className="h-3 w-3" /><span>Actual size</span></> : <><Minimize2 className="h-3 w-3" /><span>Fit to window</span></>}
+                                        </button>
                                         <button onClick={closeLightbox} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Close"><X className="h-3.5 w-3.5" /></button>
                                     </div>
                                     {/* Image area */}
-                                    <div className="overflow-auto p-3" style={{ maxHeight: "calc(95vh - 36px)", maxWidth: "95vw" }}>
+                                    <div
+                                        className={`p-3 ${lightboxFit ? "flex items-center justify-center overflow-hidden" : "overflow-auto"}`}
+                                        style={{ maxHeight: "calc(85vh - 36px)", maxWidth: "min(88vw, 1200px)" }}
+                                    >
                                         <img
                                             src={`data:image/png;base64,${resolvedViz.png_b64}`}
                                             alt={resolvedViz.title}
-                                            style={{ display: "block", height: "auto", maxWidth: "100%" }}
+                                            style={lightboxFit
+                                                ? { display: "block", maxWidth: "100%", maxHeight: "calc(85vh - 48px)", width: "auto", height: "auto" }
+                                                : { display: "block", height: "auto", maxWidth: "none" }}
                                             draggable={false}
                                         />
                                     </div>
