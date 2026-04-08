@@ -827,9 +827,10 @@ def _generate_trials_auroc_chart(data: dict, label: str) -> Optional[dict]:
 
 
 def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Optional[dict]:
-    """Generate a horizontal AUROC bar chart for meta-analysis results (genes or gene sets).
+    """Generate a bidirectional horizontal bar chart for meta-analysis results.
 
-    Items are ranked by |avg_auc - 0.5|. Teal = sensitive (AUROC<0.5), orange = resistant (AUROC>0.5).
+    Bars extend left (negative) for sensitive genes (AUROC < 0.5) and right (positive)
+    for resistant genes (AUROC > 0.5), centered at 0. Value plotted is (avg_auc - 0.5).
     """
     try:
         import io, base64
@@ -837,21 +838,25 @@ def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Op
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import numpy as np
+        from matplotlib.patches import Patch
 
         if not items:
             return None
 
-        # Show top 20 for readability
-        items_plot = items[:20]
-        labels = [str(g.get(label_key, ""))[:40] for g in items_plot]
-        aurocs = [float(g.get("avg_auc", 0.5)) for g in items_plot]
+        labels = [str(g.get(label_key, ""))[:40] for g in items]
+        aurocs = [float(g.get("avg_auc", 0.5)) for g in items]
+        # Center at 0: sensitive → negative, resistant → positive
+        centered = [a - 0.5 for a in aurocs]
         colors = ["#3b82f6" if a < 0.5 else "#f97316" for a in aurocs]
+        fdrs = [g.get("meta_fdr", 1.0) for g in items]
 
-        # Sort by auroc ascending (sensitive at top)
-        order = sorted(range(len(aurocs)), key=lambda i: aurocs[i])
-        labels = [labels[i] for i in order]
-        aurocs = [aurocs[i] for i in order]
-        colors = [colors[i] for i in order]
+        # Sort: most sensitive (most negative) at bottom, most resistant at top
+        order = sorted(range(len(centered)), key=lambda i: centered[i])
+        labels   = [labels[i]   for i in order]
+        centered = [centered[i] for i in order]
+        aurocs   = [aurocs[i]   for i in order]
+        colors   = [colors[i]   for i in order]
+        fdrs     = [fdrs[i]     for i in order]
 
         fig_h = max(3.5, len(labels) * 0.4 + 1.2)
         fig, ax = plt.subplots(figsize=(9, fig_h))
@@ -861,24 +866,35 @@ def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Op
         ax.spines["right"].set_visible(False)
 
         y_pos = np.arange(len(labels))
-        bars = ax.barh(y_pos, aurocs, height=0.65, color=colors, edgecolor="none")
-        ax.axvline(0.5, color="#666666", linewidth=1.0, linestyle="--")
+        # Alpha dim for FDR > 0.05
+        alphas = [1.0 if abs(float(f)) <= 0.05 else 0.45 for f in fdrs]
+        for y, val, col, alpha in zip(y_pos, centered, colors, alphas):
+            ax.barh(y, val, height=0.65, color=col, edgecolor="none", alpha=alpha)
 
-        for bar, val in zip(bars, aurocs):
-            ax.text(bar.get_width() + 0.008, bar.get_y() + bar.get_height() / 2,
-                    f"{val:.3f}", va="center", ha="left", fontsize=7.5, color="#333333")
+        ax.axvline(0, color="#444444", linewidth=1.0)
+
+        # Value labels: right of bar for resistant, left for sensitive
+        for y, val, auc in zip(y_pos, centered, aurocs):
+            offset = 0.006 if val >= 0 else -0.006
+            ha = "left" if val >= 0 else "right"
+            ax.text(val + offset, y, f"{auc:.3f}", va="center", ha=ha,
+                    fontsize=7.5, color="#333333")
 
         ax.set_yticks(y_pos)
         ax.set_yticklabels(labels, fontsize=8)
-        ax.set_xlim(0.0, 1.15)
+        max_ext = max(abs(v) for v in centered) if centered else 0.5
+        ax.set_xlim(-(max_ext + 0.12), max_ext + 0.12)
+        # x-axis ticks: show as AUROC values (add 0.5 back)
+        tick_vals = np.linspace(-(max_ext + 0.1), max_ext + 0.1, 7)
+        ax.set_xticks(tick_vals)
+        ax.set_xticklabels([f"{v + 0.5:.2f}" for v in tick_vals], fontsize=8)
         ax.set_xlabel("Avg AUROC", fontsize=9)
         ax.set_title(title, fontsize=11, fontweight="bold", pad=8)
-        ax.tick_params(axis="x", labelsize=8)
 
-        from matplotlib.patches import Patch
         ax.legend(handles=[
-            Patch(facecolor="#3b82f6", label="Sensitive (AUROC < 0.5)"),
-            Patch(facecolor="#f97316", label="Resistant (AUROC > 0.5)"),
+            Patch(facecolor="#3b82f6", alpha=1.0, label="Sensitive (AUROC < 0.5)"),
+            Patch(facecolor="#f97316", alpha=1.0, label="Resistant (AUROC > 0.5)"),
+            Patch(facecolor="#aaaaaa", alpha=0.45, label="FDR > 0.05"),
         ], loc="lower right", fontsize=8, frameon=False)
 
         fig.tight_layout()
@@ -3475,7 +3491,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     genes = d.get("top_genes", [])
                     if genes:
                         chart = _generate_meta_analysis_chart(
-                            genes, "gene",
+                            genes[:25], "gene",
                             f"Top Predictive Genes — {_filter_label(filters)}"
                         )
                         if chart:
@@ -3485,9 +3501,11 @@ Please provide a clear, informative response about this gene. Include the key de
                         table_viz_id = _uuid.uuid4().hex
                         _visualizations.append({
                             "type": "predictive_results_table",
+                            "plot_type": "treatment_gene",
                             "id": table_viz_id,
                             "title": "Top Predictive Genes",
                             "row_label": "Gene",
+                            "study_list": d.get("study_list", []),
                             "description": f"Studies analyzed: {d.get('study_count',0)} | Filters: {_filter_label(filters)}",
                             "rows": [
                                 {
@@ -3496,6 +3514,7 @@ Please provide a clear, informative response about this gene. Include the key de
                                     "studies": g.get("datasets", ""),
                                     "avg_auroc": g.get("avg_auc", ""),
                                     "meta_fdr": g.get("meta_fdr", ""),
+                                    "meta_fdr_signed": g.get("meta_fdr_signed", g.get("meta_fdr", "")),
                                     "meta_fdr_sci": g.get("meta_fdr_sci", ""),
                                     "direction": g.get("direction", ""),
                                 }
@@ -3530,7 +3549,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     gene_sets = d.get("top_gene_sets", [])
                     if gene_sets:
                         chart = _generate_meta_analysis_chart(
-                            gene_sets, "gene_set",
+                            gene_sets[:25], "gene_set",
                             f"Top Predictive Pathways — {_filter_label(filters)}"
                         )
                         if chart:
@@ -3540,9 +3559,11 @@ Please provide a clear, informative response about this gene. Include the key de
                         table_viz_id = _uuid.uuid4().hex
                         _visualizations.append({
                             "type": "predictive_results_table",
+                            "plot_type": "treatment_gene_set",
                             "id": table_viz_id,
                             "title": "Top Predictive Pathways",
                             "row_label": "Pathway / Gene Set",
+                            "study_list": d.get("study_list", []),
                             "description": f"Studies analyzed: {d.get('study_count',0)} | Filters: {_filter_label(filters)}",
                             "rows": [
                                 {
@@ -3551,6 +3572,7 @@ Please provide a clear, informative response about this gene. Include the key de
                                     "studies": g.get("datasets", ""),
                                     "avg_auroc": g.get("avg_auc", ""),
                                     "meta_fdr": g.get("meta_fdr", ""),
+                                    "meta_fdr_signed": g.get("meta_fdr_signed", g.get("meta_fdr", "")),
                                     "meta_fdr_sci": g.get("meta_fdr_sci", ""),
                                     "direction": g.get("direction", ""),
                                 }

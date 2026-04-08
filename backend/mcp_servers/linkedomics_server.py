@@ -1138,7 +1138,7 @@ def meta_analysis_predictive_genes(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
-    top_n: int = 50,
+    top_n: int = 200,
 ) -> dict[str, Any]:
     """Run a meta-analysis to find which genes best predict drug response across clinical studies.
 
@@ -1194,17 +1194,17 @@ def meta_analysis_predictive_genes(
         return {"status": "unavailable", "data": {}}
     rows = mr.json()
 
-    rows_sorted = sorted(
-        rows, key=lambda r: float(r.get("fdr", 1)), reverse=False
-    )[:top_n]
+    rows_sorted = sorted(rows, key=lambda r: abs(float(r.get("fdr", 1))))[:top_n]
     genes = []
     for r in rows_sorted:
         avg_auc = float(r.get("avg_auc", 0.5))
+        fdr_signed = float(r.get("fdr", 1))
         genes.append({
             "gene": r.get("analyte", ""),
             "datasets": r.get("datasets", 0),
-            "meta_fdr": round(abs(float(r.get("fdr", 1))), 3),
-            "meta_fdr_sci": f"{abs(float(r.get('fdr', 1))):.3e}",
+            "meta_fdr": round(abs(fdr_signed), 6),
+            "meta_fdr_signed": round(fdr_signed, 6),
+            "meta_fdr_sci": f"{fdr_signed:.3e}",
             "avg_auc": round(avg_auc, 3),
             "direction": "sensitive" if avg_auc < 0.5 else "resistant",
         })
@@ -1224,7 +1224,7 @@ def meta_analysis_predictive_gene_sets(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
-    top_n: int = 20,
+    top_n: int = 200,
 ) -> dict[str, Any]:
     """Run a meta-analysis to find which gene sets / pathways best predict drug response across clinical studies.
 
@@ -1281,7 +1281,7 @@ def meta_analysis_predictive_gene_sets(
     rows = mr.json()
 
     rows_sorted = sorted(
-        rows, key=lambda r: float(r.get("fdr", 1)), reverse=False
+        rows, key=lambda r: abs(float(r.get("fdr", 1)))
     )[:top_n]
     gene_sets = []
     for r in rows_sorted:
