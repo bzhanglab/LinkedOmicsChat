@@ -2104,17 +2104,14 @@ If the user is asking to:
 
 Structure your response as:
 
-**Takeaway**
 (1-2 sentences directly answering the user's question with a clear recommendation or conclusion)
 
-**Why It Matters**
 - [2-4 bullet points highlighting only the most decision-relevant findings]
 
-**Interpretation**
 (1-2 sentences connecting the findings and explaining the biological/clinical implications)
 
 Rules:
-- Output ONLY the markdown text above — no extra sections.
+- Output ONLY the markdown text above — no section headers, no extra sections.
 - DO NOT use JSON, code blocks (```), or any preamble/metadata.
 - DO NOT add follow-up questions, suggested next queries, or "you might also want to ask" sections.
 - Use ONLY the provided tool results.
