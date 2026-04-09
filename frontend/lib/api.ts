@@ -55,6 +55,7 @@ const FIXED_STATUS_LABELS: Record<string, string> = {
     "Analyzing tool results...":      "Interpreting results...",
     "Drafting final analysis...":     "Writing response...",
     "Formatting response...":         "Finalizing...",
+    "Generating summary...":          "Summarizing findings...",
 }
 
 export function friendlyStatus(raw: string): string {
@@ -563,7 +564,8 @@ export const chatAPI = {
     async streamMessage(
         request: ChatRequest,
         onStatus: (status: string) => void,
-        onTextDelta?: (delta: string) => void
+        onTextDelta?: (delta: string) => void,
+        onSummaryDelta?: (delta: string) => void
     ): Promise<ChatResponse> {
         const token = getAuthToken()
         const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
@@ -612,6 +614,8 @@ export const chatAPI = {
                                 onStatus(friendlyStatus(data.content))
                             } else if (data.type === "text_delta") {
                                 onTextDelta?.(data.content as string)
+                            } else if (data.type === "summary_delta") {
+                                onSummaryDelta?.(data.content as string)
                             } else if (data.type === "final") {
                                 finalResponse = data.content as ChatResponse
                             }

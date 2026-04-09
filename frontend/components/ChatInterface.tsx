@@ -825,6 +825,15 @@ const MessagesPane = memo(function MessagesPane({
                                                     </span>
                                                 </div>
                                             )}
+                                            {/* Summary shown at the top before the detailed response */}
+                                            {message.role === "assistant" && message.summary && message.summary.trim().length > 0 && message.summary !== message.content && (
+                                                <div className="mb-4 pb-4 border-b border-border">
+                                                    <div className="rounded-md border border-border bg-muted/40 p-3">
+                                                        <AssistantMarkdown content={message.summary} />
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             {message.role === "assistant" ? (
                                                 <LazyMessageContent estimatedHeight={Math.min(800, Math.max(80, Math.ceil((message.content || "").length / 80) * 22))}>
                                                 <div className="space-y-3">
@@ -1102,17 +1111,6 @@ const MessagesPane = memo(function MessagesPane({
                                                 </div>
                                             )}
 
-                                            {/* Summary moved to the end as a takeaway */}
-                                            {message.role === "assistant" && message.summary && message.summary.trim().length > 0 && message.summary !== message.content && (
-                                                <div className="mt-4 pt-4 border-t border-border">
-                                                    <div className="rounded-md border border-border bg-muted/40 p-3">
-                                                        <div className="text-xs font-semibold text-muted-foreground mb-2">
-                                                            Summary
-                                                        </div>
-                                                        <AssistantMarkdown content={message.summary} />
-                                                    </div>
-                                                </div>
-                                            )}
                                         </CardContent>
                                     </Card>
                                     )}
@@ -2681,6 +2679,18 @@ export const ChatInterface = memo(function ChatInterface({
                         }
                         // No placeholder yet — create one
                         return [...prev, { role: "assistant", content: delta, timestamp: new Date() }]
+                    })
+                    requestAnimationFrame(() => scrollToBottom())
+                },
+                (delta) => {
+                    // Append summary deltas — populates the summary box incrementally
+                    setMessages((prev) => {
+                        const last = prev[prev.length - 1]
+                        if (last?.role === "assistant" && last.turnId === undefined && !last.isGeneralKnowledge) {
+                            const current = last.summary || ""
+                            return [...prev.slice(0, -1), { ...last, summary: current + delta }]
+                        }
+                        return prev
                     })
                     requestAnimationFrame(() => scrollToBottom())
                 }
