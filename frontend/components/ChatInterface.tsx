@@ -1589,7 +1589,7 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             html += `<th style="${thS}">Family</th>`
             html += `<th style="${thS}">Drugs</th>`
             html += `<th style="${thS}">Antigen</th>`
-            if (hasLoScore) html += `<th style="${thS}text-align:center;">Score</th>`
+            if (hasLoScore) html += `<th style="${thS}text-align:center;">Evidence Score</th>`
             html += `<th style="${thS}text-align:center;">${escapeHtml(v.score_label || "Score")}</th>`
             html += `</tr></thead><tbody>`
             genes.forEach((g, i) => {

@@ -2842,7 +2842,7 @@ Please provide a clear, informative response about this gene. Include the key de
             applied = payload.get("applied_filters")
             if isinstance(applied, dict) and applied:
                 ordered = []
-                for key in ("tier", "family", "antigen", "drug_name"):
+                for key in ("tier", "tiers", "family", "antigen", "drug_name"):
                     value = applied.get(key)
                     if value:
                         display_key = "drug" if key == "drug_name" else key
@@ -2850,6 +2850,43 @@ Please provide a clear, informative response about this gene. Include the key de
                 if ordered:
                     return ", ".join(ordered)
             return "all targets"
+
+        def _target_ranking_meta(payload: dict) -> tuple[str, str, str, str]:
+            if not isinstance(payload, dict):
+                return (
+                    "balanced",
+                    "Balanced evidence-first",
+                    "Balanced ranking is evidence-first and does not favor established or exploratory tiers.",
+                    "Balanced Score",
+                )
+            mode = str(payload.get("ranking_mode") or "balanced").strip().lower()
+            if mode not in {"balanced", "established", "exploratory"}:
+                mode = "balanced"
+            label = str(payload.get("ranking_mode_label") or "").strip() or {
+                "balanced": "Balanced evidence-first",
+                "established": "Established / clinically advanced",
+                "exploratory": "Exploratory / discovery-stage",
+            }[mode]
+            explanation = str(payload.get("ranking_explanation") or "").strip()
+            if not explanation:
+                explanation = {
+                    "balanced": "Balanced ranking is evidence-first and does not favor established or exploratory tiers.",
+                    "established": "Established ranking favors clinically advanced targets.",
+                    "exploratory": "Exploratory ranking favors discovery-stage targets.",
+                }[mode]
+            score_label = str(payload.get("score_label") or "").strip() or {
+                "balanced": "Balanced Score",
+                "established": "Clinical Readiness Score",
+                "exploratory": "Exploratory Score",
+            }[mode]
+            return mode, label, explanation, score_label
+
+        def _target_ranking_title(mode: str) -> str:
+            if mode == "established":
+                return "Top therapeutic targets — ranked by clinical readiness"
+            if mode == "exploratory":
+                return "Top therapeutic targets — ranked by exploratory novelty"
+            return "Top therapeutic targets — ranked by evidence"
 
         def _trial_scope_lines(label: str, *, signal_label: str, batch: bool = False) -> list[str]:
             lines = [
@@ -3143,29 +3180,28 @@ Please provide a clear, informative response about this gene. Include the key de
                 total = parsed.get("total", len(genes))
                 top_n = parsed.get("top_n", len(genes))
                 filter_label = _target_filter_label(parsed)
+                ranking_mode, ranking_label, ranking_explanation, score_label = _target_ranking_meta(parsed)
                 if not genes:
-                    sections.append(f"_No druggable targets found for {filter_label}._\n")
+                    sections.append(
+                        f"_No druggable targets found for {filter_label} using {ranking_label.lower()} ranking._\n"
+                    )
                     _rendered_tool_ids.add(tool_id)
                     continue
                 viz_id = _uuid.uuid4().hex
                 description = (
-                    f"Filters: {filter_label}. "
-                    "**How targets are ranked** — Composite score = "
-                    "tier weight (T1 = 50 pts, T2 = 30 pts, T3 = 10 pts) "
-                    "+ approved oncology drug count × 5 pts each "
-                    "+ antigen status (TSA = +10 pts, TAA = +5 pts) "
-                    "+ LinkedOmics proteomic evidence score × 2 pts. "
-                    "The **Score** column shows this composite value. "
-                    f"Showing top {top_n} of {total} druggable targets (T1–T3)."
+                    f"Ranking mode: {ranking_label}; filters: {filter_label}. "
+                    f"**How targets are ranked** — {ranking_explanation} "
+                    f"The **{score_label}** column shows this value. "
+                    f"Showing top {top_n} of {total} ranked targets."
                 )
                 _visualizations.append({
                     "type": "target_search_table",
                     "id": viz_id,
-                    "title": "Top therapeutic targets — ranked by attractiveness",
+                    "title": _target_ranking_title(ranking_mode),
                     "total": top_n,
                     "genes": genes,
                     "description": description,
-                    "score_label": "Score",
+                    "score_label": score_label,
                 })
                 md = [f"\n[PLOT:{viz_id}]", ""]
                 md.append("\n> **Source:** [LinkedOmics Targets](#source:targets)")

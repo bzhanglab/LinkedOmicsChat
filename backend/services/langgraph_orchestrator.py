@@ -1749,6 +1749,10 @@ PLANNING RULES:
   - "targeted therapy" / "targeted" / "immunotherapy" / "checkpoint inhibitor" → treatment_category="targeted"
   - "combination" / "combo" / "combination therapy" → treatment_category="combinations"
   - Specific drug name (e.g. "paclitaxel", "nivolumab") → use `drugs=["paclitaxel"]` as before
+- For `rank_targets`, separate tier eligibility from ranking intent:
+  - "approved", "validated", "clinically established", "most druggable" → `ranking_mode="established"`
+  - "exploratory", "discovery-stage", "frontier", "most novel" → `ranking_mode="exploratory"`
+  - "not approved" / "non-approved" usually means restrict eligibility to `tiers=["T3","T4","T5"]`, but if the user does not state a readiness preference then keep `ranking_mode="balanced"`
 - If the user refers to "it", "this", or "the gene", resolve that to the active gene: '{active_gene}'.
 - For platform questions like "what can you analyze?", "what cancer types are available?", or "what data do you have access to?", answer from the AVAILABLE DATA section and do not treat the active gene as the target.
 

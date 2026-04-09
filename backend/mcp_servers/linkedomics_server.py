@@ -397,6 +397,7 @@ targets = get_target_json()
 def _build_target_filter_metadata(
     *,
     tier: Optional[str] = None,
+    tiers: Optional[list[str]] = None,
     family: Optional[str] = None,
     antigen: Optional[str] = None,
     drug_name: Optional[str] = None,
@@ -407,6 +408,15 @@ def _build_target_filter_metadata(
     if tier:
         applied_filters["tier"] = tier.upper()
         parts.append(f"tier={tier.upper()}")
+    if tiers:
+        normalized_tiers = []
+        for value in tiers:
+            token = str(value).upper().strip()
+            if token and token not in normalized_tiers:
+                normalized_tiers.append(token)
+        if normalized_tiers:
+            applied_filters["tiers"] = ",".join(normalized_tiers)
+            parts.append(f"tiers={','.join(normalized_tiers)}")
     if family:
         applied_filters["family"] = family
         parts.append(f"family={family}")
@@ -499,65 +509,153 @@ def search_targets(
     }
 
 
-_TIER_WEIGHT = {"T1": 50, "T2": 30, "T3": 10, "T4": 5, "T5": 2}
+_ESTABLISHED_TIER_WEIGHT = {"T1": 50, "T2": 30, "T3": 10, "T4": 5, "T5": 2}
+_EXPLORATORY_TIER_WEIGHT = {"T1": 2, "T2": 5, "T3": 10, "T4": 30, "T5": 50}
 _ANTIGEN_BONUS = {"TSA": 10, "TAA": 5}
+_RANKABLE_TIERS = ("T1", "T2", "T3", "T4", "T5")
+_TARGET_RANKING_MODE_LABELS = {
+    "balanced": "Balanced evidence-first",
+    "established": "Established / clinically advanced",
+    "exploratory": "Exploratory / discovery-stage",
+}
 
 
-def _composite_score(info: dict[str, Any]) -> int:
+def _normalize_target_ranking_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in _TARGET_RANKING_MODE_LABELS:
+        return mode
+    return "balanced"
+
+
+def _target_ranking_score_label(ranking_mode: str) -> str:
+    mode = _normalize_target_ranking_mode(ranking_mode)
+    if mode == "established":
+        return "Clinical Readiness Score"
+    if mode == "exploratory":
+        return "Exploratory Score"
+    return "Balanced Score"
+
+
+def _target_ranking_explanation(ranking_mode: str) -> str:
+    mode = _normalize_target_ranking_mode(ranking_mode)
+    if mode == "established":
+        return (
+            "Established ranking favors clinically advanced targets: tier weight "
+            "(T1 = 50 pts, T2 = 30 pts, T3 = 10 pts, T4 = 5 pts, T5 = 2 pts) "
+            "+ approved oncology drug count × 5 pts each "
+            "+ antigen status (TSA = +10 pts, TAA = +5 pts) "
+            "+ LinkedOmics evidence score × 2 pts."
+        )
+    if mode == "exploratory":
+        return (
+            "Exploratory ranking favors discovery-stage targets: novelty weight "
+            "(T5 = 50 pts, T4 = 30 pts, T3 = 10 pts, T2 = 5 pts, T1 = 2 pts) "
+            "+ antigen status (TSA = +10 pts, TAA = +5 pts) "
+            "+ LinkedOmics evidence score × 2 pts. Approved-drug counts do not increase rank."
+        )
+    return (
+        "Balanced ranking is evidence-first and does not favor established or exploratory tiers: "
+        "antigen status (TSA = +10 pts, TAA = +5 pts) "
+        "+ LinkedOmics evidence score × 2 pts. Tier is shown for context but does not change rank."
+    )
+
+
+def _composite_score(info: dict[str, Any], ranking_mode: str = "balanced") -> int:
+    ranking_mode = _normalize_target_ranking_mode(ranking_mode)
     tier = info.get("tier", "")
     drug_tiers_raw = str(info.get("drug_tiers", "") or "")
     antigen = str(info.get("antigen", "") or "").strip()
     lo_score = int(info.get("count") or 0)
 
-    tier_w = _TIER_WEIGHT.get(tier, 0)
-
-    # Count T1-approved drugs
     approved_drug_count = sum(
         1 for t in drug_tiers_raw.split(";") if t.strip() == "T1"
     )
-
     antigen_bonus = _ANTIGEN_BONUS.get(antigen, 2 if antigen else 0)
+    evidence_score = lo_score * 2
 
-    return tier_w + approved_drug_count * 5 + antigen_bonus + lo_score * 2
+    if ranking_mode == "established":
+        return (
+            _ESTABLISHED_TIER_WEIGHT.get(tier, 0)
+            + approved_drug_count * 5
+            + antigen_bonus
+            + evidence_score
+        )
+    if ranking_mode == "exploratory":
+        return _EXPLORATORY_TIER_WEIGHT.get(tier, 0) + antigen_bonus + evidence_score
+    return antigen_bonus + evidence_score
 
 
 @mcp.tool()
 def rank_targets(
+    tiers: Optional[list[Literal["T1", "T2", "T3", "T4", "T5"]]] = None,
+    ranking_mode: Literal["balanced", "established", "exploratory"] = "balanced",
     family: Optional[Literal["Kinase", "Enzyme", "GPCR", "oGPCR", "Transporter", "Ion Channel", "Transcription Factor", "Epigenetic", "Nuclear Receptor", "TF-Epigenetic", "Other"]] = None,
     antigen: Optional[Literal["TSA", "TAA"]] = None,
     top_n: int = 50,
 ) -> dict[str, Any]:
-    """Rank druggable cancer targets (T1–T3) by therapeutic attractiveness using a composite score.
+    """Rank cancer targets by therapeutic attractiveness using a composite score.
 
     Use this tool when the query is about:
     - Most attractive, promising, or high-priority therapeutic targets
     - Best-validated or most druggable cancer targets
-    - Ranking targets by clinical or biological evidence
+    - Ranking targets by clinical readiness, exploratory novelty, or biological evidence
     - Top targets within a specific protein family
 
     Use cases:
     - "What are the most attractive therapeutic targets for cancer?"
     - "Which kinases are the best validated oncology targets?"
     - "Rank the top immune checkpoint or GPCR targets for cancer therapy"
+    - "Rank discovery-stage T4 and T5 membrane-associated targets"
+    - "Among T3-T5 targets, show the strongest evidence without favoring established or exploratory tiers"
 
     Notes:
-    - Composite score = tier weight (T1=50, T2=30, T3=10) + approved drug count × 5 + antigen bonus (TSA=+10, TAA=+5) + LinkedOmics evidence score × 2.
-    - Only T1–T3 targets are included; T4/T5 are excluded.
+    - `tiers` controls which tiers are eligible for ranking.
+    - `ranking_mode` controls how eligible targets are prioritized:
+      - `balanced` (default): ranks by LinkedOmics evidence + antigen status only; tier is shown for context but does not change rank.
+      - `established`: favors clinically advanced targets with T1 > T2 > T3 > T4 > T5 and approved-drug bonuses.
+      - `exploratory`: favors discovery-stage targets with T5 > T4 > T3 > T2 > T1 and no approved-drug bonus.
+    - By default, all tiers (T1-T5) are eligible. Use `tiers` to restrict ranking to specific tiers.
 
     Args:
+        tiers (list[str], optional): Restrict ranking to one or more tiers, e.g.
+            ["T1", "T2"] or ["T4", "T5"]. If omitted, all tiers (T1-T5) are included.
+        ranking_mode (str): How to prioritize eligible targets — `balanced`, `established`, or `exploratory`.
         family (str, optional): Restrict to a protein family, e.g. "Kinase", "Enzyme", "GPCR".
         antigen (str, optional): Restrict to antigen class — "TSA" (tumor-specific) or "TAA" (tumor-associated).
         top_n (int): Number of top-ranked targets to return (default 50, max 200).
 
     Returns:
-        total (int): Number of druggable candidates scored.
+        total (int): Number of candidates scored after applying tier/family/antigen filters.
         genes (list): Top-ranked entries sorted by composite score; each has gene, tier, family, drugs, antigen, count (composite score), lo_score (raw LinkedOmics score).
+        ranking_mode (str): The normalized ranking mode applied to this result.
+        ranking_mode_label (str): Human-readable label for the applied ranking mode.
+        ranking_explanation (str): Human-readable explanation of how the score was computed.
     """
     top_n = min(int(top_n), 200)
+    ranking_mode = _normalize_target_ranking_mode(ranking_mode)
+    ranking_mode_label = _TARGET_RANKING_MODE_LABELS[ranking_mode]
+    ranking_explanation = _target_ranking_explanation(ranking_mode)
+    score_label = _target_ranking_score_label(ranking_mode)
+    included_tiers = list(_RANKABLE_TIERS)
+    if tiers:
+        requested_tiers = [str(value).upper() for value in tiers if str(value).strip()]
+        included_tiers = [tier for tier in _RANKABLE_TIERS if tier in requested_tiers]
+        if not included_tiers:
+            return {
+                "total": 0,
+                "top_n": top_n,
+                "genes": [],
+                "ranking_mode": ranking_mode,
+                "ranking_mode_label": ranking_mode_label,
+                "ranking_explanation": ranking_explanation,
+                "score_label": score_label,
+                "applied_filters": {"tiers": ",".join(requested_tiers)} if requested_tiers else {},
+                "filter_label": f"tiers={','.join(requested_tiers)}" if requested_tiers else "all targets",
+            }
     candidates = []
     for gene, info in targets.items():
         gene_tier = info.get("tier", "")
-        if gene_tier not in ("T1", "T2", "T3"):
+        if gene_tier not in included_tiers:
             continue
         gene_family = info.get("Family", "") or info.get("family", "")
         gene_antigen = str(info.get("antigen", "") or "")
@@ -568,7 +666,7 @@ def rank_targets(
         if antigen and antigen.lower() not in gene_antigen.lower():
             continue
 
-        score = _composite_score(info)
+        score = _composite_score(info, ranking_mode=ranking_mode)
         candidates.append({
             "gene": gene,
             "tier": gene_tier,
@@ -581,6 +679,7 @@ def rank_targets(
 
     candidates.sort(key=lambda x: -x["count"])
     applied_filters, filter_label = _build_target_filter_metadata(
+        tiers=included_tiers if tiers else None,
         family=family,
         antigen=antigen,
     )
@@ -588,6 +687,10 @@ def rank_targets(
         "total": len(candidates),
         "top_n": top_n,
         "genes": candidates[:top_n],
+        "ranking_mode": ranking_mode,
+        "ranking_mode_label": ranking_mode_label,
+        "ranking_explanation": ranking_explanation,
+        "score_label": score_label,
         "applied_filters": applied_filters,
         "filter_label": filter_label,
     }

@@ -66,8 +66,8 @@ export function TargetSearchTable({ visualization }: Props) {
     }, [description])
 
     const [page, setPage] = useState(1)
-    const [sortKey, setSortKey] = useState<SortKey>("tier")
-    const [sortDir, setSortDir] = useState<SortDir>("asc")
+    const [sortKey, setSortKey] = useState<SortKey>("count")
+    const [sortDir, setSortDir] = useState<SortDir>("desc")
     const [search, setSearch] = useState("")
 
     const filtered = useMemo(() => {
@@ -188,13 +188,13 @@ export function TargetSearchTable({ visualization }: Props) {
                             {hasLoScore && (
                                 <th className={thCls}>
                                     <button className="flex items-center gap-1 hover:text-teal-700" onClick={() => handleSort("lo_score")}>
-                                        Score <SortIcon col="lo_score" />
+                                        Evidence Score <SortIcon col="lo_score" />
                                     </button>
                                 </th>
                             )}
                             <th className={thCls}>
                                 <button className="flex items-center gap-1 hover:text-teal-700" onClick={() => handleSort("count")}>
-                                    {hasLoScore ? "Composite Score" : (score_label ?? "Score")} <SortIcon col="count" />
+                                    {(score_label ?? "Composite Score")} <SortIcon col="count" />
                                 </button>
                             </th>
                         </tr>
