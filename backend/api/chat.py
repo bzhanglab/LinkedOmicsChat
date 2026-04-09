@@ -779,7 +779,6 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
         else:
             all_studies = study_names if study_names else sorted(set(resp_x + nonresp_x))
             n = len(all_studies)
-            xlabels = [s.removesuffix(".csv") for s in all_studies]
 
             resp_by  = defaultdict(list)
             nresp_by = defaultdict(list)
@@ -791,10 +790,21 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
             has_pvals = len(p_values) == n and n > 0
             has_auc   = len(auc_values) == n and n > 0
 
+            # Sort studies by signed −log(p) from low to high.
+            # AUROC plot uses the same order (no re-sort).
+            if has_pvals:
+                sort_order = sorted(range(n), key=lambda i: p_values[i])
+                all_studies = [all_studies[i] for i in sort_order]
+                p_values    = [p_values[i]    for i in sort_order]
+                if has_auc:
+                    auc_values = [auc_values[i] for i in sort_order]
+
+            xlabels = [s.removesuffix(".csv") for s in all_studies]
+
             # ── single figure: top row = bar charts, bottom row = violin ─────
             fig_w = max(10, n * 1.8 + 2)
-            fig = plt.figure(figsize=(fig_w, 8), facecolor="white")
-            gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.4], hspace=0.38, wspace=0.28,
+            fig = plt.figure(figsize=(fig_w, 9), facecolor="white")
+            gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.4], hspace=0.65, wspace=0.28,
                                   left=0.07, right=0.97, top=0.93, bottom=0.10)
 
             ax_p   = fig.add_subplot(gs[0, 0])
@@ -810,8 +820,9 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
                 ax_p.bar(range(n), p_values, color=p_colors, alpha=0.8, width=bar_w)
             ax_p.axhline(0, color="black", linewidth=0.8)
             ax_p.set_xticks(range(n))
-            ax_p.set_xticklabels([], fontsize=7)
-            ax_p.set_xlabel("Studies", fontsize=9)
+            ax_p.set_xticklabels(xlabels, fontsize=max(5, min(8, 60 // max(n, 1))),
+                                 rotation=0 if n <= 6 else 45, ha="center" if n <= 6 else "right")
+            ax_p.set_xlabel("", fontsize=9)
             ax_p.set_ylabel("−log(|p|)×sign(p)", fontsize=9)
             ax_p.set_title(f"P-value ranked based on {gene}", fontsize=10)
             ax_p.yaxis.grid(True, linewidth=0.4, alpha=0.5)
@@ -823,8 +834,9 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
                 ax_auc.bar(range(n), auc_values, color=auc_colors, alpha=0.8, width=bar_w)
             ax_auc.axhline(0.5, color="black", linewidth=1)
             ax_auc.set_xticks(range(n))
-            ax_auc.set_xticklabels([], fontsize=7)
-            ax_auc.set_xlabel("Studies", fontsize=9)
+            ax_auc.set_xticklabels(xlabels, fontsize=max(5, min(8, 60 // max(n, 1))),
+                                   rotation=0 if n <= 6 else 45, ha="center" if n <= 6 else "right")
+            ax_auc.set_xlabel("", fontsize=9)
             ax_auc.set_ylabel("AUROC", fontsize=9)
             ax_auc.set_title(f"AUROC ranked based on {gene}", fontsize=10)
             if has_auc:
