@@ -52,7 +52,7 @@ function PlotModal({ gene, plotType, studyList, row, onClose }: PlotModalProps) 
     const [plots, setPlots] = useState<PlotData[] | null>(null)
     const [resolvedStudyId, setResolvedStudyId] = useState<string>("")
     const [error, setError] = useState(false)
-    const [fitToWindow, setFitToWindow] = useState(false)
+    const [fitToWindow, setFitToWindow] = useState(true)
 
     const study = row.study_id || row.series || ""
     const manyStudies = (studyList?.length ?? 0) > 10

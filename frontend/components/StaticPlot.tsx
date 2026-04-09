@@ -89,7 +89,7 @@ export function StaticPlot({ visualization, className }: StaticPlotProps) {
     const [fetchError, setFetchError] = useState(false)
     const [showAtRisk, setShowAtRisk] = useState(false)
     const [lightboxOpen, setLightboxOpen] = useState(false)
-    const [lightboxFit, setLightboxFit] = useState(false)
+    const [lightboxFit, setLightboxFit] = useState(true)
 
     const openLightbox  = useCallback(() => setLightboxOpen(true), [])
     const closeLightbox = useCallback(() => setLightboxOpen(false), [])

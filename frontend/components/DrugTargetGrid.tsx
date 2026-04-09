@@ -102,8 +102,8 @@ export function DrugTargetGrid({ visualization }: Props) {
         })
     }, [plot_map, table_map])
 
-    const closeModal = useCallback(() => { setSelected(null); setModalFit(false) }, [])
-    const [modalFit, setModalFit] = useState(false)
+    const closeModal = useCallback(() => { setSelected(null); setModalFit(true) }, [])
+    const [modalFit, setModalFit] = useState(true)
 
     useEffect(() => {
         if (!selected) return
