@@ -829,9 +829,18 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
             ax_p.set_axisbelow(True)
             for sp in ("top", "right"): ax_p.spines[sp].set_visible(False)
 
-            # AUROC bars
+            # AUROC bars centered at the no-signal baseline (0.5):
+            # values < 0.5 extend downward, values > 0.5 extend upward.
             if has_auc:
-                ax_auc.bar(range(n), auc_values, color=auc_colors, alpha=0.8, width=bar_w)
+                auc_centered = [v - 0.5 for v in auc_values]
+                ax_auc.bar(
+                    range(n),
+                    auc_centered,
+                    bottom=0.5,
+                    color=auc_colors,
+                    alpha=0.8,
+                    width=bar_w,
+                )
             ax_auc.axhline(0.5, color="black", linewidth=1)
             ax_auc.set_xticks(range(n))
             ax_auc.set_xticklabels(xlabels, fontsize=max(5, min(8, 60 // max(n, 1))),
@@ -840,9 +849,10 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
             ax_auc.set_ylabel("AUROC", fontsize=9)
             ax_auc.set_title(f"AUROC ranked based on {gene}", fontsize=10)
             if has_auc:
-                margin = max(0.05, (max(auc_values) - min(auc_values)) * 0.2)
-                ax_auc.set_ylim(min(0.0, min(auc_values) - margin),
-                                max(1.0, max(auc_values) + margin))
+                max_delta = max(abs(v - 0.5) for v in auc_values)
+                margin = max(0.03, max_delta * 0.18)
+                span = min(0.5, max_delta + margin)
+                ax_auc.set_ylim(0.5 - span, 0.5 + span)
             ax_auc.yaxis.grid(True, linewidth=0.4, alpha=0.5)
             ax_auc.set_axisbelow(True)
             for sp in ("top", "right"): ax_auc.spines[sp].set_visible(False)
