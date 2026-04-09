@@ -2482,17 +2482,17 @@ DIRECT RESPONSE RULES:
             logger.info("[LangGraph Stream] Starting execution...")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing query requirements...'})}\n\n"
 
-            # Stream using dual modes:
-            #   "values"   — full state snapshots to detect tool calls and emit status events
-            #   "messages" — AIMessage chunks to emit text_delta events for typewriter effect
-            # We run a single astream call with both modes and route by event type.
+            # Stream using "values" mode only for status signals.
+            # Raw LLM token streaming is intentionally skipped here — the
+            # post-processed rich_message and display_summary are streamed
+            # below after _build_response_from_final_state completes, so the
+            # user always sees content that matches the final rendered result.
             final_state = None
-            _text_streaming_started = False
-            emitted_text_delta = False
+            _tool_streaming_started = False
 
             async for stream_mode_key, chunk in self._graph.astream(
                 initial_state,
-                stream_mode=["values", "messages"],
+                stream_mode=["values"],
             ):
                 if stream_mode_key == "values":
                     # Full state snapshot — use for status signals
@@ -2504,26 +2504,13 @@ DIRECT RESPONSE RULES:
                     last_msg = messages[-1]
                     if isinstance(last_msg, AIMessage):
                         if last_msg.tool_calls:
-                            _text_streaming_started = False
+                            _tool_streaming_started = False
                             for idx, tc in enumerate(last_msg.tool_calls):
                                 tool_name = tc.get("name", "tool").split("#")[0]
                                 if idx == 0:
                                     yield f"data: {json.dumps({'type': 'status', 'content': f'Running {tool_name}...'})}\n\n"
-                        # No else — text streaming is handled by "messages" mode below
                     elif isinstance(last_msg, ToolMessage):
                         yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing tool results...'})}\n\n"
-
-                elif stream_mode_key == "messages":
-                    # Incremental AIMessage chunk — emit text_delta for typewriter effect
-                    msg_chunk, _ = chunk
-                    if isinstance(msg_chunk, AIMessage):
-                        text = _normalize_content(msg_chunk.content)
-                        if text and not getattr(msg_chunk, "tool_calls", None):
-                            if not _text_streaming_started:
-                                _text_streaming_started = True
-                                yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
-                            emitted_text_delta = True
-                            yield f"data: {json.dumps({'type': 'text_delta', 'content': text})}\n\n"
 
             if not final_state:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'No output generated.', 'query': query}})}\n\n"
@@ -2541,16 +2528,30 @@ DIRECT RESPONSE RULES:
                 include_stream_metadata=True,
             )
 
-            # Fallback incremental rendering when the graph/model path did not
-            # surface token chunks during execution.
-            fallback_text = (formatted_response.get("message") or "").strip()
-            if fallback_text and not emitted_text_delta:
-                fallback_chunks = _iter_stream_chunks(fallback_text)
+            # Stream the final formatted message content (rich_message).
+            # This always matches what ends up in the final event, so the user
+            # never sees a jarring replacement after streaming completes.
+            # Use 30 ms between chunks so the typewriter effect is clearly
+            # visible (≈ 1–3 s for a typical response).
+            rich_text = (formatted_response.get("message") or "").strip()
+            if rich_text:
                 yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
-                for idx, text_chunk in enumerate(fallback_chunks):
+                rich_chunks = _iter_stream_chunks(rich_text)
+                for idx, text_chunk in enumerate(rich_chunks):
                     yield f"data: {json.dumps({'type': 'text_delta', 'content': text_chunk})}\n\n"
-                    if idx < len(fallback_chunks) - 1:
-                        await asyncio.sleep(0.005)
+                    if idx < len(rich_chunks) - 1:
+                        await asyncio.sleep(0.030)
+
+            # Stream the summary separately so it populates the summary box
+            # incrementally without conflicting with the main message content.
+            display_summary = (formatted_response.get("summary") or "").strip()
+            if display_summary:
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Generating summary...'})}\n\n"
+                summary_chunks = _iter_stream_chunks(display_summary)
+                for idx, chunk in enumerate(summary_chunks):
+                    yield f"data: {json.dumps({'type': 'summary_delta', 'content': chunk})}\n\n"
+                    if idx < len(summary_chunks) - 1:
+                        await asyncio.sleep(0.030)
 
             turn_id = await self._save_query(session, query, formatted_response)
             
