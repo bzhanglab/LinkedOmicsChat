@@ -2768,7 +2768,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 return "Drug target profile"
             if normalized == "clinical_trial_information":
                 return "Clinical trial associations"
-            if normalized == "get_cis_correlations":
+            if normalized in {"get_cis_correlations", "batch_get_cis_correlations"}:
                 return "Cis-Correlations"
             return None
 
@@ -2792,6 +2792,8 @@ Please provide a clear, informative response about this gene. Include the key de
                 batch_gene_map = parsed_result.get("data")
             elif normalized == "batch_get_target":
                 batch_gene_map = parsed_result.get("results")
+            elif normalized == "batch_get_cis_correlations":
+                batch_gene_map = parsed_result.get("data")
 
             if isinstance(batch_gene_map, dict):
                 for batch_gene, batch_payload in batch_gene_map.items():
@@ -2799,6 +2801,9 @@ Please provide a clear, informative response about this gene. Include the key de
                         continue
                     if normalized == "batch_get_target":
                         if not (isinstance(batch_payload, dict) and isinstance(batch_payload.get("result"), dict)):
+                            continue
+                    elif normalized == "batch_get_cis_correlations":
+                        if not (isinstance(batch_payload, dict) and isinstance(batch_payload.get("data"), dict)):
                             continue
                     covered.add(batch_gene.upper())
 
@@ -3618,50 +3623,103 @@ Please provide a clear, informative response about this gene. Include the key de
                 continue
 
             if tool_id.endswith("get_cis_correlations"):
-                if not isinstance(parsed, dict) or "data" not in parsed:
+                if not isinstance(parsed, dict):
                     continue  # skip unrenderable result silently
 
-                data = parsed.get("data", {})
-                cis_title = f"Cis-Correlations - {gene_name}" if gene_name else "Cis-Correlations"
-                md = [f"## {cis_title}", ""]
-                fig_dict = _generate_cis_correlation_static(data, gene_name or "Gene")
-                cis_has_plot = False
-                if fig_dict:
-                    viz_id = _uuid.uuid4().hex
-                    _visualizations.append({
-                        "type": "static_plot",
-                        "id": viz_id,
-                        "title": fig_dict["title"],
-                        **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
-                    })
-                    md.append(f"[PLOT:{viz_id}]")
-                    md.append("")
-                    cis_has_plot = True
-                # Only show per-cohort tables as fallback if plot could not be generated
-                if not cis_has_plot:
-                    if not data:
-                        md.append("_No correlation data found._")
-                    else:
-                        for cohort, records in data.items():
-                            if not records:
-                                continue
-                            md.append(f"\n### {cohort}")
-                            if isinstance(records, list) and len(records) > 0:
-                                keys = list(records[0].keys())
-                                header = "| " + " | ".join(keys) + " |"
-                                separator = "| " + " | ".join(["---"] * len(keys)) + " |"
-                                md.append(header)
-                                md.append(separator)
-                                for rec in records[:10]:
-                                    row = "| " + " | ".join(str(rec.get(k, "")) for k in keys) + " |"
-                                    md.append(row)
-                                if len(records) > 10:
-                                    md.append(f"_(showing 10 of {len(records)} records)_")
-                            else:
-                                md.append("_No records._")
+                def _render_single_cis_section(
+                    g_name: str,
+                    g_parsed: dict,
+                    fallback_applied_pairs: list[str] | None = None,
+                    fallback_applied_cancers: list[str] | None = None,
+                ) -> Optional[str]:
+                    if not isinstance(g_parsed, dict):
+                        return None
 
-                md.append("\n> **Source:** [LinkedOmics](#source:linkedomics)")
-                sections.append("\n".join(md) + "\n")
+                    data = g_parsed.get("data", {})
+                    applied_pairs = g_parsed.get("applied_pairs") or fallback_applied_pairs or []
+                    applied_cancers = g_parsed.get("applied_cancers") or fallback_applied_cancers or []
+                    status = g_parsed.get("status", "available")
+                    message = g_parsed.get("message", "")
+
+                    cis_title = f"Cis-Correlations - {g_name}" if g_name else "Cis-Correlations"
+                    md = [f"## {cis_title}", ""]
+                    if applied_pairs:
+                        md.append(f"**Pairs:** {', '.join(applied_pairs)}")
+                    if applied_cancers:
+                        md.append(f"**Cancer Types:** {', '.join(applied_cancers)}")
+                    if applied_pairs or applied_cancers:
+                        md.append("")
+
+                    fig_dict = _generate_cis_correlation_static(data, g_name or "Gene")
+                    cis_has_plot = False
+                    if fig_dict:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "static_plot",
+                            "id": viz_id,
+                            "title": fig_dict["title"],
+                            **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                        })
+                        md.append(f"[PLOT:{viz_id}]")
+                        md.append("")
+                        cis_has_plot = True
+
+                    # Only show per-cohort tables as fallback if plot could not be generated
+                    if not cis_has_plot:
+                        if status != "available" and message:
+                            md.append(f"_{message}_")
+                        elif not data:
+                            md.append(f"_{message or 'No correlation data found.'}_")
+                        else:
+                            for cohort, records in data.items():
+                                if not records:
+                                    continue
+                                md.append(f"\n### {cohort}")
+                                if isinstance(records, list) and len(records) > 0:
+                                    keys = list(records[0].keys())
+                                    header = "| " + " | ".join(keys) + " |"
+                                    separator = "| " + " | ".join(["---"] * len(keys)) + " |"
+                                    md.append(header)
+                                    md.append(separator)
+                                    for rec in records[:10]:
+                                        row = "| " + " | ".join(str(rec.get(k, "")) for k in keys) + " |"
+                                        md.append(row)
+                                    if len(records) > 10:
+                                        md.append(f"_(showing 10 of {len(records)} records)_")
+                                else:
+                                    md.append("_No records._")
+
+                    md.append("\n> **Source:** [LinkedOmics](#source:linkedomics)")
+                    return "\n".join(md) + "\n"
+
+                if tool_id.endswith("batch_get_cis_correlations"):
+                    batch_data = parsed.get("data") or {}
+                    fallback_applied_pairs = parsed.get("applied_pairs") or []
+                    fallback_applied_cancers = parsed.get("applied_cancers") or []
+                    if isinstance(batch_data, dict) and batch_data:
+                        for batch_gene, batch_payload in batch_data.items():
+                            sec = _render_single_cis_section(
+                                batch_gene,
+                                batch_payload,
+                                fallback_applied_pairs,
+                                fallback_applied_cancers,
+                            )
+                            if sec is not None:
+                                sections.append(sec)
+                    else:
+                        sec = _render_single_cis_section(
+                            "",
+                            parsed,
+                            fallback_applied_pairs,
+                            fallback_applied_cancers,
+                        )
+                        if sec is not None:
+                            sections.append(sec)
+                else:
+                    sec = _render_single_cis_section(gene_name, parsed)
+                    if sec is not None:
+                        sections.append(sec)
+
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
                 continue

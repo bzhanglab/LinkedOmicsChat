@@ -32,6 +32,138 @@ from linkedomics_tcga_params import (
 # Create an MCP server
 mcp = FastMCP("linkedomics_mcp", json_response=True)
 
+_CIS_LAYER_ALIASES: dict[str, tuple[str, ...]] = {
+    "RNA": ("rna", "mrna", "rna seq", "rnaseq", "transcript", "transcriptome"),
+    "Protein": ("protein", "proteomics", "proteomic", "rppa", "prot"),
+    "Methylation": ("methylation", "meth", "dna methylation", "dna-methylation"),
+    "SCNV": ("scnv", "scna", "cnv", "cna", "copy number", "copy-number", "copy number variation"),
+}
+_CIS_LAYER_LOOKUP: dict[str, str] = {
+    re.sub(r"[^a-z0-9]+", "", alias.lower()): canonical
+    for canonical, aliases in _CIS_LAYER_ALIASES.items()
+    for alias in (canonical, *aliases)
+}
+_CPTAC_COHORT_ALIASES: dict[str, tuple[str, ...]] = {
+    "BRCA": ("brca", "breast", "breast cancer", "breast invasive carcinoma"),
+    "COAD": ("coad", "colon", "colon cancer", "colon adenocarcinoma"),
+    "CCRCC": ("ccrcc", "kidney", "kidney cancer", "clear cell renal cell carcinoma", "renal clear cell carcinoma"),
+    "GBM": ("gbm", "glioblastoma", "glioblastoma multiforme", "brain cancer"),
+    "HNSCC": ("hnscc", "head and neck", "head and neck cancer", "head and neck squamous cell carcinoma"),
+    "LSCC": ("lscc", "lung squamous", "lung squamous cell carcinoma", "lung squamous cancer"),
+    "LUAD": ("luad", "lung adeno", "lung adenocarcinoma", "lung adenocarcinoma cancer"),
+    "OV": ("ov", "ovarian", "ovarian cancer", "ovarian serous carcinoma"),
+    "PDAC": ("pdac", "pancreatic", "pancreatic cancer", "pancreatic ductal adenocarcinoma"),
+    "UCEC": ("ucec", "uterine", "uterine cancer", "endometrial", "endometrial cancer", "uterine corpus endometrial carcinoma"),
+}
+_CPTAC_COHORT_LOOKUP: dict[str, str] = {
+    re.sub(r"[^a-z0-9]+", "", alias.lower()): canonical
+    for canonical, aliases in _CPTAC_COHORT_ALIASES.items()
+    for alias in (canonical, *aliases)
+}
+_CIS_PAIR_SPLIT_RE = re.compile(r"\s*(?:vs\.?|versus|↔|<->|->|to|/|,)\s*", re.IGNORECASE)
+
+
+def _canonicalize_cis_layer(value: Any) -> str | None:
+    """Normalize user- or source-provided omics layer names to the LinkedOmics canonical labels."""
+    token = re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+    if not token:
+        return None
+    return _CIS_LAYER_LOOKUP.get(token)
+
+
+def _canonicalize_cis_pair(left: Any, right: Any) -> str | None:
+    """Return a direction-independent cis pair label such as 'Protein ↔ RNA'."""
+    left_layer = _canonicalize_cis_layer(left)
+    right_layer = _canonicalize_cis_layer(right)
+    if not left_layer or not right_layer:
+        return None
+    first, second = sorted((left_layer, right_layer), key=str.upper)
+    return f"{first} ↔ {second}"
+
+
+def _canonicalize_cptac_cohort(value: Any) -> str | None:
+    """Normalize user-provided CPTAC cancer names to LinkedOmics cohort abbreviations."""
+    token = re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+    if not token:
+        return None
+    return _CPTAC_COHORT_LOOKUP.get(token)
+
+
+def _parse_cis_pair_filters(pairs: Optional[list[str]]) -> tuple[set[str] | None, list[str], list[str], list[str]]:
+    """Parse requested omics pairs into canonical, order-independent labels."""
+    requested_pairs = [str(pair).strip() for pair in (pairs or []) if str(pair).strip()]
+    if not requested_pairs:
+        return None, [], [], []
+
+    applied_pairs: list[str] = []
+    applied_set: set[str] = set()
+    ignored_pairs: list[str] = []
+
+    for raw_pair in requested_pairs:
+        parts = [part.strip() for part in _CIS_PAIR_SPLIT_RE.split(raw_pair) if part.strip()]
+        if len(parts) != 2:
+            ignored_pairs.append(raw_pair)
+            continue
+        canonical_pair = _canonicalize_cis_pair(parts[0], parts[1])
+        if canonical_pair is None:
+            ignored_pairs.append(raw_pair)
+            continue
+        if canonical_pair not in applied_set:
+            applied_set.add(canonical_pair)
+            applied_pairs.append(canonical_pair)
+
+    return applied_set, requested_pairs, applied_pairs, ignored_pairs
+
+
+def _parse_cis_cancer_filters(cancers: Optional[list[str]]) -> tuple[set[str] | None, list[str], list[str], list[str]]:
+    """Parse requested cancer filters into canonical CPTAC cohort abbreviations."""
+    requested_cancers = [str(cancer).strip() for cancer in (cancers or []) if str(cancer).strip()]
+    if not requested_cancers:
+        return None, [], [], []
+
+    applied_cancers: list[str] = []
+    applied_set: set[str] = set()
+    ignored_cancers: list[str] = []
+
+    for raw_cancer in requested_cancers:
+        canonical_cancer = _canonicalize_cptac_cohort(raw_cancer)
+        if canonical_cancer is None:
+            ignored_cancers.append(raw_cancer)
+            continue
+        if canonical_cancer not in applied_set:
+            applied_set.add(canonical_cancer)
+            applied_cancers.append(canonical_cancer)
+
+    return applied_set, requested_cancers, applied_cancers, ignored_cancers
+
+
+def _filter_cis_correlation_data(
+    cor_data: dict[str, Any],
+    pair_filters: set[str] | None,
+    cancer_filters: set[str] | None,
+) -> dict[str, Any]:
+    """Filter a cohort->records mapping down to the requested molecular pairs and cancer types."""
+    if not pair_filters and not cancer_filters:
+        return cor_data
+
+    filtered: dict[str, Any] = {}
+    for cohort, records in cor_data.items():
+        canonical_cohort = _canonicalize_cptac_cohort(cohort) or str(cohort or "").strip().upper()
+        if cancer_filters and canonical_cohort not in cancer_filters:
+            continue
+        if not isinstance(records, list):
+            continue
+        kept_records = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            pair_label = _canonicalize_cis_pair(record.get("x"), record.get("y"))
+            if pair_label in pair_filters:
+                kept_records.append(record)
+        if kept_records:
+            filtered[cohort] = kept_records
+    return filtered
+
 
 def _parse_drug_details(html: str) -> list[dict[str, Any]]:
     """Parse drug table rows (name, databases, indication) from the drug card HTML sections."""
@@ -1395,7 +1527,11 @@ def get_study_predictive_gene_sets(study_id: str, top_n: int = 20) -> dict[str, 
 
 
 @mcp.tool()
-def get_cis_correlations(protein: str) -> dict[str, Any]:
+def get_cis_correlations(
+    protein: str,
+    pairs: Optional[list[str]] = None,
+    cancers: Optional[list[str]] = None,
+) -> dict[str, Any]:
     """Analyze cis-regulatory relationships between molecular layers (RNA, Protein, Methylation, SCNV) for a gene.
 
     Cis-correlations help determine what drives a gene's expression levels across CPTAC cohorts.
@@ -1413,15 +1549,45 @@ def get_cis_correlations(protein: str) -> dict[str, Any]:
 
     Args:
         protein (str): The gene symbol (e.g., "ESR1").
+        pairs (Optional[list[str]]): Optional molecular pair filters such as
+            ["RNA vs Protein"] or ["RNA vs Protein", "RNA vs SCNV"].
+            If omitted, all available pairs are returned.
+        cancers (Optional[list[str]]): Optional cancer type filters such as
+            ["BRCA"] or ["breast cancer", "OV"]. If omitted, all available cohorts are returned.
 
     Returns:
-        dict[str, Any]: Correlation coefficients (val) and p-values for all molecular pairs across cohorts.
+        dict[str, Any]: Correlation coefficients (val) and p-values for the requested
+        molecular pairs across cohorts. Defaults to all pairs and all cohorts when no filter is provided.
 
     Notes:
     - RNA vs. Protein: translation efficiency (mRNA → protein conversion rate).
     - RNA vs. Methylation: epigenetic silencing or activation of transcription.
     - RNA vs. SCNV: gene copy number dosage effect on mRNA levels.
+    - Available cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC.
     """
+    pair_filters, requested_pairs, applied_pairs, ignored_pairs = _parse_cis_pair_filters(pairs)
+    if requested_pairs and not applied_pairs:
+        return {
+            "status": "error",
+            "message": (
+                "No valid molecular pairs were recognized. Use pair labels like "
+                "'RNA vs Protein', 'RNA vs Methylation', or 'RNA vs SCNV'."
+            ),
+            "supported_layers": list(_CIS_LAYER_ALIASES.keys()),
+            "ignored_pairs": ignored_pairs,
+        }
+    cancer_filters, requested_cancers, applied_cancers, ignored_cancers = _parse_cis_cancer_filters(cancers)
+    if requested_cancers and not applied_cancers:
+        return {
+            "status": "error",
+            "message": (
+                "No valid cancer types were recognized. Use CPTAC cohort labels like "
+                "'BRCA', 'LUAD', 'OV', or 'UCEC'."
+            ),
+            "supported_cancers": list(_CPTAC_COHORT_ALIASES.keys()),
+            "ignored_cancers": ignored_cancers,
+        }
+
     base_url = f"https://kb.linkedomics.org/gene/{protein.upper()}"
     req = requests.get(base_url, timeout=5000)
     html_text = req.text
@@ -1440,11 +1606,36 @@ def get_cis_correlations(protein: str) -> dict[str, Any]:
             for key, value in entry.items():
                 cor_data[cohort][index][key] = str(value)
 
-    return {"status": "available", "data": cor_data}
+    filtered_data = _filter_cis_correlation_data(cor_data, pair_filters, cancer_filters)
+
+    response: dict[str, Any] = {"status": "available", "data": filtered_data}
+    if requested_pairs:
+        response["requested_pairs"] = requested_pairs
+        response["applied_pairs"] = applied_pairs
+        if ignored_pairs:
+            response["ignored_pairs"] = ignored_pairs
+    if requested_cancers:
+        response["requested_cancers"] = requested_cancers
+        response["applied_cancers"] = applied_cancers
+        if ignored_cancers:
+            response["ignored_cancers"] = ignored_cancers
+    if not filtered_data and (requested_pairs or requested_cancers):
+        filter_labels = []
+        if requested_pairs:
+            filter_labels.append("molecular pairs")
+        if requested_cancers:
+            filter_labels.append("cancer types")
+        response["message"] = f"No cis-correlation records matched the requested {' and '.join(filter_labels)}."
+
+    return response
 
 
 @mcp.tool()
-def batch_get_cis_correlations(proteins: list[str]) -> dict[str, Any]:
+def batch_get_cis_correlations(
+    proteins: list[str],
+    pairs: Optional[list[str]] = None,
+    cancers: Optional[list[str]] = None,
+) -> dict[str, Any]:
     """Analyze cis-regulatory relationships between molecular layers (RNA, Protein, Methylation, SCNV) for a list of genes.
 
     Cis-correlations help determine what drives each gene's expression levels across CPTAC cohorts.
@@ -1461,23 +1652,66 @@ def batch_get_cis_correlations(proteins: list[str]) -> dict[str, Any]:
 
     Args:
         proteins (list[str]): The gene symbols (e.g., ["ESR1", "TP53"]).
+        pairs (Optional[list[str]]): Optional molecular pair filters such as
+            ["RNA vs Protein"] or ["RNA vs Protein", "RNA vs SCNV"].
+            If omitted, all available pairs are returned for each gene.
+        cancers (Optional[list[str]]): Optional cancer type filters such as
+            ["BRCA"] or ["breast cancer", "OV"]. If omitted, all available cohorts are returned.
 
     Returns:
-        dict[str, Any]: Correlation coefficients (val) and p-values for all molecular pairs across cohorts per gene.
+        dict[str, Any]: Correlation coefficients (val) and p-values for the requested
+        molecular pairs across cohorts per gene. Defaults to all pairs and all cohorts when no filter is provided.
 
     Notes:
     - RNA vs. Protein: translation efficiency (mRNA → protein conversion rate).
     - RNA vs. Methylation: epigenetic silencing or activation of transcription.
     - RNA vs. SCNV: gene copy number dosage effect on mRNA levels.
+    - Available cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC.
     """
+    _pair_filters, requested_pairs, applied_pairs, ignored_pairs = _parse_cis_pair_filters(pairs)
+    if requested_pairs and not applied_pairs:
+        return {
+            "status": "error",
+            "message": (
+                "No valid molecular pairs were recognized. Use pair labels like "
+                "'RNA vs Protein', 'RNA vs Methylation', or 'RNA vs SCNV'."
+            ),
+            "supported_layers": list(_CIS_LAYER_ALIASES.keys()),
+            "ignored_pairs": ignored_pairs,
+        }
+    _cancer_filters, requested_cancers, applied_cancers, ignored_cancers = _parse_cis_cancer_filters(cancers)
+    if requested_cancers and not applied_cancers:
+        return {
+            "status": "error",
+            "message": (
+                "No valid cancer types were recognized. Use CPTAC cohort labels like "
+                "'BRCA', 'LUAD', 'OV', or 'UCEC'."
+            ),
+            "supported_cancers": list(_CPTAC_COHORT_ALIASES.keys()),
+            "ignored_cancers": ignored_cancers,
+        }
+
     results = {}
     for protein in proteins:
         try:
-            targets = get_cis_correlations(protein)
+            targets = get_cis_correlations(protein, pairs=pairs, cancers=cancers)
         except Exception as e:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
-    return {"status": "available", "data": results}
+
+    response: dict[str, Any] = {"status": "available", "data": results}
+    if requested_pairs:
+        response["requested_pairs"] = requested_pairs
+        response["applied_pairs"] = applied_pairs
+        if ignored_pairs:
+            response["ignored_pairs"] = ignored_pairs
+    if requested_cancers:
+        response["requested_cancers"] = requested_cancers
+        response["applied_cancers"] = applied_cancers
+        if ignored_cancers:
+            response["ignored_cancers"] = ignored_cancers
+
+    return response
 
 
 @mcp.tool()
