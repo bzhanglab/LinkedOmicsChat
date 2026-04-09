@@ -1020,8 +1020,9 @@ def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
         ax.set_yticklabels(pairs, fontsize=9)
         ax.set_xlim(-1.15, 1.15)
         ax.set_xlabel("Pearson r", fontsize=9)
-        ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
         ax.tick_params(axis="x", labelsize=8)
+
+        fig.suptitle(title, fontsize=12, fontweight="bold", y=0.985)
 
         # Legend: significance guide only (cohort labels are inline)
         from matplotlib.patches import Patch
@@ -1029,10 +1030,18 @@ def _generate_cis_correlation_static(data: dict, gene: str) -> Optional[dict]:
             Patch(facecolor="#888888", alpha=1.0,  label="p < 0.05  (*)"),
             Patch(facecolor="#888888", alpha=0.35, label="p ≥ 0.05 (ns)"),
         ]
-        ax.legend(handles=legend_elements, loc="lower center",
-                  bbox_to_anchor=(0.5, -0.08), ncol=2, fontsize=7.5, frameon=False)
+        fig.legend(
+            handles=legend_elements,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.945),
+            ncol=2,
+            fontsize=7.5,
+            frameon=False,
+            columnspacing=1.8,
+            handletextpad=0.6,
+        )
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
 
         png_buf = io.BytesIO()
         fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
