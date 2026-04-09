@@ -6,6 +6,7 @@ import type { Core, ElementDefinition, LayoutOptions, StylesheetStyle } from "cy
 import { Download, Maximize2, X, ZoomIn, ZoomOut, Minimize2 } from "lucide-react"
 import type { NetworkVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
+import { ToolCategoryGuide } from "@/components/ToolCategoryGuide"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 
@@ -414,6 +415,9 @@ export function NetworkPlot({ visualization, className }: NetworkPlotProps) {
             {isVisible && (
                 resolvedViz ? (
                     <div className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden">
+                        <div className="px-3 pt-3">
+                            <ToolCategoryGuide category="functional-networks" compact collapsible defaultExpanded={false} />
+                        </div>
                         {/* Toolbar */}
                         <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/30">
                             <span className="text-xs font-medium text-muted-foreground truncate">

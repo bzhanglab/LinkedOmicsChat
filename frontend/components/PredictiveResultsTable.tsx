@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, ChevronsUpDown, X, Download, Maximize2, Minimiz
 import type { PredictiveResultsTableVisualization } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
+import { ClinicalTrialsPrimer } from "@/components/ClinicalTrialsPrimer"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 const PAGE_SIZE = 15
@@ -320,6 +321,9 @@ export function PredictiveResultsTable({ visualization }: Props) {
                         Click a row to view expression plots
                     </div>
                 )}
+                <div className="px-3 pt-3">
+                    <ClinicalTrialsPrimer compact collapsible defaultExpanded={false} />
+                </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-xs border-collapse">
                         <thead>

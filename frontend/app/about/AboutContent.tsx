@@ -2,6 +2,9 @@
 import { useState } from "react"
 import Link from "next/link"
 import { OmicsCohorts } from "./OmicsCohorts"
+import { DrugTargetsPrimer } from "@/components/DrugTargetsPrimer"
+import { ClinicalTrialsPrimer } from "@/components/ClinicalTrialsPrimer"
+import { ToolCategoryGuide } from "@/components/ToolCategoryGuide"
 
 const TABS = [
     { id: "overview",     label: "Overview" },
@@ -232,6 +235,18 @@ export function AboutContent() {
                                         <p className="text-xs text-muted-foreground leading-relaxed">{a.desc}</p>
                                     </div>
                                 ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <h2 className="text-xl font-semibold mb-4">Interpretation Guides</h2>
+                            <div className="space-y-4">
+                                <DrugTargetsPrimer />
+                                <ClinicalTrialsPrimer />
+                                <ToolCategoryGuide category="functional-networks" />
+                                <ToolCategoryGuide category="pathway-enrichment" />
+                                <ToolCategoryGuide category="survival-analysis" />
+                                <ToolCategoryGuide category="expression-analysis" />
                             </div>
                         </div>
 

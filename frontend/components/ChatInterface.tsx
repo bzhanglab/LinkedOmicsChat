@@ -649,6 +649,7 @@ const MessagesPane = memo(function MessagesPane({
     onRequestResubmitEdit,
     isEditingBusy,
     onSend,
+    lastUserQuery,
     streamStatus,
     searchTerm,
     searchMatchIndices,
@@ -676,6 +677,7 @@ const MessagesPane = memo(function MessagesPane({
     onRequestResubmitEdit: () => void
     isEditingBusy: boolean
     onSend: (text: string) => void
+    lastUserQuery: string
     streamStatus: string | null
     searchTerm: string
     searchMatchIndices: number[]
@@ -780,8 +782,8 @@ const MessagesPane = memo(function MessagesPane({
                                             </div>
                                             <button
                                                 type="button"
-                                                onClick={() => sendMessageText(lastUserQueryRef.current)}
-                                                disabled={isLoading || !lastUserQueryRef.current}
+                                                onClick={() => onSend(lastUserQuery)}
+                                                disabled={isLoading || !lastUserQuery}
                                                 className="mt-3 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/70 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
                                                 <RefreshCw className="h-3 w-3" />
@@ -2816,7 +2818,7 @@ export const ChatInterface = memo(function ChatInterface({
         // Workaround for browser automation: check DOM value if React state is empty
         let messageText = typeof textOverride === "string" ? textOverride : inputRef.current.trim()
         if (!messageText) {
-            const inputElement = document.querySelector('input[placeholder*="genes, datasets"]') as HTMLInputElement
+            const inputElement = chatInputRef.current
             if (inputElement && inputElement.value.trim()) {
                 messageText = inputElement.value.trim()
                 if (typeof textOverride !== "string") {
@@ -3024,6 +3026,7 @@ export const ChatInterface = memo(function ChatInterface({
                 onRequestResubmitEdit={handleRequestResubmitEdit}
                 isEditingBusy={isLoading || isTruncating}
                 onSend={handleSend}
+                lastUserQuery={lastUserQueryRef.current}
                 streamStatus={streamStatus}
                 searchTerm={searchTerm}
                 searchMatchIndices={searchMatchIndices}
@@ -3057,7 +3060,7 @@ export const ChatInterface = memo(function ChatInterface({
                 <div className="max-w-4xl mx-auto flex gap-2 relative">
                     <Input
                         ref={chatInputRef}
-                        placeholder="Ask about genes, datasets, or analyses..."
+                        placeholder="Ask about genes, expression, survival, drug targets, trials, pathways, networks, or literature..."
                         value={input}
                         onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value }}
                         onKeyPress={(e) => e.key === "Enter" && handleSend()}

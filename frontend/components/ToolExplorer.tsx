@@ -33,6 +33,7 @@ import {
     Check,
     ClipboardList,
 } from "lucide-react"
+import { ToolCategoryGuide, getToolCategoryGuideKeyFromLabel } from "@/components/ToolCategoryGuide"
 
 interface ToolParameter {
     type?: string
@@ -404,6 +405,7 @@ export const EnrichmentRenderer = ({ data }: { data: any[] }) => {
 
     return (
         <div className="space-y-3">
+            <ToolCategoryGuide category="pathway-enrichment" compact collapsible defaultExpanded={false} />
             <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">
                 {data.length} enriched GO term{data.length !== 1 ? 's' : ''} · sorted by FDR
             </p>
@@ -1062,6 +1064,9 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
     const [activeCategory, setActiveCategory] = useState<string | null>(null)
+    const selectedCategory = selectedToolId ? getCategoryForTool(selectedToolId) : null
+    const activeGuideKey = getToolCategoryGuideKeyFromLabel(activeCategory)
+    const selectedGuideKey = getToolCategoryGuideKeyFromLabel(selectedCategory?.label)
 
     useEffect(() => {
         if (!_toolsCache) loadTools()
@@ -1274,6 +1279,10 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                     </div>
                 )}
 
+                {!selectedToolId && activeGuideKey && (
+                    <ToolCategoryGuide category={activeGuideKey} compact />
+                )}
+
                 {/* Tool Grid */}
                 {!selectedToolId && tools && (() => {
                     const filtered = Object.entries(tools).filter(([id, schema]) => {
@@ -1390,6 +1399,10 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                             </div>
                             <ToolDocumentation description={tools[selectedToolId].description} />
                         </div>
+
+                        {selectedGuideKey && (
+                            <ToolCategoryGuide category={selectedGuideKey} compact />
+                        )}
 
                         {/* Literature tool note */}
                         {selectedToolId.startsWith("literature::") && (

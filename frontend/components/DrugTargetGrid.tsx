@@ -5,6 +5,7 @@ import { X, ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react
 import type { DrugTargetVisualization, DrugDetail } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
+import { DrugTargetsPrimer, getDrugTargetTierDefinition } from "@/components/DrugTargetsPrimer"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 
@@ -17,7 +18,10 @@ function TierBadge({ tier }: { tier: string }) {
         T5: "bg-gray-100 text-gray-700 border-gray-300",
     }
     return (
-        <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${colors[tier] ?? "bg-gray-100 text-gray-700 border-gray-300"}`}>
+        <span
+            title={getDrugTargetTierDefinition(tier)}
+            className={`text-xs px-1.5 py-0.5 rounded border font-medium ${colors[tier] ?? "bg-gray-100 text-gray-700 border-gray-300"}`}
+        >
             {tier}
         </span>
     )
@@ -185,6 +189,10 @@ export function DrugTargetGrid({ visualization }: Props) {
                 </div>
             </div>
 
+            <div className="px-3 pt-3">
+                <DrugTargetsPrimer compact collapsible defaultExpanded={false} />
+            </div>
+
             {/* Drug tables per tier */}
             {drugsByTier.size > 0 && (
                 <div className="px-3 pt-3 pb-2 flex flex-wrap gap-4 items-start">
@@ -197,7 +205,7 @@ export function DrugTargetGrid({ visualization }: Props) {
                             <div key={t} className="border border-border rounded-lg overflow-hidden flex-shrink-0 shadow-sm bg-white dark:bg-gray-950">
                                 {/* Card title */}
                                 <div className="px-3 py-2 border-b border-border">
-                                    <span className="text-sm font-semibold text-foreground">{TIER_LABELS[t] ?? t}</span>
+                                    <span title={getDrugTargetTierDefinition(t)} className="text-sm font-semibold text-foreground">{TIER_LABELS[t] ?? t}</span>
                                 </div>
                                 <table className="text-xs border-collapse w-full">
                                     <thead>

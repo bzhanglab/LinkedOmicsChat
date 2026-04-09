@@ -4,6 +4,7 @@ import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
 import type { TargetSearchVisualization } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
+import { DrugTargetsPrimer, getDrugTargetTierDefinition } from "@/components/DrugTargetsPrimer"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 
@@ -154,6 +155,10 @@ export function TargetSearchTable({ visualization }: Props) {
                 />
             </div>
 
+            <div className="px-3 pt-3">
+                <DrugTargetsPrimer compact collapsible defaultExpanded={false} />
+            </div>
+
             {/* Table */}
             <div className="overflow-x-auto">
                 <table className="w-full text-xs border-collapse">
@@ -200,7 +205,7 @@ export function TargetSearchTable({ visualization }: Props) {
                                 <td className="px-3 py-1.5 font-medium text-foreground whitespace-nowrap">{row.gene}</td>
                                 <td className="px-3 py-1.5 whitespace-nowrap">
                                     {row.tier && row.tier !== "NA"
-                                        ? <span className={`inline-block px-1.5 py-0.5 rounded border text-[11px] font-medium ${TIER_BADGE[row.tier] ?? "bg-gray-100 text-gray-700 border-gray-300"}`}>
+                                        ? <span title={getDrugTargetTierDefinition(row.tier)} className={`inline-block px-1.5 py-0.5 rounded border text-[11px] font-medium ${TIER_BADGE[row.tier] ?? "bg-gray-100 text-gray-700 border-gray-300"}`}>
                                             {row.tier} · {TIER_LABELS[row.tier] ?? row.tier}
                                           </span>
                                         : <span className="text-muted-foreground">—</span>}
