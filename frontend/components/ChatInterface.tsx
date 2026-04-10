@@ -1018,26 +1018,33 @@ const MessagesPane = memo(function MessagesPane({
                                                 ) : null
                                             })()}
 
-                                            {/* Consolidated data sources footer */}
-                                            {message.toolSources && Object.keys(message.toolSources).length > 0 && (
-                                                <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2 border-t border-border/40">
-                                                    {Object.entries(message.toolSources).map(([key, url]) => {
-                                                        const src = INLINE_SOURCE_MAP[key]
-                                                        if (!src) return null
-                                                        return (
-                                                            <a
-                                                                key={key}
-                                                                href={(url as string) || src.url}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors no-underline"
-                                                            >
-                                                                {src.label}
-                                                            </a>
-                                                        )
-                                                    })}
-                                                </div>
-                                            )}
+                                            {/* Consolidated data sources footer — only show keys not already cited inline */}
+                                            {message.toolSources && Object.keys(message.toolSources).length > 0 && (() => {
+                                                const inlineKeys = new Set(
+                                                    [...((message.content ?? "").matchAll(/#source:([^)]+)/g))].map(m => m[1])
+                                                )
+                                                const footerEntries = Object.entries(message.toolSources).filter(([key]) => !inlineKeys.has(key))
+                                                if (footerEntries.length === 0) return null
+                                                return (
+                                                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2 border-t border-border/40">
+                                                        {footerEntries.map(([key, url]) => {
+                                                            const src = INLINE_SOURCE_MAP[key]
+                                                            if (!src) return null
+                                                            return (
+                                                                <a
+                                                                    key={key}
+                                                                    href={(url as string) || src.url}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors no-underline"
+                                                                >
+                                                                    {src.label}
+                                                                </a>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                )
+                                            })()}
 
                                             {message.timestamp && (
                                                 <p className="text-xs opacity-70 mt-2">
