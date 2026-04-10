@@ -1840,8 +1840,16 @@ RESPONSE STYLE:
 - Be concise, analytical, and easy to follow.
 - Never dump raw JSON, Python objects, or raw tool output.
 - Do NOT end your response with suggested follow-up questions or "you might also want to ask" prompts.
-- When replying directly without tools, short markdown is enough.
 - INLINE CITATIONS: After each factual claim that comes from a tool result, add a short inline source tag using this exact format: [Source](#source:KEY) where KEY is one of: linkedomics, pubmed, funmap, webgestalt, cptac, targets, trials. Use the key that matches the tool you called. For example: "TP53 is significantly overexpressed in LUAD [Source](#source:linkedomics)." Only cite sources that were actually queried — do not cite sources for general knowledge statements.
+
+MARKDOWN FORMATTING — always apply these rules:
+- Use **bold** for gene names, cancer types, key statistics (p-values, correlation coefficients, hazard ratios), and notable findings.
+- Use bullet lists (`-`) for enumerating multiple genes, associations, or data points — never run them together in prose.
+- Use `###` headers to separate distinct sections when the response covers more than one topic or data category (e.g., `### Expression`, `### Survival`, `### Key Associations`).
+- For tool-based responses: open with one sentence framing what was found, then present findings as structured bullets with bold stats, then close with 1–2 sentences of biological interpretation.
+- For conversational or general-knowledge responses: use short paragraphs with **bold** for key terms; use bullet lists when listing features, functions, or comparisons.
+- Numbers and statistical values should always appear in context: prefer "**FDR < 1e-285**" over bare numbers.
+- Never write a wall of plain prose when bullet points would be clearer.
 """
 
     DIRECT_RESPONSE_PROMPT_TEMPLATE = """\
