@@ -334,6 +334,10 @@ def _classify_tool_result_payload(tool_name: str, payload: Any) -> str:
         if isinstance(payload, dict) and isinstance(payload.get("results"), list) and payload["results"]:
             return "ok"
         return "empty"
+    if bare == "tcga_cis_association_analysis":
+        if isinstance(payload, dict) and isinstance(payload.get("results"), list) and payload["results"]:
+            return "ok"
+        return "empty"
 
     return "ok" if _generic_payload_has_data(payload) else "empty"
 
@@ -353,6 +357,11 @@ _NO_DATA_SUGGESTIONS: Dict[str, str] = {
         "- Confirm the TCGA cohort abbreviation (e.g. BRCA, LUAD, SKCM).\n"
         "- Try specifying the omics type explicitly (e.g. 'mRNA', 'methylation', 'copy number').\n"
         "- Some genes may not have significant associations in all cohorts."
+    ),
+    "tcga_cis": (
+        "- Confirm the gene symbol and TCGA cohort abbreviation (e.g. BRCA, LUAD).\n"
+        "- Specify the omics pair explicitly (e.g. source_omics='Methylation', target_omics='RNAseq').\n"
+        "- Try a different omics pair — not all combinations have data for every gene."
     ),
     "correlation": (
         "- Verify the gene symbol is correct.\n"
@@ -631,6 +640,10 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "gene_utils::resolve_gene_identifier",
         "linkedomics::funmap_neighborhood",
     ),
+    "tcga_cis": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::tcga_cis_association_analysis",
+    ),
     "correlation": (
         "gene_utils::resolve_gene_identifier",
         "linkedomics::get_cis_correlations",
@@ -694,6 +707,20 @@ _FUNMAP_KEYWORDS = (
     "functional partner", "functional association", "protein partner",
     "protein-protein interaction", "protein interaction network",
     "interactor", "interactome",
+)
+
+_TCGA_CIS_KEYWORDS = (
+    # explicit cis association phrasing
+    "cis association", "cis-association", "cis associations", "cis-associations",
+    # cross-omics correlation in TCGA context
+    "methylation correlat", "methylation associat",
+    "scna.*rnaseq", "copy number.*rnaseq", "scna.*rna", "copy number.*rna",
+    "scna.*rppa", "copy number.*rppa", "scna.*protein",
+    "rnaseq.*methylation", "rna.*methylation",
+    "mirna.*rnaseq", "mirnaseq.*rnaseq",
+    # genome-wide / pan-cancer cis scan phrasing
+    "genome-wide cis", "pan-cancer cis", "across tcga", "across all tcga",
+    "strongest.*cis", "top.*cis", "cis.*across",
 )
 
 _CORRELATION_KEYWORDS = (
@@ -930,6 +957,13 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "pathway"
     if any(keyword in normalized for keyword in _FUNMAP_KEYWORDS):
         return "funmap"
+    # Check TCGA cis association before generic correlation and TCGA survival routing.
+    if any(re.search(keyword, normalized) for keyword in _TCGA_CIS_KEYWORDS):
+        return "tcga_cis"
+    # TCGA + explicit cross-omics correlation phrasing → cis association (not survival).
+    _OMICS_LAYER_WORDS = ("methylation", "scna", "copy number", "rppa", "mirna", "mirnaseq")
+    if "tcga" in normalized and "correlat" in normalized and any(w in normalized for w in _OMICS_LAYER_WORDS):
+        return "tcga_cis"
     if any(keyword in normalized for keyword in _CORRELATION_KEYWORDS):
         return "correlation"
     has_survival = any(keyword in normalized for keyword in _SURVIVAL_KEYWORDS)
@@ -1353,6 +1387,7 @@ _TOOL_SOURCE_KEY: dict = {
     "overall_survival_per_cancer": "linkedomics",
     "batch_overall_survival_per_cancer": "linkedomics",
     "tcga_survival_analysis":      "linkedomics",
+    "tcga_cis_association_analysis": "linkedomics",
     "clinical_trial_information":       "trials",
     "batch_clinical_trial_information": "trials",
     "get_study_info":                   "trials",
@@ -1785,6 +1820,12 @@ If neither dataset is likely to have data (e.g. unsupported omics + unsupported 
 
 `tcga_survival_analysis` requires at least TWO of (cohort, gene, omics). Always specify `omics` when doing a pan-cancer query (no cohort): infer from the query ("expression" or unspecified → "RNAseq", "protein" → "RPPA", "methylation" → "Methylation", "miRNA" → "miRNASeq", "copy number" → "SCNA").
 
+CIS ASSOCIATION ROUTING (TCGA):
+- Use `tcga_cis_association_analysis` when the user asks about within-gene cross-omics correlations in TCGA data — e.g. "Is ESR1 methylation associated with its RNA expression?", "Which genes show SCNA-to-RNAseq cis associations in BRCA?", "How does TP53 copy number correlate with protein across TCGA cohorts?"
+- Parameter inference: map "methylation" → source_omics="Methylation", "RNA/expression" → "RNAseq", "protein/RPPA" → "RPPA", "copy number/SCNA" → "SCNA", "miRNA" → "miRNASeq".
+- Mode is inferred automatically from the parameters provided — omit parameters not mentioned by the user.
+- Do NOT use `get_cis_correlations` for TCGA queries; that tool is CPTAC-only.
+
 SPECIAL MODES:
 - If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.
 - If the user's message starts with "Show what LinkedOmicsChat can analyze for", call `cancer_gene_expression`, `overall_survival_per_cancer`, `tcga_survival_analysis`, and `clinical_trial_information`.
@@ -1869,7 +1910,8 @@ DIRECT RESPONSE RULES:
                     "- LinkedOmics / CPTAC: tumor-vs-normal expression, cis-correlations, FunMap, targets, trials, and CPTAC survival for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
                 )
                 lines.append(
-                    "- LinkedOmics / TCGA: multi-omics survival analysis across 35+ cohorts."
+                    "- LinkedOmics / TCGA: multi-omics survival analysis across 35+ cohorts via `tcga_survival_analysis`; "
+                    "multi-omics cis associations (Methylation, RNAseq, RPPA, SCNA, miRNA) across 35+ cohorts via `tcga_cis_association_analysis`."
                 )
             else:
                 lines.append(
@@ -1880,6 +1922,12 @@ DIRECT RESPONSE RULES:
                 lines.append(
                     "- LinkedOmics / TCGA: survival associations across 35+ cohorts and multiple omics layers "
                     "via `tcga_survival_analysis`."
+                )
+                lines.append(
+                    "- LinkedOmics / TCGA cis associations: within-gene cross-omics correlations "
+                    "(Methylation ↔ RNAseq, SCNA ↔ RNAseq, SCNA ↔ RPPA, etc.) across 35+ TCGA cohorts "
+                    "via `tcga_cis_association_analysis`. Supports single-gene/cohort/pair lookups, "
+                    "all-omics-pairs for a gene, pan-cancer comparisons, and genome-wide scans."
                 )
         if "gene_utils" in servers:
             lines.append(

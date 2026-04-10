@@ -826,7 +826,7 @@ const CATEGORIES: CategoryDef[] = [
         icon: BarChart2,
         color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
         borderColor: "border-teal-400 dark:border-teal-500",
-        tools: ["cancer_gene_expression", "batch_cancer_gene_expression", "get_cis_correlations", "batch_get_cis_correlations"],
+        tools: ["cancer_gene_expression", "batch_cancer_gene_expression", "get_cis_correlations", "batch_get_cis_correlations", "tcga_cis_association_analysis"],
     },
     {
         label: "Survival Analysis",
@@ -902,6 +902,16 @@ const TCGA_COHORT_NAMES: Record<string, string> = {
     TGCT: "Testicular Germ Cell Tumors", THCA: "Thyroid Carcinoma",
     THYM: "Thymoma", UCEC: "Uterine Corpus Endometrial Carcinoma",
     UCS: "Uterine Carcinosarcoma", UVM: "Uveal Melanoma",
+}
+
+function getToolSpecificEnumOptions(toolId: string | null, name: string, options: string[]): string[] {
+    if (
+        toolId?.endsWith("tcga_cis_association_analysis") &&
+        (name === "source_omics" || name === "target_omics")
+    ) {
+        return options.filter(option => option !== "miRNASeq")
+    }
+    return options
 }
 
 // ── Searchable enum select ────────────────────────────────────────────────────
@@ -1173,7 +1183,10 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     const renderFormInput = (name: string, param: ToolParameter, required: boolean) => {
         // FastMCP wraps Optional[Literal[...]] as anyOf: [{enum:[...]}, {type:"null"}]
         // so we extract enum from either location
-        const enumValues = param.enum ?? param.anyOf?.find(s => Array.isArray(s.enum))?.enum
+        const rawEnumValues = param.enum ?? param.anyOf?.find(s => Array.isArray(s.enum))?.enum
+        const enumValues = rawEnumValues
+            ? getToolSpecificEnumOptions(selectedToolId, name, rawEnumValues.map(String))
+            : undefined
         if (enumValues) {
             // Detect if this is a TCGA cohort parameter to show full names
             const isCohortParam = name === "cohort" ||
@@ -1184,7 +1197,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                     name={name}
                     description={param.description}
                     required={required}
-                    options={enumValues.map(String)}
+                    options={enumValues}
                     value={args[name] || ""}
                     onChange={(v) => setArgs({ ...args, [name]: v })}
                     getLabel={isCohortParam ? (opt) => TCGA_COHORT_NAMES[opt] : undefined}

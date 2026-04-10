@@ -25,8 +25,16 @@ from PIL import Image as PILImage
 from linkedomics_tcga_params import (
     detect_tcga_survival_mode,
     normalize_tcga_cohort,
+    normalize_tcga_cis_omics,
     normalize_tcga_omics,
+    normalize_tcga_st_method,
     tcga_parameter_error,
+    detect_tcga_cis_association_mode,
+    tcga_cis_parameter_error,
+    TCGACohort,
+    TCGACisOmics,
+    TCGAOmics,
+    TCGAStMethod,
 )
 
 # Create an MCP server
@@ -2037,7 +2045,7 @@ def tcga_survival_analysis(
     """
 
 
-    base_url = "http://aws1.zhang-lab.org:8236/api/survival"
+    base_url = "http://aws1.zhang-lab.org:8237/api/survival"
     cohort = cohort.strip() or None if cohort is not None else None
     gene = gene.strip() or None if gene is not None else None
     omics = omics.strip() or None if omics is not None else None
@@ -2128,6 +2136,135 @@ def tcga_survival_analysis(
         }
 
 
+
+
+@mcp.tool()
+def tcga_cis_association_analysis(
+    cohort: Optional[TCGACohort] = None,
+    gene: Optional[str] = None,
+    source_omics: Optional[TCGACisOmics] = None,
+    target_omics: Optional[TCGACisOmics] = None,
+    st_method: Optional[TCGAStMethod] = "spearman",
+) -> dict[str, Any]:
+    """Perform cis-association analysis using TCGA multi-omics data via the LinkedOmics API.
+
+    Evaluates whether measurements from one molecular layer are associated with
+    measurements from another layer for the same gene across TCGA cancer cohorts.
+    Supports flexible query modes from single-gene association lookups to
+    genome-wide scans between two omics layers.
+
+    Use this tool when:
+    - The user asks about cis associations between TCGA molecular layers
+    - Queries involve the relationship between one omics measurement and another for the same gene
+    - The user wants to scan which genes show strong within-gene cross-omics associations in a cohort
+
+    Use cases:
+    - "Is EGFR RNAseq associated with RPPA in LUAD?"
+    - "Show cis associations for TP53 in BRCA across available omics pairs"
+    - "Across TCGA cohorts, is ESR1 methylation associated with RNAseq?"
+    - "Which genes have strong SCNA to RNAseq cis associations in BRCA?"
+
+    Args:
+        cohort (str, optional): TCGA cancer cohort abbreviation (e.g., "BRCA", "LUAD").
+        gene (str, optional): HGNC gene symbol (e.g., "TP53", "ESR1").
+        source_omics (str, optional): Source omics type — one of: Methylation, RNAseq, RPPA, SCNA
+        target_omics (str, optional): Target omics type — one of: Methylation, RNAseq, RPPA, SCNA
+        st_method (str, optional): Statistical method — one of: spearman, pearson.
+
+    Returns:
+        A dictionary with cis-association results. Fields depend on the query mode.
+        dataset (str): Always "TCGA cis association".
+        mode (int): Query mode 1–4, inferred from which parameters were provided.
+        query (dict): The parameters sent to the API (cohort, gene, source_omics, target_omics, st_method).
+        n_results (int): Number of result objects returned.
+        results (list): List of result objects. Mode 1 — one object with correlation, pvalue, n, samples (patient-level points). Mode 2 — one object per omics pair with source_omics, target_omics, correlation, pvalue, n, samples. Mode 3 — one object per cohort with cohort, correlation, pvalue, n. Mode 4 — one object per gene with gene, correlation, pvalue, fdr, n.
+
+
+    Notes:
+    - Four query modes: (1) cohort+gene+source_omics+target_omics, (2) cohort+gene across all available omics pairs or filtered by only source_omics / only target_omics, (3) gene+source_omics+target_omics across all cohorts, (4) cohort+source_omics+target_omics genome-wide scan.
+    - Supported cohorts: ACC, BLCA, BRCA, CESC, CHOL, COADREAD, DLBC, ESCA, GBM, GBMLGG, HNSC, KICH, KIPAN, KIRC, KIRP, LAML, LGG, LIHC, LUAD, LUSC, MESO, OV, PAAD, PCPG, PRAD, SARC, SKCM, STAD, STES, TGCT, THCA, THYM, UCEC, UCS, UVM.
+    - Supported omics: Methylation, RNAseq, RPPA, SCNA.
+    - Supported statistical methods: spearman, pearson.
+    - Positive vs. negative correlations reflect directionality of association between the two molecular layers.
+    - Mode 4 (genome-wide scan) may return large datasets; downstream filtering is recommended.
+    - Missing or empty results indicate lack of data or an unsupported query combination.
+    """
+    base_url = "http://aws1.zhang-lab.org:8236/api/cis_association"
+    cohort = cohort.strip() or None if cohort is not None else None
+    gene = gene.strip() or None if gene is not None else None
+    source_omics = source_omics.strip() or None if source_omics is not None else None
+    target_omics = target_omics.strip() or None if target_omics is not None else None
+    st_method = (st_method.strip().lower() if st_method is not None else "spearman")
+
+    mode = detect_tcga_cis_association_mode(cohort, gene, source_omics, target_omics)
+    if mode is None:
+        return tcga_cis_parameter_error("Invalid parameter combination")
+
+    try:
+        params: dict[str, Any] = {}
+        if cohort:
+            params["cohort"] = normalize_tcga_cohort(cohort)
+        if gene:
+            params["gene"] = gene.upper()
+        if source_omics:
+            params["source_omics"] = normalize_tcga_cis_omics(source_omics)
+        if target_omics:
+            params["target_omics"] = normalize_tcga_cis_omics(target_omics)
+        if st_method:
+            params["st_method"] = normalize_tcga_st_method(st_method)
+    except ValueError as e:
+        return tcga_cis_parameter_error(str(e))
+
+    try:
+        r = requests.get(base_url, params=params, timeout=(80, 1200))
+        try:
+            resp = r.json()
+        except ValueError:
+            resp = {"raw_text": r.text}
+
+        r.raise_for_status()
+        results = resp.get("results", [])
+        if not isinstance(results, list):
+            return {
+                "status": "error",
+                "error": "Unexpected API response format",
+                "dataset": "TCGA cis association",
+                "mode": mode,
+                "query": params,
+                "raw": resp,
+                "results": [],
+            }
+
+        return {
+            "dataset": "TCGA cis association",
+            "mode": mode,
+            "query": params,
+            "n_results": len(results),
+            "results": results,
+        }
+    except requests.exceptions.HTTPError as e:
+        detail = None
+        try:
+            detail = r.json().get("detail")
+        except Exception:
+            detail = str(e)
+        return {
+            "status": "error",
+            "dataset": "TCGA cis association",
+            "mode": mode,
+            "query": params,
+            "message": detail,
+            "results": [],
+        }
+    except requests.exceptions.RequestException as e:
+        return {
+            "status": "error",
+            "dataset": "TCGA cis association",
+            "mode": mode,
+            "query": params,
+            "message": str(e),
+            "results": [],
+        }
 
 
 # Run with stdio transport

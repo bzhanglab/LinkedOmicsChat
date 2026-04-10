@@ -216,10 +216,15 @@ const GUIDE_CONFIG: Record<ToolCategoryGuideKey, GuideConfig> = {
                 label: "RNA ↔ SCNV",
                 description: "This pair helps assess copy-number dosage effects on expression.",
             },
+            {
+                label: "TCGA cis association",
+                description: "Tests within-gene cross-omics associations (e.g. methylation → RNA, SCNA → RPPA) across 35+ TCGA cohorts. Supports single-gene, pan-cancer, and genome-wide modes.",
+            },
         ],
         notes: [
             "Cis-correlations are evidence for regulatory hypotheses, not definitive mechanisms.",
             "Interpret each cohort separately because the same gene can behave differently across cancers.",
+            "TCGA cis association supports four query modes: single gene/cohort/pair, all omics pairs for a gene, pan-cancer comparison, and genome-wide scan.",
         ],
     },
 }
