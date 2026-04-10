@@ -624,7 +624,7 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
                     annot = f"p={pval:.1e}" if pval < 0.001 else f"p={pval:.3f}"
                 else:
                     color = (0.88, 0.88, 0.88)
-                    annot = "N.S." if not sig else ""
+                    annot = "N/A" if pval is None else "N.S."
                 row_c.append(color); row_a.append(annot)
                 dir_label = {1: "up", -1: "down", 0: "NS"}.get(direction, "")
                 csv_rows.append([layer_name, cancer, msg,
@@ -654,13 +654,13 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
             legend_els = [
                 Patch(facecolor="#c0392b", label="Higher expr → poor survival"),
                 Patch(facecolor="#2980b9", label="Lower expr → poor survival"),
-                Patch(facecolor="#dddddd", label="Not significant / no data"),
+                Patch(facecolor="#dddddd", label="Not significant (N.S.) or no data (N/A)"),
             ]
         else:
             legend_els = [
                 Patch(facecolor="#c0392b", label="Higher in tumor"),
                 Patch(facecolor="#2980b9", label="Lower in tumor"),
-                Patch(facecolor="#dddddd", label="Not significant / no data"),
+                Patch(facecolor="#dddddd", label="Not significant (N.S.) or no data (N/A)"),
             ]
         ax.legend(handles=legend_els, loc="upper center", fontsize=7.5,
                   framealpha=0.9, bbox_to_anchor=(0.5, -0.22), ncol=3)
@@ -2983,6 +2983,7 @@ Rules:
 - Be precise with biological terminology.
 - DO NOT state your identity or use phrases like 'As a Senior Analyst'.
 - MOST IMPORTANT: Directly answer what the user asked, don't just summarize data.
+- When data is partially available (some cohorts/omics present, others missing), lead with what IS available and what it shows. Mention missing data only as a brief caveat at the end, not as the opening statement.
 - Do NOT restate the full ranked list, table, or plot contents row-by-row.
 - Do NOT copy tool phrases verbatim unless a specific wording is biologically important.
 - Mention at most 3 specific genes, pathways, cohorts, or terms unless the user explicitly asked for an exhaustive list.
