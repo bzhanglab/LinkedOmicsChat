@@ -2987,12 +2987,16 @@ Rules:
 - Do NOT copy tool phrases verbatim unless a specific wording is biologically important.
 - Mention at most 3 specific genes, pathways, cohorts, or terms unless the user explicitly asked for an exhaustive list.
 - Prefer synthesis, ranking, caveats, and notable exceptions over repeating exact values that will already be visible in the detailed output.
+- FORMATTING (mandatory): Use **bold** for every gene name, cancer type/cohort, key statistic (p-value, FDR, correlation, hazard ratio), and notable finding. Example: "**TP53** shows a **Spearman ρ = 0.87** (FDR < **1e-285**) in **BRCA**." Never leave gene names or numerical statistics as plain text.
 """
             resp = await self._invoke_llm_tracked(
                 [
                     SystemMessage(
                         content=(
                             "You are a Senior Multi-Omics Bioinformatics Analyst.\n"
+                            "FORMATTING: Always use **bold** for gene names, cancer types, cohort names, "
+                            "and all key statistics (p-values, FDR, correlations, hazard ratios). "
+                            "Use bullet lists for multiple findings. Never leave gene names or numbers as plain text.\n"
                             f"{self.BIO_GUIDELINES}"
                         )
                     ),
@@ -3041,22 +3045,29 @@ Each question should be on its own line, numbered 1. 2. 3. etc.
 Do NOT include any preamble or explanation — output only the numbered questions.
 
 IMPORTANT — LinkedOmicsChat can ONLY answer questions that use one of these capabilities:
-- Protein/gene interaction neighborhood from FunMap (functional co-expression network)
-- Cancer gene expression levels (tumor vs normal) across TCGA cancer types
-- Overall survival associations for a gene across cancer types
-- TCGA survival analysis with specific omics layers (RNA, protein, methylation, copy number, miRNA)
-- Clinical trial information and drug targets for a gene
-- Cis-correlations (DNA methylation ↔ mRNA co-expression) for a gene in a cancer type
-- TCGA multi-omics cis associations (RNA, RPPA, Methylation, SCNA, miRNA) for a gene, cohort, or genome-wide scan
-- Pathway enrichment analysis (WebGestalt) on a list of genes
-- Literature search for a gene or topic
+- Tumor vs. normal differential expression (RNA + protein) for a gene across 10 CPTAC cancer cohorts (BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC)
+- Overall survival association (CPTAC) for a gene across cancer cohorts
+- TCGA survival analysis for a gene across cohorts or omics layers (RNAseq, RPPA, Methylation, SCNA, miRNASeq)
+- TCGA multi-omics cis associations — correlations between any two omics types (RNAseq, RPPA, Methylation, SCNA, miRNASeq) for a specific gene, cohort, or genome-wide scan
+- CPTAC cis correlations between any omics pair (RNA–protein, DNA–RNA, etc.) for a gene in a cancer type
+- Protein/gene interaction neighborhood from the FunMap functional co-expression network (pan-cancer, no cancer-type filter)
+- Drug target ranking and druggability assessment (oncology evidence tiers T1–T5, tumor dependency) for one or multiple genes
+- Clinical trial treatment-response prediction: which drugs/studies a gene or gene set predicts response to; meta-analysis of top biomarkers across trials; top genes/pathways in a specific study
+- Pathway enrichment analysis (WebGestalt GO overrepresentation) on a list of genes
+- Literature/PubMed search for a gene, drug, or research topic
 
-Every suggestion MUST be answerable by one of the capabilities above.
-Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structure, sequence alignment, GWAS, variant annotation, drug mechanism of action, or anything else outside this list.
+Every suggestion MUST be directly and fully answerable by one of the capabilities above.
+Do NOT suggest questions about: protein structure, sequence alignment, GWAS, somatic mutation profiles, variant annotation, drug mechanism of action, pharmacokinetics, cancer cohorts outside CPTAC (for expression/CPTAC survival) or TCGA (for TCGA survival/cis), or any other topic not listed above.
 """
             resp = await self._invoke_llm_tracked(
                 [
-                    SystemMessage(content="You are LinkedOmicsChat, a specialized cancer multi-omics assistant. Generate concise follow-up questions that are answerable using LinkedOmics data (expression, survival, drug targets, pathway enrichment, FunMap interactions)."),
+                    SystemMessage(content=(
+                        "You are LinkedOmicsChat, a specialized cancer multi-omics assistant. "
+                        "Generate concise follow-up questions that are FULLY answerable using only the listed capabilities. "
+                        "If you are unsure whether a question is answerable, do not suggest it. "
+                        "Never suggest questions about protein structure, mutations, variant annotation, GWAS, drug mechanisms, "
+                        "or cancer cohorts outside the supported datasets."
+                    )),
                     HumanMessage(content=prompt),
                 ],
                 usage_tracker=usage_tracker,
@@ -3407,7 +3418,11 @@ Please provide a helpful, natural, and professional response. If they are just g
                         SystemMessage(
                             content=(
                                 "You are a Senior Multi-Omics Bioinformatics Analyst. You are helpful, professional, and precise. "
-                                "CRITICAL RULE: Do not explicitly state your title (e.g., Avoid 'As a Senior Analyst...'). Just provide the response."
+                                "CRITICAL RULE: Do not explicitly state your title (e.g., Avoid 'As a Senior Analyst...'). Just provide the response.\n"
+                                "FORMATTING: Use rich markdown in every response. Use **bold** for gene names, key terms, and statistics. "
+                                "Use bullet lists (`-`) when enumerating features, functions, or data points. "
+                                "Use `###` headers to separate distinct sections when covering multiple topics. "
+                                "Never write walls of plain prose when bullets or headers would be clearer."
                             )
                         ),
                         HumanMessage(content=prompt)
@@ -3517,6 +3532,8 @@ Please provide a clear, informative response about this gene. Include the key de
                                 "You are a Senior Multi-Omics Bioinformatics Analyst. When providing information about genes, "
                                 "always include specific details from the data. Be clear, analytical, and professional.\n"
                                 "CRITICAL RULE: Do not explicitly state your title or identity (e.g., Avoid 'As a Senior Analyst...'). Just provide the analysis.\n"
+                                "FORMATTING: Use rich markdown. Use **bold** for gene names, key terms, and statistics. "
+                                "Use bullet lists for enumerating features or findings. Use `###` headers for distinct sections.\n"
                                 f"{self.BIO_GUIDELINES}"
                             )
                         ),
