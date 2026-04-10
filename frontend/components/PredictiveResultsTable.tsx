@@ -9,7 +9,7 @@ import { getAuthToken } from "@/lib/auth"
 import { ClinicalTrialsPrimer } from "@/components/ClinicalTrialsPrimer"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
-const PAGE_SIZE = 15
+const DEFAULT_PAGE_SIZE = 15
 
 type SortKey = "rank" | "label" | "studies" | "avg_auroc" | "meta_fdr" | "meta_fdr_signed" | "direction" | "series" | "disease" | "subtype" | "p_value" | "response_evaluation"
 type SortDir = "asc" | "desc"
@@ -31,7 +31,11 @@ function formatMetaFdr(row: Row) {
 }
 
 function directionText(direction?: string) {
-    return direction === "sensitive" ? "↑ Sensitive" : direction === "resistant" ? "↓ Resistant" : "—"
+    if (direction === "sensitive") return "↑ Sensitive"
+    if (direction === "resistant") return "↓ Resistant"
+    if (direction === "positive") return "Positive"
+    if (direction === "negative") return "Negative"
+    return "—"
 }
 
 // ── Plot modal ────────────────────────────────────────────────────────────────
@@ -246,6 +250,7 @@ export function PredictiveResultsTable({ visualization }: Props) {
     }, [isVisible, resolvedViz.rows?.length, visualization])
 
     const rows = resolvedViz.rows ?? []
+    const pageSize = Math.max(1, resolvedViz.page_size ?? DEFAULT_PAGE_SIZE)
 
     const sortedRows = useMemo(() => {
         const numericKeys = new Set<SortKey>(["rank", "studies", "avg_auroc", "meta_fdr", "meta_fdr_signed", "p_value"])
@@ -267,9 +272,9 @@ export function PredictiveResultsTable({ visualization }: Props) {
         })
     }, [rows, sortDir, sortKey])
 
-    const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE))
+    const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize))
     const currentPage = Math.min(page, totalPages)
-    const pageRows = sortedRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+    const pageRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
     const handleSort = (key: SortKey) => {
         if (sortKey === key) {
@@ -293,6 +298,7 @@ export function PredictiveResultsTable({ visualization }: Props) {
     const isTreatmentGene = resolvedViz.plot_type === "treatment_gene" || resolvedViz.plot_type === "treatment_gene_set"
     const isClickable = !!gene || isTreatmentGene
     const isClinicalTrial = resolvedViz.variant === "clinical_trial"
+    const isTcgaCis = resolvedViz.variant === "tcga_cis"
     const colStudies = resolvedViz.col_studies ?? "Studies"
     const colAuroc = resolvedViz.col_auroc ?? "Avg AUROC"
     const colFdr = resolvedViz.col_fdr ?? "Meta-FDR"
@@ -316,14 +322,16 @@ export function PredictiveResultsTable({ visualization }: Props) {
     return (
         <>
             <div ref={ref} className="rounded-lg border border-border bg-white dark:bg-gray-950 overflow-hidden shadow-sm my-2">
-                {isClickable && (
+                {isClickable && !isTcgaCis && (
                     <div className="px-3 py-1.5 bg-muted/20 border-b border-border/40 text-xs text-muted-foreground">
                         Click a row to view expression plots
                     </div>
                 )}
+                {!isTcgaCis && (
                 <div className="px-3 pt-3">
                     <ClinicalTrialsPrimer compact collapsible defaultExpanded={false} />
                 </div>
+                )}
                 <div className="overflow-x-auto">
                     <table className="w-full text-xs border-collapse">
                         <thead>
@@ -337,6 +345,11 @@ export function PredictiveResultsTable({ visualization }: Props) {
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("subtype")}>Subtype <SortIcon col="subtype" /></button></th>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("label")}>Treatment <SortIcon col="label" /></button></th>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("response_evaluation")}>Response Evaluation <SortIcon col="response_evaluation" /></button></th>
+                                </>) : isTcgaCis ? (<>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("rank")}># <SortIcon col="rank" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("label")}>Gene <SortIcon col="label" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("avg_auroc")}>{colAuroc} <SortIcon col="avg_auroc" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("meta_fdr")}>{colFdr} <SortIcon col="meta_fdr" /></button></th>
                                 </>) : (<>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("rank")}># <SortIcon col="rank" /></button></th>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("label")}>{resolvedViz.row_label} <SortIcon col="label" /></button></th>
@@ -361,6 +374,10 @@ export function PredictiveResultsTable({ visualization }: Props) {
                                             <span className="font-medium text-teal-600 dark:text-teal-400">{directionText(row.direction)}</span>
                                         ) : row.direction === "resistant" ? (
                                             <span className="font-medium text-rose-600 dark:text-rose-400">{directionText(row.direction)}</span>
+                                        ) : row.direction === "positive" ? (
+                                            <span className="font-medium text-rose-600 dark:text-rose-400">{directionText(row.direction)}</span>
+                                        ) : row.direction === "negative" ? (
+                                            <span className="font-medium text-blue-600 dark:text-blue-400">{directionText(row.direction)}</span>
                                         ) : directionText(row.direction)}
                                     </td>
                                 )
@@ -377,6 +394,21 @@ export function PredictiveResultsTable({ visualization }: Props) {
                                             <td className="px-3 py-1.5 whitespace-nowrap">{row.subtype || "—"}</td>
                                             <td className="px-3 py-1.5">{row.label}</td>
                                             <td className="px-3 py-1.5 whitespace-nowrap">{row.response_evaluation || "—"}</td>
+                                        </tr>
+                                    )
+                                }
+                                if (isTcgaCis) {
+                                    const corrClass = typeof row.avg_auroc === "number" && row.avg_auroc >= 0
+                                        ? "text-rose-600 dark:text-rose-400"
+                                        : "text-blue-600 dark:text-blue-400"
+                                    return (
+                                        <tr key={`${row.label}-${row.rank}`} className={trClass}>
+                                            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{row.rank}</td>
+                                            <td className="px-3 py-1.5 font-medium text-foreground">{row.label}</td>
+                                            <td className={`px-3 py-1.5 whitespace-nowrap tabular-nums font-medium ${corrClass}`}>
+                                                {formatAuroc(row.avg_auroc)}
+                                            </td>
+                                            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{formatMetaFdr(row)}</td>
                                         </tr>
                                     )
                                 }
@@ -400,7 +432,7 @@ export function PredictiveResultsTable({ visualization }: Props) {
                             })}
                             {pageRows.length === 0 && (
                                 <tr>
-                                    <td colSpan={isClinicalTrial ? 8 : 6} className="px-3 py-6 text-center text-muted-foreground italic">No results.</td>
+                                    <td colSpan={isClinicalTrial ? 8 : isTcgaCis ? 4 : 6} className="px-3 py-6 text-center text-muted-foreground italic">No results.</td>
                                 </tr>
                             )}
                         </tbody>

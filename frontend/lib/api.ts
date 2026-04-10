@@ -267,7 +267,7 @@ export interface TargetSearchVisualization {
 export interface PredictiveResultsTableVisualization {
     type: "predictive_results_table"
     /** "clinical_trial" renders production-style columns; default renders meta-analysis columns */
-    variant?: "clinical_trial"
+    variant?: "clinical_trial" | "tcga_cis"
     /** "gene_set" uses /api/plots/gene_set/ endpoint; "treatment_gene"/"treatment_gene_set" use POST; default uses /api/plots/gene/ */
     plot_type?: "gene_set" | "treatment_gene" | "treatment_gene_set"
     id: string
@@ -281,6 +281,8 @@ export interface PredictiveResultsTableVisualization {
     col_studies?: string
     col_auroc?: string
     col_fdr?: string
+    /** Optional UI page size override */
+    page_size?: number
     rows?: Array<{
         rank: number
         label: string
@@ -302,12 +304,28 @@ export interface PredictiveResultsTableVisualization {
     description?: string
 }
 
+export interface TCGACisResultsTableVisualization {
+    type: "tcga_cis_results_table"
+    id: string
+    title: string
+    rows?: Array<{
+        rank: number
+        gene: string
+        correlation: number
+        fdr: number
+        fdr_sci?: string
+        n?: number | string
+    }>
+    description?: string
+}
+
 export type AnyVisualization =
     | StaticVisualization
     | NetworkVisualization
     | DrugTargetVisualization
     | TargetSearchVisualization
     | PredictiveResultsTableVisualization
+    | TCGACisResultsTableVisualization
 
 export interface ExecutionTraceToolCall {
     tool: string

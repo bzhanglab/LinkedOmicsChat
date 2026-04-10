@@ -20,6 +20,7 @@ import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
 import { TargetSearchTable } from "@/components/TargetSearchTable"
 import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
+import { TCGACisResultsTable } from "@/components/TCGACisResultsTable"
 import { useAuth } from "@/components/AuthContext"
 import { EnrichmentRenderer } from "./ToolExplorer"
 import ExecutionTrace from "./ExecutionTrace"
@@ -181,6 +182,8 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable
                     const viz = vizMap[part.value]
                     return viz?.type === "predictive_results_table"
                         ? <PredictiveResultsTable key={i} visualization={viz} />
+                        : viz?.type === "tcga_cis_results_table"
+                        ? <TCGACisResultsTable key={i} visualization={viz} />
                         : null
                 }
                 return (
@@ -1007,6 +1010,8 @@ const MessagesPane = memo(function MessagesPane({
                                                                 ? <TargetSearchTable key={viz.id} visualization={viz} />
                                                                 : viz.type === "predictive_results_table"
                                                                 ? <PredictiveResultsTable key={viz.id} visualization={viz} />
+                                                                : viz.type === "tcga_cis_results_table"
+                                                                ? <TCGACisResultsTable key={viz.id} visualization={viz} />
                                                                 : <StaticPlot key={viz.id} visualization={viz} />
                                                         )}
                                                     </div>
@@ -1436,7 +1441,8 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                         }
                     } else if ((viz.type === "drug_target_grid" && !(viz as any).features) ||
                                (viz.type === "target_search_table" && !(viz as any).genes?.length) ||
-                               (viz.type === "predictive_results_table" && !(viz as any).rows?.length)) {
+                               (viz.type === "predictive_results_table" && !(viz as any).rows?.length) ||
+                               (viz.type === "tcga_cis_results_table" && !(viz as any).rows?.length)) {
                         if (viz.id) {
                             try {
                                 const data = await chatAPI.getVisualization(viz.id)
@@ -1620,14 +1626,41 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             const v = viz as any
             const rows: any[] = v.rows || []
             if (!rows.length) return ""
+            if (v.variant === "tcga_cis") {
+                let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+                html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
+                html += `<thead><tr>`
+                html += `<th style="${thS}">#</th>`
+                html += `<th style="${thS}">Gene</th>`
+                html += `<th style="${thS}">Correlation</th>`
+                html += `<th style="${thS}">FDR</th>`
+                html += `</tr></thead><tbody>`
+                rows.forEach((row, i) => {
+                    const rowBg = i % 2 === 0 ? rowEven : rowOdd
+                    const corrColor = Number(row.avg_auroc) >= 0 ? "#e11d48" : "#2563eb"
+                    html += `<tr style="${rowBg}">`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.rank ?? "—"}</td>`
+                    html += `<td style="${tdS}font-weight:600;color:hsl(var(--foreground));">${escapeHtml(row.label || "—")}</td>`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;color:${corrColor};font-weight:600;">${row.avg_auroc ?? "—"}</td>`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(row.meta_fdr_sci || (row.meta_fdr ?? "—"))}</td>`
+                    html += `</tr>`
+                })
+                html += `</tbody></table></div>`
+                if (v.description) html += `<div style="padding:8px 14px;font-size:11px;color:hsl(var(--muted-foreground));border-top:1px solid hsl(var(--border));background:hsl(var(--muted));">${escapeHtml(v.description)}</div>`
+                html += `</div>`
+                return html
+            }
+            const colStudies = v.col_studies || "Studies"
+            const colAuroc = v.col_auroc || "Avg AUROC"
+            const colFdr = v.col_fdr || "Meta-FDR"
             let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
             html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
             html += `<thead><tr>`
             html += `<th style="${thS}">#</th>`
             html += `<th style="${thS}">${escapeHtml(v.row_label || "Item")}</th>`
-            html += `<th style="${thS}">Studies</th>`
-            html += `<th style="${thS}">Avg AUROC</th>`
-            html += `<th style="${thS}">Meta-FDR</th>`
+            html += `<th style="${thS}">${escapeHtml(colStudies)}</th>`
+            html += `<th style="${thS}">${escapeHtml(colAuroc)}</th>`
+            html += `<th style="${thS}">${escapeHtml(colFdr)}</th>`
             html += `<th style="${thS}">Direction</th>`
             html += `</tr></thead><tbody>`
             rows.forEach((row, i) => {
@@ -1636,13 +1669,17 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                     ? `<span style="color:#0f766e;font-weight:600;">↑ Sensitive</span>`
                     : row.direction === "resistant"
                     ? `<span style="color:#e11d48;font-weight:600;">↓ Resistant</span>`
+                    : row.direction === "positive"
+                    ? `<span style="color:#e11d48;font-weight:600;">Positive</span>`
+                    : row.direction === "negative"
+                    ? `<span style="color:#2563eb;font-weight:600;">Negative</span>`
                     : "—"
                 html += `<tr style="${rowBg}">`
                 html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.rank ?? "—"}</td>`
                 html += `<td style="${tdS}font-weight:600;color:hsl(var(--foreground));">${escapeHtml(row.label || "—")}</td>`
                 html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.studies ?? "—"}</td>`
                 html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.avg_auroc ?? "—"}</td>`
-                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(row.meta_fdr_sci || "—")}</td>`
+                html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(row.meta_fdr_sci || (row.meta_fdr ?? "—"))}</td>`
                 html += `<td style="${tdS}white-space:nowrap;">${dir}</td>`
                 html += `</tr>`
             })
@@ -1657,6 +1694,24 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             if (viz.type === "drug_target_grid") return drugTargetGridHtml(viz)
             if (viz.type === "target_search_table") return targetSearchTableHtml(viz)
             if (viz.type === "predictive_results_table") return predictiveResultsTableHtml(viz)
+            if (viz.type === "tcga_cis_results_table") return predictiveResultsTableHtml({
+                ...viz,
+                type: "predictive_results_table",
+                variant: "tcga_cis",
+                row_label: "Gene",
+                col_auroc: "Correlation",
+                col_fdr: "FDR",
+                page_size: 10,
+                rows: (viz.rows || []).map((row: any) => ({
+                    rank: row.rank,
+                    label: row.gene,
+                    avg_auroc: row.correlation,
+                    meta_fdr: row.fdr,
+                    meta_fdr_sci: row.fdr_sci,
+                    studies: row.n,
+                    direction: row.correlation >= 0 ? "positive" : "negative",
+                })),
+            } as AnyVisualization)
             return ""
         }
 

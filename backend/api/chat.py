@@ -1108,7 +1108,7 @@ async def get_visualization(viz_id: str):
             json_data = _json.load(f)
 
     # JSON-backed interactive visualizations
-    if json_data.get("type") in ("drug_target_grid", "target_search_table", "predictive_results_table"):
+    if json_data.get("type") in ("drug_target_grid", "target_search_table", "predictive_results_table", "tcga_cis_results_table"):
         return {"id": viz_id, **json_data}
 
     # Network plot: nodes + edges stored in JSON sidecar

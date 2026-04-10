@@ -1281,6 +1281,698 @@ def _generate_tcga_cohort_bar_static(results: list, gene: str, omics_label: str)
         return None
 
 
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tcga_survival_mode4_top_hits(
+    results: list[dict[str, Any]],
+    *,
+    limit: int = 10,
+    fdr_threshold: float = 0.05,
+) -> list[dict[str, Any]]:
+    """Return the most significant genome-wide TCGA survival hits."""
+    import math
+
+    hits: list[dict[str, Any]] = []
+    for row in results or []:
+        gene = row.get("gene", "")
+        hr = _safe_float(row.get("hr"))
+        fdr = _safe_float(row.get("fdr") if row.get("fdr") is not None else row.get("pvalue"))
+        if not gene or hr is None or hr <= 0 or fdr is None or fdr >= fdr_threshold:
+            continue
+        hits.append({
+            "gene": gene,
+            "hr": hr,
+            "log2_hr": math.log2(hr),
+            "fdr": fdr,
+            "n": row.get("n", ""),
+            "direction": "harmful" if hr > 1 else "protective",
+        })
+
+    return sorted(hits, key=lambda entry: entry["fdr"])[:limit]
+
+
+def _tcga_survival_mode2_effect_entries(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize TCGA survival mode-2 entries using the same ordering as the plot."""
+    import math
+
+    omics_labels = {
+        "RNAseq": "RNA expression",
+        "RPPA": "protein (RPPA)",
+        "Methylation": "methylation",
+        "SCNA": "copy number",
+        "miRNASeq": "miRNA expression",
+    }
+
+    entries: list[dict[str, Any]] = []
+    for row in results or []:
+        hr = _safe_float(row.get("hr"))
+        if hr is None or hr <= 0:
+            continue
+        pval = _safe_float(row.get("fdr") if row.get("fdr") is not None else row.get("pvalue"))
+        omics = row.get("omics", "")
+        entries.append({
+            "omics": omics_labels.get(omics, omics),
+            "hr": hr,
+            "log2_hr": math.log2(hr),
+            "pvalue": pval,
+            "n": row.get("n", ""),
+            "significant": pval is not None and pval < 0.05,
+        })
+
+    return sorted(entries, key=lambda entry: entry["log2_hr"])
+
+
+def _tcga_survival_mode3_effect_entries(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize TCGA survival mode-3 entries using the same ordering as the cohort bar chart."""
+    import math
+
+    entries: list[dict[str, Any]] = []
+    for row in results or []:
+        hr = _safe_float(row.get("hr"))
+        cohort = row.get("cohort", "")
+        if hr is None or hr <= 0 or not cohort:
+            continue
+        pval = _safe_float(row.get("fdr") if row.get("fdr") is not None else row.get("pvalue"))
+        entries.append({
+            "cohort": cohort,
+            "cancer": _TCGA_COHORT_NAMES.get(cohort, cohort),
+            "hr": hr,
+            "log2_hr": math.log2(hr),
+            "pvalue": pval,
+            "n": row.get("n", ""),
+            "significant": pval is not None and pval < 0.05,
+        })
+
+    return sorted(entries, key=lambda entry: entry["log2_hr"])
+
+
+def _compact_tcga_survival_group_for_summary(
+    parsed_list: list[dict[str, Any]],
+    gene_name: str = "",
+    cohort_key: str = "",
+) -> dict[str, Any]:
+    """Build a summary-friendly grouped representation matching rendered TCGA survival sections."""
+    all_results: list[dict[str, Any]] = []
+    mode = 1
+    omics_query = ""
+    query_gene = ""
+    for parsed in parsed_list or []:
+        if not isinstance(parsed, dict):
+            continue
+        mode = parsed.get("mode", mode)
+        query = parsed.get("query", {}) or {}
+        omics_query = omics_query or query.get("omics", "")
+        query_gene = query_gene or query.get("gene", "")
+        all_results.extend(parsed.get("results") or [])
+
+    gene = (query_gene or gene_name or "").upper()
+    compact: dict[str, Any] = {
+        "dataset": "TCGA survival analysis",
+        "mode": mode,
+        "query": {
+            "gene": gene,
+            "cohort": cohort_key,
+            "omics": omics_query,
+        },
+        "n_results": len(all_results),
+    }
+
+    if not all_results:
+        return compact
+
+    if mode == 4:
+        top_hits = _tcga_survival_mode4_top_hits(all_results, limit=10, fdr_threshold=0.05)
+        compact.update({
+            "n_significant_fdr_lt_0_05": len(_tcga_survival_mode4_top_hits(all_results, limit=len(all_results), fdr_threshold=0.05)),
+            "ranking_basis": "Use `top_genes_by_fdr_lt_0_05` as the authoritative strongest-hit ranking. It matches the Top prognostic genes table shown with the volcano plot.",
+            "top_genes_by_fdr_lt_0_05": top_hits,
+        })
+        return compact
+
+    if mode == 3 and not cohort_key:
+        import math
+
+        entries = _tcga_survival_mode3_effect_entries(all_results)
+        compact.update({
+            "ranking_basis": "Use `top_harmful_cohorts_by_log2_hr` and `top_protective_cohorts_by_log2_hr` for the all-cohort bar chart ordering. Use `km_plots_generated_for_significant_cohorts` only when referring to the Kaplan-Meier plots appended below that chart.",
+            "top_protective_cohorts_by_log2_hr": entries[:5],
+            "top_harmful_cohorts_by_log2_hr": list(reversed(entries[-5:])),
+            "km_plots_generated_for_significant_cohorts": [
+                {
+                    "cohort": row.get("cohort", ""),
+                    "cancer": _TCGA_COHORT_NAMES.get(row.get("cohort", ""), row.get("cohort", "")),
+                    "hr": hr,
+                    "log2_hr": math.log2(hr) if hr is not None and hr > 0 else None,
+                    "pvalue": pval,
+                    "n": row.get("n", ""),
+                    "significant": True,
+                }
+                for row in sorted(
+                    all_results,
+                    key=lambda result: _safe_float(result.get("fdr") if result.get("fdr") is not None else result.get("pvalue")) or 1.0,
+                )
+                for hr in [_safe_float(row.get("hr"))]
+                for pval in [_safe_float(row.get("fdr") if row.get("fdr") is not None else row.get("pvalue"))]
+                if row.get("cohort") and pval is not None and pval < 0.05
+            ][:5],
+        })
+        return compact
+
+    if mode == 2:
+        entries = _tcga_survival_mode2_effect_entries(all_results)
+        compact.update({
+            "ranking_basis": "Use `omics_ranked_by_log2_hr` as the authoritative ordering for the all-omics survival bar chart.",
+            "omics_ranked_by_log2_hr": entries,
+        })
+        return compact
+
+    first = all_results[0]
+    compact.update({
+        "ranking_basis": "Single-result survival lookup.",
+        "correlation_context": {
+            "gene": first.get("gene", gene),
+            "hr": _safe_float(first.get("hr")),
+            "pvalue": _safe_float(first.get("fdr") if first.get("fdr") is not None else first.get("pvalue")),
+            "n": first.get("n", ""),
+        },
+    })
+    return compact
+
+
+def _trial_records_for_summary(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten trial results into a unified list for ranking."""
+    resistant = data.get("resistant", data.get("top_resistant", [])) or []
+    sensitive = data.get("sensitive", data.get("top_sensitive", [])) or []
+
+    records: list[dict[str, Any]] = []
+    for direction, studies in (("resistant", resistant), ("sensitive", sensitive)):
+        for study in studies:
+            if not isinstance(study, dict):
+                continue
+            auroc = _safe_float(study.get("auroc"))
+            fdr = _safe_float(study.get("fdr"))
+            records.append({
+                "treatment": str(study.get("treatment", "") or ""),
+                "series": study.get("series", ""),
+                "study_id": study.get("study_id", ""),
+                "direction": direction,
+                "auroc": auroc if auroc is not None else 0.5,
+                "fdr": fdr,
+                "pvalue": _safe_float(study.get("p_value")),
+                "sample_size": study.get("sample_size", ""),
+                "disease": study.get("disease", ""),
+                "subtype": study.get("subtype", ""),
+            })
+    return records
+
+
+def _compact_trial_dataset_for_summary(data: dict[str, Any], label: str) -> dict[str, Any]:
+    """Build a compact trial summary aligned to the AUROC chart and ranked table."""
+    records = _trial_records_for_summary(data)
+    compact: dict[str, Any] = {
+        "label": label,
+        "total_significant": data.get("total_significant", ""),
+        "total_studies": data.get("total_studies", ""),
+    }
+    if not records:
+        return compact
+
+    top_by_fdr = sorted(
+        records,
+        key=lambda rec: abs(rec["fdr"]) if rec["fdr"] is not None else 1.0,
+    )[:10]
+    top_by_auroc = sorted(
+        records,
+        key=lambda rec: (
+            -abs(rec["auroc"] - 0.5),
+            abs(rec["fdr"]) if rec["fdr"] is not None else 1.0,
+            rec["treatment"],
+            rec["study_id"],
+        ),
+    )[:10]
+
+    compact.update({
+        "ranking_basis": "Use `top_studies_by_abs_fdr` for the most statistically supported associations. Use `top_studies_by_auroc_extremity` for the strongest response separation. The AUROC bar chart itself is display-ordered from low to high AUROC.",
+        "top_studies_by_abs_fdr": top_by_fdr,
+        "top_studies_by_auroc_extremity": top_by_auroc,
+    })
+    return compact
+
+
+def _compact_meta_analysis_payload_for_summary(
+    payload: dict[str, Any],
+    *,
+    item_key: str,
+    label_key: str,
+) -> dict[str, Any]:
+    """Build a summary-friendly meta-analysis payload aligned with the plotted subset."""
+    status = payload.get("status", "unavailable")
+    data = payload.get("data") or {}
+    items = data.get(item_key) or []
+
+    compact: dict[str, Any] = {
+        "status": status,
+        "study_count": data.get("study_count", 0),
+        "filters": data.get("filters", {}),
+    }
+    if status != "available" or not items:
+        return compact
+
+    compact.update({
+        "ranking_basis": "Use `reported_top_items` as the authoritative ranking. The bidirectional bar chart uses only the first 25 reported items and reorders them by effect direction for display.",
+        "reported_top_items": [
+            {
+                "rank": idx,
+                "label": item.get(label_key, ""),
+                "avg_auroc": _safe_float(item.get("avg_auc")),
+                "meta_fdr": _safe_float(item.get("meta_fdr")),
+                "direction": item.get("direction", ""),
+            }
+            for idx, item in enumerate(items[:10], 1)
+        ],
+        "plot_subset_first_25": [item.get(label_key, "") for item in items[:25]],
+    })
+    return compact
+
+
+def _funmap_displayed_neighbors(payload: dict[str, Any], gene_name: str = "") -> list[str]:
+    """Return the neighbor set actually shown in the plotted network."""
+    gene = (gene_name or "").upper()
+    nodes = payload.get("nodes") or []
+    displayed = [
+        node.get("name", "")
+        for node in nodes
+        if isinstance(node, dict) and node.get("name") and node.get("name") != gene
+    ][:50]
+    if displayed:
+        return displayed
+    neighborhood = payload.get("neighborhood") or []
+    return [neighbor for neighbor in neighborhood if neighbor and neighbor != gene][:50]
+
+
+def _tcga_cis_mode4_entries(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize genome-wide TCGA cis-association rows for plotting and summarization."""
+    import math
+
+    entries: list[dict[str, Any]] = []
+    for row in results or []:
+        gene = row.get("gene", "")
+        cor = row.get("correlation")
+        fdr = row.get("fdr") if row.get("fdr") is not None else row.get("pvalue")
+        if cor is None or fdr is None or not gene:
+            continue
+        try:
+            cor_f = float(cor)
+            fdr_f = max(float(fdr), 1e-300)
+        except (ValueError, TypeError):
+            continue
+        entries.append({
+            "gene": gene,
+            "cor": cor_f,
+            "fdr": fdr_f,
+            "y": -math.log10(fdr_f),
+            "pvalue": row.get("pvalue", ""),
+            "n": row.get("n", ""),
+        })
+    return entries
+
+
+def _tcga_cis_mode4_top_hits(
+    results: list[dict[str, Any]],
+    *,
+    limit: int = 50,
+    fdr_threshold: float = 0.5,
+) -> list[dict[str, Any]]:
+    """Return the strongest mode-4 cis hits ranked by absolute correlation."""
+    entries = _tcga_cis_mode4_entries(results)
+    return sorted(
+        [entry for entry in entries if entry["fdr"] < fdr_threshold],
+        key=lambda entry: (-abs(entry["cor"]), entry["fdr"], entry["gene"]),
+    )[:limit]
+
+
+def _generate_tcga_cis_association_static(result: dict) -> Optional[list[dict[str, Any]]]:
+    """Generate mode-appropriate visualizations for tcga_cis_association_analysis.
+
+    API always uses `correlation` (not `cor`). Modes 1 and 2 include `samples`.
+
+    Mode 1 — scatter plot (sample points, single omics pair)
+    Mode 2 — multi-panel scatter grid (one subplot per omics pair, using sample data)
+    Mode 3 — horizontal bar chart (correlation per cohort, pan-cancer)
+    Mode 4 — volcano plot + bidirectional bar chart for top genome-wide hits
+    """
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        import numpy as np
+
+        mode = result.get("mode")
+        results = result.get("results", [])
+        query = result.get("query", {})
+        gene = (query.get("gene") or "").upper()
+        cohort = query.get("cohort") or ""
+        source_omics = query.get("source_omics") or ""
+        target_omics = query.get("target_omics") or ""
+        omics_label = f"{source_omics} → {target_omics}" if source_omics and target_omics else (source_omics or target_omics or "omics")
+
+        _SHORT = {
+            "RNAseq": "RNA", "RPPA": "RPPA", "Methylation": "Methyl.",
+            "SCNA": "SCNA", "miRNASeq": "miRNA",
+        }
+
+        if not results:
+            return None
+
+        # ── helpers ──────────────────────────────────────────────────────────
+
+        def _serialize_figure(fig, csv_rows, title_str):
+            png_buf = io.BytesIO()
+            fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+            png_buf.seek(0)
+            png_b64 = base64.b64encode(png_buf.read()).decode()
+
+            svg_buf = io.BytesIO()
+            fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+            svg_buf.seek(0)
+            svg_str = svg_buf.read().decode()
+            plt.close(fig)
+
+            csv_buf = io.StringIO()
+            writer = _csv.writer(csv_buf)
+            for row in csv_rows:
+                writer.writerow(row)
+
+            return {"png_b64": png_b64, "svg": svg_str, "csv": csv_buf.getvalue(), "title": title_str}
+
+        def _scatter_panel(ax, xs, ys_pts, cor_val, pval_val, x_lbl, y_lbl, title_str="", dot_color="#2980b9"):
+            """Draw a single scatter subplot with regression line and stat box."""
+            ax.scatter(xs, ys_pts, s=10, alpha=0.45, color=dot_color, linewidths=0, rasterized=True)
+            try:
+                m, b_val = np.polyfit(xs, ys_pts, 1)
+                x_line = np.linspace(min(xs), max(xs), 100)
+                ax.plot(x_line, m * x_line + b_val, color="#c0392b", linewidth=1.2, linestyle="--")
+            except Exception:
+                pass
+            parts = []
+            if cor_val is not None:
+                parts.append(f"r={float(cor_val):.3f}")
+            if pval_val is not None:
+                parts.append(f"p={float(pval_val):.1e}")
+            stat_txt = "  ".join(parts)
+            ax.set_xlabel(x_lbl, fontsize=7)
+            ax.set_ylabel(y_lbl, fontsize=7)
+            if title_str:
+                ax.set_title(title_str, fontsize=8, pad=4)
+            ax.tick_params(labelsize=6)
+            ax.spines[["top", "right"]].set_visible(False)
+            if stat_txt:
+                ax.text(0.97, 0.04, stat_txt, transform=ax.transAxes, fontsize=7,
+                        ha="right", va="bottom", color="#333333",
+                        bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                                  edgecolor="#cccccc", alpha=0.88))
+
+        def _bar_chart(entries, title, x_label):
+            """Horizontal bar chart of correlation values, colored by direction + significance."""
+            n = len(entries)
+            fig_h = max(3.0, n * 0.42 + 1.4)
+            fig, ax = plt.subplots(figsize=(8, fig_h))
+            fig.patch.set_facecolor("white")
+            ax.set_facecolor("white")
+            y_pos = list(range(n))
+            for i, (yp, e) in enumerate(zip(y_pos, entries)):
+                sig = e["pval"] < 0.05
+                color = "#c0392b" if e["cor"] > 0 else "#2980b9"
+                alpha = 1.0 if sig else 0.40
+                ax.barh(yp, e["cor"], color=color, alpha=alpha, height=0.62, edgecolor="none")
+                off = 0.015 if e["cor"] >= 0 else -0.015
+                ha = "left" if e["cor"] >= 0 else "right"
+                txt = f"r = {e['cor']:.3f}"
+                if sig:
+                    txt += " *"
+                ax.text(e["cor"] + off, yp, txt, va="center", ha=ha, fontsize=8, color="#333333")
+            ax.axvline(0, color="#444444", linewidth=0.8, linestyle="--")
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels([e["label"] for e in entries], fontsize=8.5)
+            ax.set_xlabel(x_label, fontsize=9)
+            ax.set_title(title, fontsize=10, pad=8)
+            ax.text(0.99, 0.01, "* p < 0.05  |  faded = not significant",
+                    transform=ax.transAxes, fontsize=7.5, color="#666666", ha="right", va="bottom")
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.grid(axis="x", color="#eeeeee", linewidth=0.6)
+            fig.tight_layout()
+            return fig
+
+        # ── Mode 1: single pair → scatter plot ───────────────────────────────
+        if mode == 1:
+            r0 = results[0]
+            samples = r0.get("samples", [])
+            if not samples or not isinstance(samples, list):
+                return None
+            xs = [s["source_val"] for s in samples if s.get("source_val") is not None]
+            ys_pts = [s["target_val"] for s in samples if s.get("target_val") is not None]
+            if len(xs) < 3:
+                return None
+            src_lbl = _SHORT.get(source_omics, source_omics)
+            tgt_lbl = _SHORT.get(target_omics, target_omics)
+            title = f"{gene} Cis Association — {cohort}  ({source_omics} → {target_omics})"
+            fig, ax = plt.subplots(figsize=(5.5, 5.0))
+            fig.patch.set_facecolor("white")
+            ax.set_facecolor("white")
+            # pass cor=None so _scatter_panel skips its small stat box; we draw a fuller one
+            _scatter_panel(ax, xs, ys_pts, None, None, source_omics, target_omics)
+            n_pts = r0.get("n", len(xs))
+            cor_val = r0.get("correlation")
+            pval_val = r0.get("pvalue")
+            ax.set_title(title, fontsize=10, pad=8)
+            stat_txt = (
+                f"r = {cor_val:.4f}\np = {pval_val:.2e}\nn = {n_pts}"
+                if cor_val is not None and pval_val is not None
+                else f"n = {n_pts}"
+            )
+            ax.text(0.97, 0.04, stat_txt, transform=ax.transAxes, fontsize=9,
+                    ha="right", va="bottom", color="#333333",
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#cccccc", alpha=0.9))
+            fig.tight_layout()
+            csv_rows = [["source_val", "target_val"]] + [
+                [s.get("source_val", ""), s.get("target_val", "")] for s in samples
+            ]
+            return [_serialize_figure(fig, csv_rows, title)]
+
+        # ── Mode 2: gene + cohort, all omics pairs → scatter grid ────────────
+        elif mode == 2:
+            # Build panel list — one per result that has sample data
+            panels = []
+            for r in results:
+                src = r.get("source_omics", "")
+                tgt = r.get("target_omics", "")
+                samples = r.get("samples", [])
+                cor = r.get("correlation")
+                pval = r.get("pvalue")
+                if not samples or cor is None:
+                    continue
+                xs = [s["source_val"] for s in samples if s.get("source_val") is not None]
+                ys_pts = [s["target_val"] for s in samples if s.get("target_val") is not None]
+                if len(xs) < 3:
+                    continue
+                panels.append({
+                    "xs": xs, "ys": ys_pts,
+                    "cor": float(cor), "pval": float(pval) if pval is not None else 1.0,
+                    "src": src, "tgt": tgt,
+                    "src_short": _SHORT.get(src, src), "tgt_short": _SHORT.get(tgt, tgt),
+                })
+            if not panels:
+                return None
+
+            n = len(panels)
+            ncols = min(3, n)
+            nrows = math.ceil(n / ncols)
+            fig_w = ncols * 3.4
+            fig_h = nrows * 3.2 + 0.6
+            title = f"{gene} Cis Associations — {cohort} (all omics pairs)"
+            fig = plt.figure(figsize=(fig_w, fig_h))
+            fig.patch.set_facecolor("white")
+            fig.suptitle(title, fontsize=11, y=1.01)
+
+            for i, p in enumerate(panels):
+                ax = fig.add_subplot(nrows, ncols, i + 1)
+                ax.set_facecolor("white")
+                sig = p["pval"] < 0.05
+                dot_color = "#c0392b" if (sig and p["cor"] > 0) else "#2980b9" if (sig and p["cor"] <= 0) else "#888888"
+                panel_title = f"{p['src_short']} → {p['tgt_short']}"
+                _scatter_panel(ax, p["xs"], p["ys"], p["cor"], p["pval"],
+                               p["src_short"], p["tgt_short"],
+                               title_str=panel_title, dot_color=dot_color)
+
+            fig.tight_layout()
+            csv_rows = [["source_omics", "target_omics", "correlation", "pvalue", "n"]] + [
+                [p["src"], p["tgt"], p["cor"], p["pval"], len(p["xs"])] for p in panels
+            ]
+            return [_serialize_figure(fig, csv_rows, title)]
+
+        # ── Mode 3: gene + omics pair, all cohorts → bar chart ───────────────
+        elif mode == 3:
+            entries = []
+            for r in results:
+                coh = r.get("cohort", "")
+                cor = r.get("correlation")
+                pval = r.get("pvalue")
+                if cor is None or not coh:
+                    continue
+                full = _TCGA_COHORT_NAMES.get(coh, coh)
+                entries.append({
+                    "cohort": coh,
+                    "label": f"{coh} — {full}" if full != coh else coh,
+                    "cor": float(cor),
+                    "pval": float(pval) if pval is not None else 1.0,
+                    "n": r.get("n", ""),
+                })
+            if not entries:
+                return None
+            entries.sort(key=lambda e: e["cor"])
+            title = f"{gene} Cis Association — {omics_label} across TCGA cohorts"
+            fig = _bar_chart(entries, title, "Spearman correlation (r)")
+            csv_rows = [["cohort", "cancer_type", "correlation", "pvalue", "n"]] + [
+                [e["cohort"], _TCGA_COHORT_NAMES.get(e["cohort"], e["cohort"]),
+                 e["cor"], e["pval"], e["n"]] for e in entries
+            ]
+            return [_serialize_figure(fig, csv_rows, title)]
+
+        # ── Mode 4: genome-wide scan → volcano plot ───────────────────────────
+        elif mode == 4:
+            entries = _tcga_cis_mode4_entries(results)
+            if not entries:
+                return None
+
+            xs = [e["cor"] for e in entries]
+            ys = [e["y"] for e in entries]
+            fdr_thresh = -math.log10(0.05)
+            colors_list = [
+                "#c0392b" if (e["fdr"] < 0.05 and e["cor"] > 0.3) else
+                "#2980b9" if (e["fdr"] < 0.05 and e["cor"] < -0.3) else
+                "#f39c12" if (e["fdr"] < 0.05) else "#bbbbbb"
+                for e in entries
+            ]
+            title = f"Genome-wide Cis Association — {cohort} ({omics_label})"
+            fig, ax = plt.subplots(figsize=(9.8, 5.8))
+            fig.patch.set_facecolor("white")
+            ax.set_facecolor("white")
+            ax.scatter(xs, ys, c=colors_list, s=11, alpha=0.65, linewidths=0, rasterized=True)
+
+            # Label top significant genes (highest -log10 FDR)
+            sig_entries = sorted(
+                [(i, e) for i, e in enumerate(entries) if e["fdr"] < 0.05 and abs(e["cor"]) > 0.3],
+                key=lambda ie: ie[1]["y"], reverse=True
+            )[:18]
+            for idx, e in sig_entries:
+                ax.text(e["cor"], e["y"] + 0.06, e["gene"], fontsize=6,
+                        ha="center", va="bottom", color="#222222", clip_on=True)
+
+            ax.axhline(fdr_thresh, color="#666666", linewidth=0.85, linestyle="--")
+            ax.axvline(0.3, color="#888888", linewidth=0.7, linestyle=":")
+            ax.axvline(-0.3, color="#888888", linewidth=0.7, linestyle=":")
+            ax.axvline(0, color="#444444", linewidth=0.5, linestyle="-")
+            ax.set_xlabel("Spearman correlation (r)", fontsize=9)
+            ax.set_ylabel("-log₁₀(FDR)", fontsize=9)
+            ax.set_title(title, fontsize=10, pad=8)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.grid(color="#f0f0f0", linewidth=0.5)
+
+            from matplotlib.patches import Patch
+            ax.legend(handles=[
+                Patch(color="#c0392b", label="FDR<0.05, r>0.3 (positive)"),
+                Patch(color="#2980b9", label="FDR<0.05, r<−0.3 (negative)"),
+                Patch(color="#f39c12", label="FDR<0.05, |r|≤0.3"),
+                Patch(color="#bbbbbb", label="not significant"),
+            ], fontsize=7.5, loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0, framealpha=0.9)
+
+            # Count sig genes
+            n_pos = sum(1 for e in entries if e["fdr"] < 0.05 and e["cor"] > 0.3)
+            n_neg = sum(1 for e in entries if e["fdr"] < 0.05 and e["cor"] < -0.3)
+            ax.text(0.01, 0.97, f"Positive: {n_pos}  Negative: {n_neg}  Total genes: {len(entries)}",
+                    transform=ax.transAxes, fontsize=8, color="#555555", va="top")
+            fig.tight_layout(rect=(0, 0, 0.82, 1))
+            volcano_csv_rows = [["gene", "correlation", "fdr", "pvalue", "n"]] + [
+                [e["gene"], e["cor"], e["fdr"], e["pvalue"], e["n"]] for e in entries
+            ]
+            plots = [_serialize_figure(fig, volcano_csv_rows, title)]
+
+            top_bar_entries = _tcga_cis_mode4_top_hits(results, limit=50, fdr_threshold=0.5)
+            if top_bar_entries:
+                bar_title = f"Top Cis-Associated Genes — {cohort} ({omics_label}, FDR < 0.5)"
+                fig_h = max(6.0, len(top_bar_entries) * 0.28 + 1.8)
+                fig, ax = plt.subplots(figsize=(9.2, fig_h))
+                fig.patch.set_facecolor("white")
+                ax.set_facecolor("white")
+
+                y_pos = np.arange(len(top_bar_entries))
+                colors = ["#c0392b" if e["cor"] >= 0 else "#2980b9" for e in top_bar_entries]
+                alphas = [1.0 if e["fdr"] < 0.05 else 0.65 for e in top_bar_entries]
+                bars = ax.barh(y_pos, [e["cor"] for e in top_bar_entries], color=colors, height=0.68, edgecolor="none")
+                for bar, alpha in zip(bars, alphas):
+                    bar.set_alpha(alpha)
+
+                max_abs_cor = max(abs(e["cor"]) for e in top_bar_entries)
+                x_pad = max(0.04, max_abs_cor * 0.14)
+                text_pad = max(0.015, max_abs_cor * 0.03)
+                ax.set_xlim(-(max_abs_cor + x_pad), max_abs_cor + x_pad)
+                ax.axvline(0, color="#444444", linewidth=0.8, linestyle="--")
+                ax.grid(axis="x", color="#eeeeee", linewidth=0.6)
+                ax.set_yticks(y_pos)
+                ax.set_yticklabels([e["gene"] for e in top_bar_entries], fontsize=7.5)
+                ax.invert_yaxis()
+                ax.set_xlabel("Correlation (r)", fontsize=9)
+                ax.set_title(bar_title, fontsize=10, pad=8)
+                ax.text(
+                    0.99,
+                    0.01,
+                    "Ranked by |r|  |  opaque = FDR < 0.05  |  faded = 0.05 ≤ FDR < 0.5",
+                    transform=ax.transAxes,
+                    fontsize=7.5,
+                    color="#666666",
+                    ha="right",
+                    va="bottom",
+                )
+                ax.spines[["top", "right"]].set_visible(False)
+
+                for yp, entry in zip(y_pos, top_bar_entries):
+                    x_val = entry["cor"]
+                    ax.text(
+                        x_val + (text_pad if x_val >= 0 else -text_pad),
+                        yp,
+                        f"{x_val:.3f}",
+                        va="center",
+                        ha="left" if x_val >= 0 else "right",
+                        fontsize=6.6,
+                        color="#333333",
+                    )
+
+                fig.tight_layout()
+                bar_csv_rows = [["rank", "gene", "correlation", "abs_correlation", "fdr", "pvalue", "n"]] + [
+                    [rank, e["gene"], e["cor"], abs(e["cor"]), e["fdr"], e["pvalue"], e["n"]]
+                    for rank, e in enumerate(top_bar_entries, 1)
+                ]
+                plots.append(_serialize_figure(fig, bar_csv_rows, bar_title))
+
+            return plots
+
+        else:
+            return None
+
+    except Exception as e:
+        logger.warning(f"[TCGA cis association] Failed to generate plot: {e}")
+        return None
+
+
 def _generate_funmap_network_static(nodes: list, edges: list, gene: str) -> Optional[dict]:
     """Generate a spring-layout network graph for FunMap functional partners.
 
@@ -2059,8 +2751,159 @@ Classify this query. Return JSON only."""
                 return v
             return v
 
+        def _unwrap_tool_value(v: Any) -> tuple[str, Any]:
+            wrapped_gene = v.get("_gene", "") if isinstance(v, dict) else ""
+            payload = v.get("_result") if isinstance(v, dict) and "_result" in v else v
+            return wrapped_gene, payload
+
+        def _rewrap_payload(original: Any, compact_payload: Any) -> Any:
+            if isinstance(original, dict) and isinstance(original.get("_result"), dict):
+                wrapped = dict(original)
+                wrapped["_result"] = compact_payload
+                return wrapped
+            return compact_payload
+
+        def _parsed_payload(v: Any) -> tuple[str, Any]:
+            wrapped_gene, payload = _unwrap_tool_value(v)
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    pass
+            return wrapped_gene, payload
+
+        def _compact_tcga_cis_mode4_payload(v: Any) -> Any:
+            payload = v.get("_result") if isinstance(v, dict) and isinstance(v.get("_result"), dict) else v
+            if not isinstance(payload, dict) or payload.get("mode") != 4:
+                return v
+
+            results_list = payload.get("results")
+            if not isinstance(results_list, list):
+                return v
+
+            top_hits = _tcga_cis_mode4_top_hits(results_list, limit=10, fdr_threshold=0.5)
+            if not top_hits:
+                return payload
+
+            compact_payload = {
+                "dataset": payload.get("dataset"),
+                "mode": payload.get("mode"),
+                "query": payload.get("query"),
+                "n_results": payload.get("n_results", len(results_list)),
+                "ranking_basis": "Use `top_hits_by_abs_correlation_fdr_lt_0_5` as the authoritative strongest-hit ranking. It matches the Top Cis-Associated Genes bar chart.",
+                "top_hits_by_abs_correlation_fdr_lt_0_5": [
+                    {
+                        "rank": rank,
+                        "gene": entry["gene"],
+                        "correlation": entry["cor"],
+                        "fdr": entry["fdr"],
+                        "pvalue": entry["pvalue"],
+                        "n": entry["n"],
+                    }
+                    for rank, entry in enumerate(top_hits, 1)
+                ],
+            }
+
+            if isinstance(v, dict) and isinstance(v.get("_result"), dict):
+                wrapped = dict(v)
+                wrapped["_result"] = compact_payload
+                return wrapped
+            return compact_payload
+
+        def _compact_trial_tool_payload(v: Any) -> Any:
+            wrapped_gene, payload = _parsed_payload(v)
+            if not isinstance(payload, dict):
+                return v
+
+            status = payload.get("status", "unavailable")
+            data = payload.get("data") or {}
+            is_batch = (
+                isinstance(data, dict)
+                and bool(data)
+                and all(isinstance(item, dict) and "status" in item for item in data.values())
+            )
+
+            if is_batch:
+                compact_items: Dict[str, Any] = {}
+                for label, item in data.items():
+                    if not isinstance(item, dict):
+                        continue
+                    item_status = item.get("status", "unavailable")
+                    if item_status != "available":
+                        compact_items[label] = {"status": item_status}
+                        continue
+                    compact_items[label] = _compact_trial_dataset_for_summary(item.get("data") or {}, label)
+                compact_payload = {
+                    "status": status,
+                    "batch": True,
+                    "items": compact_items,
+                }
+                return _rewrap_payload(v, compact_payload)
+
+            label = payload.get("gene_set") or wrapped_gene or payload.get("gene") or "query"
+            compact_payload = {
+                "status": status,
+                **_compact_trial_dataset_for_summary(data if isinstance(data, dict) else {}, str(label)),
+            }
+            return _rewrap_payload(v, compact_payload)
+
+        def _compact_meta_analysis_tool_payload(v: Any, *, item_key: str, label_key: str) -> Any:
+            _, payload = _parsed_payload(v)
+            if not isinstance(payload, dict):
+                return v
+            compact_payload = _compact_meta_analysis_payload_for_summary(
+                payload,
+                item_key=item_key,
+                label_key=label_key,
+            )
+            return _rewrap_payload(v, compact_payload)
+
+        def _compact_funmap_payload(v: Any) -> Any:
+            wrapped_gene, payload = _parsed_payload(v)
+            if not isinstance(payload, dict):
+                return v
+            compact_payload = {
+                "gene": wrapped_gene or payload.get("gene") or "",
+                "neighborhood_size": len(payload.get("neighborhood") or []),
+                "display_basis": "Use `displayed_network_neighbors_first_50` as the set shown in the network plot. The raw neighborhood may be larger.",
+                "displayed_network_neighbors_first_50": _funmap_displayed_neighbors(payload, wrapped_gene),
+            }
+            return _rewrap_payload(v, compact_payload)
+
+        def _apply_tool_specific_compaction(bare_tool_id: str, value: Any) -> Any:
+            if bare_tool_id.endswith("tcga_cis_association_analysis"):
+                return _compact_tcga_cis_mode4_payload(value)
+            if bare_tool_id.endswith("clinical_trial_information") or bare_tool_id.endswith("gene_set_trial_information"):
+                return _compact_trial_tool_payload(value)
+            if bare_tool_id.endswith("meta_analysis_predictive_genes"):
+                return _compact_meta_analysis_tool_payload(value, item_key="top_genes", label_key="gene")
+            if bare_tool_id.endswith("meta_analysis_predictive_gene_sets"):
+                return _compact_meta_analysis_tool_payload(value, item_key="top_gene_sets", label_key="gene_set")
+            if bare_tool_id.endswith("funmap_neighborhood"):
+                return _compact_funmap_payload(value)
+            return value
+
         compact: Dict[str, Any] = {}
+        tcga_survival_groups: Dict[tuple[str, str], list[dict[str, Any]]] = {}
+        tcga_survival_group_order: list[tuple[str, str]] = []
+
         for tool_id, raw in (results or {}).items():
+            bare_tool_id = tool_id.split('#')[0] if '#' in tool_id else tool_id
+            if bare_tool_id.endswith("tcga_survival_analysis"):
+                wrapped_gene, payload = _parsed_payload(raw)
+                if isinstance(payload, dict):
+                    query = payload.get("query", {}) or {}
+                    gene_key = (wrapped_gene or query.get("gene") or "").upper()
+                    cohort_key = query.get("cohort", "") or ""
+                    group_key = (gene_key, cohort_key)
+                    if group_key not in tcga_survival_groups:
+                        tcga_survival_groups[group_key] = []
+                        tcga_survival_group_order.append(group_key)
+                    tcga_survival_groups[group_key].append(payload)
+                    continue
+                compact[tool_id] = _sanitize_value(raw)
+                continue
+
             # If aggregator returned structured JSON string, parse and strip image parts.
             if isinstance(raw, str):
                 try:
@@ -2071,12 +2914,24 @@ Classify this query. Return JSON only."""
                             for p in parsed["parts"]
                             if not (isinstance(p, dict) and p.get("type") == "image")
                         ]
+                    parsed = _apply_tool_specific_compaction(bare_tool_id, parsed)
                     compact[tool_id] = _sanitize_value(parsed)
                     continue
                 except Exception:
                     compact[tool_id] = _sanitize_value(raw)
                     continue
+            raw = _apply_tool_specific_compaction(bare_tool_id, raw)
             compact[tool_id] = _sanitize_value(raw)
+
+        for gene_key, cohort_key in tcga_survival_group_order:
+            parsed_list = tcga_survival_groups.get((gene_key, cohort_key), [])
+            compact_key = (
+                f"linkedomics::tcga_survival_analysis"
+                f"[group:{gene_key or 'ALL_GENES'}:{cohort_key or 'all_cohorts'}]"
+            )
+            compact[compact_key] = _sanitize_value(
+                _compact_tcga_survival_group_for_summary(parsed_list, gene_key, cohort_key)
+            )
 
         text = json.dumps(compact, indent=2)
         if len(text) > 80_000:
@@ -2124,6 +2979,7 @@ Rules:
 - DO NOT use JSON, code blocks (```), or any preamble/metadata.
 - DO NOT add follow-up questions, suggested next queries, or "you might also want to ask" sections.
 - Use ONLY the provided tool results.
+- If the results include explicit guidance such as `ranking_basis`, `display_basis`, `top_hits_by_abs_correlation_fdr_lt_0_5`, `top_genes_by_fdr_lt_0_05`, `top_studies_by_abs_fdr`, or `reported_top_items`, treat those as authoritative instead of inferring order from raw list position.
 - Be precise with biological terminology.
 - DO NOT state your identity or use phrases like 'As a Senior Analyst'.
 - MOST IMPORTANT: Directly answer what the user asked, don't just summarize data.
@@ -2191,6 +3047,7 @@ IMPORTANT — LinkedOmicsChat can ONLY answer questions that use one of these ca
 - TCGA survival analysis with specific omics layers (RNA, protein, methylation, copy number, miRNA)
 - Clinical trial information and drug targets for a gene
 - Cis-correlations (DNA methylation ↔ mRNA co-expression) for a gene in a cancer type
+- TCGA multi-omics cis associations (RNA, RPPA, Methylation, SCNA, miRNA) for a gene, cohort, or genome-wide scan
 - Pathway enrichment analysis (WebGestalt) on a list of genes
 - Literature search for a gene or topic
 
@@ -2221,25 +3078,42 @@ Do NOT suggest questions about: general UniProt/Ensembl lookups, protein structu
 
     def _tool_catalog_for_prompt(self, available_tools: Dict[str, Dict[str, Any]]) -> str:
         """Build a compact tool catalog string for LLM prompting."""
+
+        def _first_paragraph(text: str) -> str:
+            """Return only the opening summary sentence(s), capped at 200 chars."""
+            text = text.strip()
+            # Stop at the first blank line (paragraph break)
+            para = text.split("\n\n")[0].replace("\n", " ").strip()
+            return para[:200] + ("…" if len(para) > 200 else "")
+
+        def _enum_from_param(v: dict) -> Optional[list]:
+            """Extract enum values from a plain enum or an anyOf [{enum:[...]},{type:'null'}] schema."""
+            if isinstance(v.get("enum"), list):
+                return v["enum"]
+            for sub in (v.get("anyOf") or []):
+                if isinstance(sub, dict) and isinstance(sub.get("enum"), list):
+                    return sub["enum"]
+            return None
+
         lines: List[str] = []
         for tool_id, meta in sorted(available_tools.items(), key=lambda kv: kv[0]):
-            desc = (meta.get("description") or "").strip().replace("\n", " ")
+            desc = _first_paragraph(meta.get("description") or "")
             schema = meta.get("inputSchema") or {}
             props = schema.get("properties") or {}
             required = schema.get("required") or []
 
-            # Compact signature: tool_id(args...)
             if props:
                 parts: List[str] = []
                 for k, v in props.items():
-                    t = v.get("type")
-                    enum = v.get("enum")
-                    if enum and isinstance(enum, list) and len(enum) <= 8:
-                        parts.append(f"{k}: enum{enum}")
-                    elif t:
-                        parts.append(f"{k}: {t}")
+                    enum_vals = _enum_from_param(v)
+                    t = v.get("type") or (v.get("anyOf") or [{}])[0].get("type") or "any"
+                    if enum_vals is not None and len(enum_vals) <= 8:
+                        parts.append(f"{k}: enum{enum_vals}")
+                    elif enum_vals is not None:
+                        # Long enum (e.g. 35 cohorts): show type + count hint
+                        parts.append(f"{k}: str ({len(enum_vals)} options)")
                     else:
-                        parts.append(f"{k}")
+                        parts.append(f"{k}: {t}")
                 sig = ", ".join(parts)
             else:
                 sig = ""
@@ -2779,6 +3653,8 @@ Please provide a clear, informative response about this gene. Include the key de
                 return "Clinical trial associations"
             if normalized in {"get_cis_correlations", "batch_get_cis_correlations"}:
                 return "Cis-Correlations"
+            if normalized == "tcga_cis_association_analysis":
+                return "TCGA Cis Association"
             return None
 
         def _covered_genes_for_result(tool_id: str, wrapped_result: Any) -> set[str]:
@@ -3769,6 +4645,127 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
+            if tool_id.endswith("tcga_cis_association_analysis"):
+                if not isinstance(parsed, dict):
+                    continue
+
+                mode_val = parsed.get("mode")
+                results_list = parsed.get("results", [])
+                query_params = parsed.get("query", {})
+                g = (query_params.get("gene") or gene_name or "").upper()
+                coh = query_params.get("cohort") or ""
+                src_o = query_params.get("source_omics") or ""
+                tgt_o = query_params.get("target_omics") or ""
+                coh_full = _TCGA_COHORT_NAMES.get(coh, coh)
+                coh_display = f"{coh} ({coh_full})" if coh and coh_full and coh_full != coh else (coh or coh_full)
+                omics_disp = f"{src_o} → {tgt_o}" if src_o and tgt_o else (src_o or tgt_o or "omics")
+                n_results = parsed.get("n_results", len(results_list))
+
+                if mode_val == 1:
+                    sec_title = f"TCGA Cis Association — {g} in {coh_display} ({omics_disp})"
+                elif mode_val == 2:
+                    sec_title = f"TCGA Cis Associations — {g} in {coh_display} (all omics pairs)"
+                elif mode_val == 3:
+                    sec_title = f"TCGA Cis Association — {g} ({omics_disp}, all cohorts)"
+                elif mode_val == 4:
+                    sec_title = f"TCGA Cis Association Genome Scan — {coh_display} ({omics_disp})"
+                else:
+                    sec_title = "TCGA Cis Association"
+
+                md = [f"## {sec_title}", ""]
+
+                # Scope line
+                if mode_val == 1:
+                    r1 = results_list[0] if results_list else {}
+                    cor_v = r1.get("correlation", "N/A")
+                    pval_v = r1.get("pvalue", "N/A")
+                    n_v = r1.get("n", "N/A")
+                    md.append(f"**Correlation:** {cor_v}  |  **p-value:** {pval_v}  |  **n:** {n_v}")
+                    md.append("")
+                    # Scatter plot if samples are available
+                    plot_dicts = _generate_tcga_cis_association_static(parsed) or []
+                    for fig_dict in plot_dicts:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({
+                            "type": "static_plot",
+                            "id": viz_id,
+                            "title": fig_dict["title"],
+                            **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                        })
+                        md.append(f"[PLOT:{viz_id}]")
+                        md.append("")
+                else:
+                    md.append(f"**Results:** {n_results}")
+                    md.append("")
+                    plot_dicts = _generate_tcga_cis_association_static(parsed) or []
+                    if plot_dicts:
+                        for fig_dict in plot_dicts:
+                            viz_id = _uuid.uuid4().hex
+                            _visualizations.append({
+                                "type": "static_plot",
+                                "id": viz_id,
+                                "title": fig_dict["title"],
+                                **{k: fig_dict[k] for k in ("png_b64", "svg", "csv")},
+                            })
+                            md.append(f"[PLOT:{viz_id}]")
+                            md.append("")
+
+                    rendered_mode4_table = False
+                    if mode_val == 4:
+                        top_hits = _tcga_cis_mode4_top_hits(results_list, limit=50, fdr_threshold=0.5)
+                        if top_hits:
+                            table_viz_id = _uuid.uuid4().hex
+                            _visualizations.append({
+                                "type": "predictive_results_table",
+                                "variant": "tcga_cis",
+                                "id": table_viz_id,
+                                "title": f"Top Cis-Associated Genes — {coh_display} ({omics_disp})",
+                                "row_label": "Gene",
+                                "col_auroc": "Correlation",
+                                "col_fdr": "FDR",
+                                "page_size": 10,
+                                "description": (
+                                    "Same ranked gene set as the bidirectional bar chart: "
+                                    "up to 50 genes with FDR < 0.5, ordered by absolute correlation. "
+                                    "Opaque bars indicate FDR < 0.05."
+                                ),
+                                "rows": [
+                                    {
+                                        "rank": rank,
+                                        "label": entry["gene"],
+                                        "avg_auroc": entry["cor"],
+                                        "meta_fdr": entry["fdr"],
+                                        "meta_fdr_sci": f"{entry['fdr']:.4e}",
+                                        "studies": entry["n"],
+                                        "direction": "positive" if entry["cor"] >= 0 else "negative",
+                                    }
+                                    for rank, entry in enumerate(top_hits, 1)
+                                ],
+                            })
+                            md.append("**Top hits by |correlation| (same ranking as the bar chart):**")
+                            md.append("")
+                            md.append("[TABLE:" + table_viz_id + "]")
+                            md.append("")
+                            rendered_mode4_table = True
+
+                    if not plot_dicts and not rendered_mode4_table:
+                        # Fallback table (cap at 20 rows)
+                        if results_list:
+                            keys = list(results_list[0].keys())
+                            md.append("| " + " | ".join(keys) + " |")
+                            md.append("| " + " | ".join(["---"] * len(keys)) + " |")
+                            for row in results_list[:20]:
+                                md.append("| " + " | ".join(str(row.get(k, "")) for k in keys) + " |")
+                            if len(results_list) > 20:
+                                md.append(f"_(showing 20 of {len(results_list)} results)_")
+                            md.append("")
+
+                md.append("> **Source:** [LinkedOmics TCGA](#source:linkedomics)")
+                sections.append("\n".join(md) + "\n")
+                if len(sections) > _sections_before:
+                    _rendered_tool_ids.add(tool_id)
+                continue
+
             if tool_id.endswith("webgestalt"):
                 rows = []
                 if isinstance(parsed, dict):
@@ -4059,7 +5056,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         for viz in visualizations:
             viz_type = viz.get("type")
             viz_id = viz.get("id")
-            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid", "target_search_table", "predictive_results_table"):
+            if not viz_id or viz_type not in ("static_plot", "network_plot", "drug_target_grid", "target_search_table", "predictive_results_table", "tcga_cis_results_table"):
                 continue
             safe_viz_id = os.path.basename(str(viz_id))
             title = viz.get("title", "")
@@ -4074,6 +5071,15 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                 continue
 
             if viz_type == "predictive_results_table":
+                try:
+                    with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
+                        _json.dump({k: viz[k] for k in viz if k != "id"}, f)
+                    write_visualization_index(safe_viz_id, session_id, title)
+                except Exception:
+                    pass
+                continue
+
+            if viz_type == "tcga_cis_results_table":
                 try:
                     with open(plot_dir / f"{safe_viz_id}.json", "w", encoding="utf-8") as f:
                         _json.dump({k: viz[k] for k in viz if k != "id"}, f)
