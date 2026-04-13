@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     
     # Mock Mode
     MOCK_LLM: bool = True
+
+    # Planner node (set USE_PLANNER=false to bypass for A/B comparison)
+    USE_PLANNER: bool = True
     
     # Ollama (Local LLM)
     USE_OLLAMA: bool = False

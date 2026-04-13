@@ -213,13 +213,29 @@ async def _run_case_with_trace(
         raise RuntimeError("LangGraphOrchestrator is not available for trace capture.")
 
     started = time.perf_counter()
-    session, effective_query, active_gene, initial_state = await langgraph_orch._prepare_execution_context(
+    prepared = await langgraph_orch._prepare_execution_context(
         case["query"],
         user_id,
         session_id,
         None,
         log_prefix="[LangGraph Eval]",
     )
+    if len(prepared) == 5:
+        session, effective_query, active_gene, initial_state, query_plan = prepared
+        if initial_state is None:
+            formatted_response = langgraph_orch._build_clarification_response(
+                case["query"], session, query_plan
+            )
+            turn_id = await langgraph_orch._save_query(session, case["query"], formatted_response)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return {
+                **formatted_response,
+                "session_id": session["id"],
+                "turn_id": turn_id,
+                "_execution_trace": [],
+            }, elapsed_ms
+    else:
+        session, effective_query, active_gene, initial_state = prepared
     final_state = await langgraph_orch._graph.ainvoke(initial_state)
     formatted_response = await langgraph_orch._build_response_from_final_state(
         query=case["query"],

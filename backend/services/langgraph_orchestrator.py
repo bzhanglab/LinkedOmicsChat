@@ -10,6 +10,7 @@ like funmap_neighborhood → webgestalt without any hardcoded chains.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import pathlib
@@ -63,6 +64,10 @@ class AgentState(TypedDict):
     allow_active_gene_reference: bool
     # Conservative routing scope inferred from the user query
     tool_scope: str
+    # More specific deterministic workflow label layered on top of tool_scope
+    workflow: str
+    # Planner decision: intent, approach, and optional clarification request
+    query_plan: Optional[Dict[str, Any]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -655,6 +660,14 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
     ),
 }
 
+
+@dataclass(frozen=True)
+class RouteDecision:
+    """Deterministic routing decision layered on top of the broad tool scope."""
+
+    tool_scope: str
+    workflow: str
+
 _PENDING_OFFER_RE = re.compile(
     r"If you['’]d like, I can\s+(.+?)(?:[.?!])?\s*$",
     re.IGNORECASE | re.DOTALL,
@@ -673,6 +686,39 @@ _PLATFORM_PATTERNS = (
     "what cohorts",
     "what is linkedomicschat",
 )
+
+_CPTAC_SURVIVAL_COHORTS = frozenset({
+    "BRCA", "COAD", "CCRCC", "GBM", "HNSCC", "LSCC", "LUAD", "OV", "PDAC", "UCEC",
+})
+
+_SURVIVAL_TCGA_ONLY_OMICS = (
+    "methylation", "mirna", "mirnaseq", "scna", "copy number",
+)
+
+_STRUCTURE_OUT_OF_SCOPE_PATTERNS = (
+    re.compile(r"\b3d structure\b", re.IGNORECASE),
+    re.compile(r"\bthree[- ]dimensional structure\b", re.IGNORECASE),
+    re.compile(r"\bprotein structure\b", re.IGNORECASE),
+    re.compile(r"\bcrystal structure\b", re.IGNORECASE),
+    re.compile(r"\bstructural model\b", re.IGNORECASE),
+    re.compile(r"\balphafold\b", re.IGNORECASE),
+    re.compile(r"\bpdb\b", re.IGNORECASE),
+)
+
+_DEFAULT_WORKFLOW_BY_SCOPE: Dict[str, str] = {
+    "none": "direct_response",
+    "expression": "expression_analysis",
+    "survival": "survival_dual_dataset",
+    "tcga_survival": "survival_tcga_only",
+    "targets": "target_lookup",
+    "trials": "clinical_trials",
+    "literature": "literature_search",
+    "funmap": "funmap_neighborhood",
+    "tcga_cis": "tcga_cis_association",
+    "correlation": "cptac_cis_correlation",
+    "pathway": "pathway_enrichment",
+    "full": "broad_full",
+}
 
 _LITERATURE_KEYWORDS = (
     "paper", "papers", "pubmed", "literature", "publication", "publications",
@@ -922,6 +968,16 @@ def _extract_cancer_type(query: str) -> Optional[str]:
     return None
 
 
+def _extract_cancer_codes(query: str) -> List[str]:
+    """Return ordered cohort abbreviations mentioned in the query."""
+    upper = (query or "").upper()
+    matches: List[str] = []
+    for abbrev in _CANCER_TYPE_MAP:
+        if re.search(r"\b" + re.escape(abbrev) + r"\b", upper):
+            matches.append(abbrev)
+    return matches
+
+
 def _query_uses_active_gene_reference(query: str) -> bool:
     """Return True when the user explicitly refers back to the previous gene context."""
     return bool(_ACTIVE_GENE_REFERENCE_RE.search(query or ""))
@@ -939,6 +995,12 @@ def _looks_conversational(query: str) -> bool:
 def _looks_platform_question(query: str) -> bool:
     normalized = query.strip().lower()
     return any(pattern in normalized for pattern in _PLATFORM_PATTERNS)
+
+
+def _is_out_of_scope_structure_query(query: str) -> bool:
+    """Return True for explicit protein-structure requests outside LinkedOmics scope."""
+    normalized = (query or "").strip()
+    return any(pattern.search(normalized) for pattern in _STRUCTURE_OUT_OF_SCOPE_PATTERNS)
 
 
 def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
@@ -1003,11 +1065,61 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
     return "full"
 
 
+def _infer_survival_route_decision(query: str, initial_scope: str) -> RouteDecision:
+    """Choose the specific survival workflow after broad survival routing matched."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    cohort_codes = _extract_cancer_codes(query)
+
+    if any(code not in _CPTAC_SURVIVAL_COHORTS for code in cohort_codes):
+        return RouteDecision(tool_scope="tcga_survival", workflow="survival_tcga_only")
+    if any(marker in normalized for marker in _SURVIVAL_TCGA_ONLY_OMICS):
+        return RouteDecision(tool_scope="tcga_survival", workflow="survival_tcga_only")
+    if "tcga" in normalized or initial_scope == "tcga_survival":
+        return RouteDecision(tool_scope="tcga_survival", workflow="survival_tcga_only")
+    if "cptac" in normalized:
+        return RouteDecision(tool_scope="survival", workflow="survival_cptac_only")
+    return RouteDecision(tool_scope="survival", workflow="survival_dual_dataset")
+
+
+def _infer_route_decision(query: str, active_gene: Optional[str] = None) -> RouteDecision:
+    """Infer a deterministic tool scope plus a more specific workflow label."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    if normalized.startswith("answer using general knowledge"):
+        return RouteDecision(tool_scope="none", workflow="general_knowledge")
+    if normalized.startswith("show what linkedomicschat can analyze for"):
+        return RouteDecision(tool_scope="full", workflow="capability_overview")
+    if _looks_conversational(query):
+        return RouteDecision(tool_scope="none", workflow="direct_response")
+    if _looks_platform_question(query):
+        return RouteDecision(tool_scope="none", workflow="platform_question")
+    if _is_out_of_scope_structure_query(query):
+        return RouteDecision(tool_scope="none", workflow="out_of_scope_structure")
+
+    tool_scope = _infer_tool_scope(query, active_gene)
+    if tool_scope in {"survival", "tcga_survival"}:
+        return _infer_survival_route_decision(query, tool_scope)
+    return RouteDecision(
+        tool_scope=tool_scope,
+        workflow=_DEFAULT_WORKFLOW_BY_SCOPE.get(tool_scope, "broad_full"),
+    )
+
+
 def _make_agent_node(llm_with_tools, system_prompt: str):
     """Return an async agent node function closed over the bound LLM."""
     async def agent_node(state: AgentState) -> Dict[str, Any]:
+        # Inject planner's intent/approach as a private note in the system prompt
+        plan = state.get("query_plan") or {}
+        if plan and not plan.get("needs_clarification") and plan.get("intent"):
+            planning_note = (
+                "\n\n[PLANNING NOTE — internal context, do not repeat to user]\n"
+                f"Intent: {plan['intent']}\n"
+                f"Approach: {plan.get('approach', '')}"
+            )
+            enriched_prompt = system_prompt + planning_note
+        else:
+            enriched_prompt = system_prompt
         # Prepend system message on every call so it's always in context
-        messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        messages = [SystemMessage(content=enriched_prompt)] + state["messages"]
         started = time.perf_counter()
         response = await llm_with_tools.ainvoke(messages)
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -1238,6 +1350,11 @@ def _make_tool_node(tools: List[BaseTool]):
         allow_active_gene_reference = bool(state.get("allow_active_gene_reference"))
         tool_scope = state.get("tool_scope", "full")
         call_counts: Dict[str, int] = {}
+        for existing_key in new_results:
+            base_key, sep, suffix = existing_key.rpartition("#")
+            normalized_key = base_key if sep and suffix.isdigit() else existing_key
+            next_count = int(suffix) + 1 if sep and suffix.isdigit() else 1
+            call_counts[normalized_key] = max(call_counts.get(normalized_key, 0), next_count)
         step_tool_metrics: List[Dict[str, Any]] = []
         started = time.perf_counter()
         single_tool_counts: Dict[str, int] = {}
@@ -1586,6 +1703,73 @@ def _is_vague_analysis_query(query: str, requested_genes: List[str]) -> bool:
     return not any(kw in normalized for kw in _SPECIFIC_ANALYSIS_KEYWORDS)
 
 
+_CORRELATION_DISAMBIGUATORS = (
+    "cis", "tcga", "cptac", "methyl", "copy number", "scna", "mirna", "mirnaseq",
+    "rna", "rnaseq", "mrna", "protein", "rppa", "surviv", "trial", "drug",
+    "target", "funmap", "network", "interaction", "pathway",
+)
+
+
+def _is_bare_gene_context_query(
+    query: str,
+    requested_genes: List[str],
+    requested_identifiers: List[str],
+    active_gene: Optional[str] = None,
+) -> bool:
+    """Return True for bare or context-only gene prompts that need clarification."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    if not normalized or _looks_conversational(query) or _looks_platform_question(query):
+        return False
+    if any(kw in normalized for kw in _SPECIFIC_ANALYSIS_KEYWORDS):
+        return False
+
+    tokens = normalized.split()
+    has_explicit_gene = bool(requested_genes or requested_identifiers)
+    has_context_gene_ref = bool(active_gene and active_gene != "unknown" and _query_uses_active_gene_reference(query))
+
+    if len(tokens) <= 3 and has_explicit_gene:
+        return True
+    if len(tokens) <= 5 and has_context_gene_ref:
+        return True
+    return False
+
+
+def _is_ambiguous_correlation_query(
+    query: str,
+    requested_genes: List[str],
+    requested_identifiers: List[str],
+    active_gene: Optional[str] = None,
+) -> bool:
+    """Return True for generic correlation requests that need disambiguation."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    if "correlat" not in normalized:
+        return False
+
+    has_gene_context = bool(requested_genes or requested_identifiers)
+    if not has_gene_context and not (active_gene and active_gene != "unknown" and _query_uses_active_gene_reference(query)):
+        return False
+
+    return not any(marker in normalized for marker in _CORRELATION_DISAMBIGUATORS)
+
+
+def _should_use_planner_for_query(
+    query: str,
+    requested_genes: List[str],
+    requested_identifiers: List[str],
+    active_gene: Optional[str] = None,
+) -> bool:
+    """
+    Limit planner usage to ambiguity/clarification cases.
+
+    Explicit scientific requests should stay on the deterministic routing path.
+    """
+    return (
+        _is_vague_analysis_query(query, requested_genes)
+        or _is_bare_gene_context_query(query, requested_genes, requested_identifiers, active_gene)
+        or _is_ambiguous_correlation_query(query, requested_genes, requested_identifiers, active_gene)
+    )
+
+
 def _build_clarification_response(gene: str, session_id: str, query: str) -> Dict[str, Any]:
     """Return a pre-built clarification payload for vague analysis queries."""
     return {
@@ -1750,20 +1934,133 @@ def _expand_contextual_shortcuts(query: str, session: Dict[str, Any]) -> str:
     return stripped
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Query Planner
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AVAILABLE_ANALYSES = (
+    "Expression across cancers · Survival analysis · Drug targets · Clinical trials · "
+    "Pathway enrichment · Correlation analysis · FunMap interactions · Literature search"
+)
+
+_VALID_TOOL_SCOPES = (
+    "none", "expression", "survival", "tcga_survival", "targets", "trials",
+    "literature", "funmap", "tcga_cis", "correlation", "pathway", "full",
+)
+
+_PLANNER_PROMPT = """\
+You are the planning layer for LinkedOmicsChat, a cancer multi-omics research assistant.
+
+Before the analyst answers, analyze the user query and decide the best approach.
+
+Available analyses: {available_analyses}
+Active gene: {active_gene}
+
+Recent conversation context:
+{history}
+
+Current query: {query}
+
+Decide ALL of the following:
+
+1. Does this query need clarification before answering?
+   Set needs_clarification=true ONLY for bare gene/protein names with no analysis specified \
+(e.g. "TP53", "analyze BRCA1", "tell me about MYC", "what about EGFR").
+   Set needs_clarification=false for: specific analysis requests, follow-up questions, \
+conversational questions, platform/capability questions, queries that mention a specific analysis type.
+   If true: write a short clarification_question and list 2–5 relevant clarification_options.
+
+2. State the user's actual intent in one sentence (intent field).
+
+3. Suggest the analyst's approach in 1–2 sentences (approach field).
+
+4. Choose the best tool_scope from this exact list:
+   "none"        → conversational, meta, or platform questions (no data tools needed)
+   "literature"  → mechanism, pathway biology, background, paper search
+   "expression"  → gene expression levels across cancer types
+   "survival"    → overall survival / prognosis analysis
+   "tcga_survival" → TCGA-specific survival analysis
+   "correlation" → gene-gene or omics correlations
+   "pathway"     → pathway enrichment analysis
+   "targets"     → drug targets
+   "trials"      → clinical trials
+   "funmap"      → protein interaction network (FunMap)
+   "tcga_cis"    → TCGA cis-association analysis
+   "full"        → multiple analysis types or unclear — give the agent all tools
+
+Be conservative — most queries should proceed directly (needs_clarification=false).
+"""
+
+
+class QueryPlan(BaseModel):
+    needs_clarification: bool
+    clarification_question: str = ""
+    clarification_options: List[str] = []
+    intent: str
+    approach: str
+    tool_scope: str = "full"  # one of the _TOOL_SCOPE_MAP keys or "full"
+
+
+async def _call_planner(llm, *, query: str, history_str: str, active_gene: str) -> QueryPlan:
+    """
+    Run the planner LLM call and return a QueryPlan.
+
+    Runs BEFORE the graph is built so the recommended tool_scope can be used
+    to filter which tools the agent receives.
+    """
+    fallback = QueryPlan(
+        needs_clarification=False,
+        intent=query,
+        approach="Proceed with the query as stated.",
+        tool_scope="full",
+    )
+    try:
+        planner_llm = llm.with_structured_output(QueryPlan)
+    except Exception:
+        return fallback
+
+    prompt_text = _PLANNER_PROMPT.format(
+        available_analyses=_AVAILABLE_ANALYSES,
+        active_gene=active_gene,
+        history=history_str,
+        query=query,
+    )
+    started = time.perf_counter()
+    try:
+        plan: QueryPlan = await planner_llm.ainvoke([
+            SystemMessage(content="You are a query planning assistant. Output valid JSON only."),
+            HumanMessage(content=prompt_text),
+        ])
+        # Validate tool_scope against known values
+        if plan.tool_scope not in _VALID_TOOL_SCOPES:
+            plan.tool_scope = "full"
+    except Exception as e:
+        logger.warning("[LangGraph] Planner failed (%s), proceeding without plan", e)
+        return fallback
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "[LangGraph] Planner | latency_ms=%s | needs_clarification=%s | tool_scope=%s | intent=%s",
+        latency_ms,
+        plan.needs_clarification,
+        plan.tool_scope,
+        plan.intent[:80],
+    )
+    return plan
+
+
 def build_graph(llm, tools: List[BaseTool], system_prompt: str):
     """
     Build and compile the LangGraph StateGraph.
 
     Graph structure:
-        agent ──(has tool_calls)──▶ tools ──▶ agent
-              ──(no tool_calls) ──▶ END
+        agent ──(has tool_calls)──▶ tools ──▶ agent ──▶ END
     """
     llm_with_tools = llm.bind_tools(tools) if tools else llm
 
     workflow = StateGraph(AgentState)
     workflow.add_node("agent", _make_agent_node(llm_with_tools, system_prompt))
     workflow.add_node("tools", _make_tool_node(tools))
-
     workflow.set_entry_point("agent")
     workflow.add_conditional_edges("agent", _should_continue, {"tools": "tools", END: END})
     workflow.add_edge("tools", "agent")
@@ -1999,6 +2296,7 @@ DIRECT RESPONSE RULES:
         self._graph = None
         self._tools: List[BaseTool] = []
         self._tool_scope: str = "full"
+        self._workflow: str = "broad_full"
 
     async def initialize(self):
         """Initialize MCP connections (if standalone) and build the LangGraph."""
@@ -2081,27 +2379,121 @@ DIRECT RESPONSE RULES:
             "or redirect the user.\n"
         )
 
+    def _build_workflow_constraint(
+        self,
+        workflow: str,
+        *,
+        force_identifier_resolution: bool = False,
+        pre_resolved_identifiers: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Return workflow-specific guidance layered on top of tool_scope."""
+        workflow_notes = {
+            "platform_question": (
+                "WORKFLOW ROUTING: This is a platform/capability question. Answer from the AVAILABLE DATA section only.\n"
+            ),
+            "out_of_scope_structure": (
+                "WORKFLOW ROUTING: The user is asking about protein 3D structure, which is outside LinkedOmicsChat's "
+                "supported data scope. Do not call tools. Briefly explain that 3D structure is unsupported here, "
+                "then redirect to supported analyses or offer `Answer using general knowledge`.\n"
+            ),
+            "capability_overview": (
+                "WORKFLOW ROUTING: This is a capability-overview turn. Follow the special mode for "
+                "`Show what LinkedOmicsChat can analyze for ...`.\n"
+            ),
+            "expression_analysis": (
+                "WORKFLOW ROUTING: This is an expression-analysis query. Stay within the expression tools.\n"
+            ),
+            "survival_dual_dataset": (
+                "WORKFLOW ROUTING: This is a dual-dataset survival query. Use BOTH "
+                "`overall_survival_per_cancer` and `tcga_survival_analysis` unless one is clearly inapplicable "
+                "or errors.\n"
+            ),
+            "survival_tcga_only": (
+                "WORKFLOW ROUTING: This is a TCGA-only survival query. Use `tcga_survival_analysis` and do NOT "
+                "call `overall_survival_per_cancer`.\n"
+            ),
+            "survival_cptac_only": (
+                "WORKFLOW ROUTING: This is a CPTAC-only survival query. Use `overall_survival_per_cancer` and do NOT "
+                "call `tcga_survival_analysis`.\n"
+            ),
+            "target_lookup": (
+                "WORKFLOW ROUTING: This query is about targetability. Prefer `get_target`, `batch_get_target`, "
+                "`search_targets`, or `rank_targets`. Do not drift into PubMed unless the user explicitly asks "
+                "for literature.\n"
+            ),
+            "clinical_trials": (
+                "WORKFLOW ROUTING: This query is about treatment response or clinical studies. Stay within the "
+                "clinical-trial tool family.\n"
+            ),
+            "literature_search": (
+                "WORKFLOW ROUTING: This is a literature query. Stay within the PubMed tools.\n"
+            ),
+            "funmap_neighborhood": (
+                "WORKFLOW ROUTING: This query maps to FunMap. Use `funmap_neighborhood` for a pan-cancer "
+                "co-functional neighborhood. Do not describe it as a co-expression network.\n"
+            ),
+            "cptac_cis_correlation": (
+                "WORKFLOW ROUTING: This query maps to CPTAC cis-correlation. Use `get_cis_correlations` or "
+                "`batch_get_cis_correlations`, not `tcga_cis_association_analysis`.\n"
+            ),
+            "tcga_cis_association": (
+                "WORKFLOW ROUTING: This query maps to TCGA cis-association. Use `tcga_cis_association_analysis`, "
+                "not `get_cis_correlations`.\n"
+            ),
+            "pathway_enrichment": (
+                "WORKFLOW ROUTING: This is a pathway/enrichment query. Use `webgestalt` only when the user explicitly "
+                "asks for pathway or gene-set analysis.\n"
+            ),
+        }
+        note = workflow_notes.get(workflow, "")
+        if pre_resolved_identifiers:
+            pairs = ", ".join(
+                f"{identifier} -> {symbol}"
+                for identifier, symbol in pre_resolved_identifiers.items()
+                if identifier and symbol
+            )
+            if pairs:
+                note += (
+                    "PRE-RESOLVED IDENTIFIERS: "
+                    f"{pairs}. Use the resolved `hgnc_symbol` values in downstream tools.\n"
+                )
+        if force_identifier_resolution:
+            note += (
+                "IDENTIFIER WORKFLOW: The user provided an Ensembl or UniProt identifier. Your first tool call must "
+                "be `resolve_gene_identifier`. Do NOT call downstream analysis tools until you have the returned "
+                "`hgnc_symbol`.\n"
+            )
+        return f"\n{note}" if note else ""
+
     def _build_system_prompt(
         self,
         active_gene: str = "unknown",
         *,
         tool_scope: str = "full",
+        workflow: str = "broad_full",
         multi_gene: bool = False,
         active_cancer_type: Optional[str] = None,
         session_goal: Optional[str] = None,
+        force_identifier_resolution: bool = False,
+        pre_resolved_identifiers: Optional[Dict[str, str]] = None,
     ) -> str:
         """Build a scope-aware system prompt."""
+        workflow_constraint = self._build_workflow_constraint(
+            workflow,
+            force_identifier_resolution=force_identifier_resolution,
+            pre_resolved_identifiers=pre_resolved_identifiers,
+        )
         if tool_scope == "none":
             return self.DIRECT_RESPONSE_PROMPT_TEMPLATE.format(
                 data_access=self._build_data_access_section(compact=True),
-            )
+            ) + workflow_constraint
         scope_constraint = self._build_scope_constraint(tool_scope)
         base = self.SYSTEM_PROMPT_TEMPLATE.format(
             bio_guidelines=self.BIO_GUIDELINES,
             active_gene=active_gene or "unknown",
             data_access=self._build_data_access_section(),
         )
-        prompt = base + scope_constraint
+        prompt = base + scope_constraint + workflow_constraint
         if session_goal or active_cancer_type:
             parts: List[str] = []
             if session_goal:
@@ -2129,9 +2521,12 @@ DIRECT RESPONSE RULES:
         active_gene: str = "unknown",
         *,
         tool_scope: str = "full",
+        workflow: str = "broad_full",
         multi_gene: bool = False,
         active_cancer_type: Optional[str] = None,
         session_goal: Optional[str] = None,
+        force_identifier_resolution: bool = False,
+        pre_resolved_identifiers: Optional[Dict[str, str]] = None,
     ):
         """(Re)build the compiled LangGraph with current MCP tools."""
         if not self.llm:
@@ -2139,15 +2534,19 @@ DIRECT RESPONSE RULES:
             return
         scoped_tool_ids = _TOOL_SCOPE_MAP.get(tool_scope)
         self._tool_scope = tool_scope
+        self._workflow = workflow
         self._tools = build_mcp_tools(self.mcp_aggregator, allowed_tool_ids=scoped_tool_ids)
         system_prompt = self._build_system_prompt(
-            active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene,
+            active_gene=active_gene, tool_scope=tool_scope, workflow=workflow, multi_gene=multi_gene,
             active_cancer_type=active_cancer_type, session_goal=session_goal,
+            force_identifier_resolution=force_identifier_resolution,
+            pre_resolved_identifiers=pre_resolved_identifiers,
         )
         self._graph = build_graph(self.llm, self._tools, system_prompt)
         logger.info(
-            "[LangGraph] Rebuilt graph | scope=%s | multi_gene=%s | bound_tools=%s",
+            "[LangGraph] Rebuilt graph | scope=%s | workflow=%s | multi_gene=%s | bound_tools=%s",
             tool_scope,
+            workflow,
             multi_gene,
             [tool.name.replace("__", "::") for tool in self._tools],
         )
@@ -2174,16 +2573,85 @@ DIRECT RESPONSE RULES:
         self.sessions[sid] = session
         return session
 
+    def _build_clarification_response(
+        self, query: str, session: Dict[str, Any], plan: "QueryPlan"
+    ) -> Dict[str, Any]:
+        """Build a standard response payload for a planner clarification request."""
+        return {
+            "success": True,
+            "message": plan.clarification_question or "Could you clarify what you'd like to know?",
+            "summary": "",
+            "query": query,
+            "confidence": "clarification",
+            "no_collapse": True,
+            "is_general_knowledge": False,
+            "tools_used": [],
+            "raw_results": {},
+            "visualizations": [],
+            "analyses": [],
+            "suggestions": [],
+            "datasets": [],
+            "papers": [],
+            "clarification_options": plan.clarification_options or [],
+            "tool_sources": {},
+            "execution_trace": [],
+            "_input_tokens": 0,
+            "_output_tokens": 0,
+            "_model": settings.DEFAULT_LLM_MODEL,
+        }
+
+    @staticmethod
+    def _build_rich_turn_summary(
+        query: str,
+        response: Dict[str, Any],
+        session_context: Dict[str, Any],
+    ) -> str:
+        """
+        Build a structured turn summary that preserves key context for history injection.
+
+        Captures gene, cancer type, analysis performed, and key finding so that
+        follow-up queries have meaningful context rather than 1-2 truncated sentences.
+        """
+        lines: List[str] = []
+
+        gene = session_context.get("active_gene")
+        if gene and gene != "unknown":
+            lines.append(f"Gene: {gene}")
+
+        cancer = session_context.get("active_cancer_type")
+        if cancer:
+            lines.append(f"Cancer: {cancer}")
+
+        tools_used = response.get("tools_used") or []
+        if tools_used:
+            categories = sorted({t.split("::")[0].replace("_", " ") for t in tools_used})
+            lines.append(f"Analysis: {', '.join(categories)}")
+
+        content = (response.get("summary") or response.get("message") or "").strip()
+        if content:
+            clean = re.sub(r"\*\*([^*]+)\*\*", r"\1", content)
+            clean = re.sub(r"\[Source\]\([^)]+\)", "", clean).strip()
+            sentences = re.split(r"(?<=[.!?])\s+", clean)
+            first = sentences[0][:300] if sentences else clean[:300]
+            lines.append(f"Finding: {first}")
+
+        if lines:
+            return "\n".join(lines)
+        # Fallback
+        return LangGraphOrchestrator._extract_turn_summary(content or query)
+
     async def _save_query(self, session: Dict[str, Any], query: str, response: Dict[str, Any]) -> Optional[int]:
         """Persist query+response to DB (via parent) or fall back to memory."""
+        turn_summary = self._build_rich_turn_summary(query, response, session.get("context", {}))
         if self._parent is not None:
-            return await self._parent._update_session(session, query, response)
+            return await self._parent._update_session(
+                session, query, {**response, "turn_summary": turn_summary}
+            )
         else:
-            raw_content = response.get("summary") or response.get("message") or ""
             session.setdefault("history", []).append({
                 "query": query,
                 "response": response,
-                "turn_summary": self._extract_turn_summary(raw_content),
+                "turn_summary": turn_summary,
                 "timestamp": time.time(),
             })
             return None
@@ -2243,6 +2711,91 @@ DIRECT RESPONSE RULES:
             return 2
         return 10
 
+    async def _pre_resolve_external_identifiers(
+        self,
+        requested_identifiers: Sequence[str],
+        *,
+        log_prefix: str,
+    ) -> tuple[Dict[str, Any], Dict[str, str], List[Dict[str, Any]]]:
+        """
+        Resolve external gene identifiers before graph execution.
+
+        This gives deterministic routes a concrete HGNC symbol to work with and
+        seeds raw_results so downstream integrity checks can trust the mapping.
+        """
+        if "gene_utils::resolve_gene_identifier" not in self.mcp_aggregator.list_tools():
+            return {}, {}, []
+
+        preloaded_results: Dict[str, Any] = {}
+        resolved_map: Dict[str, str] = {}
+        trace_metrics: List[Dict[str, Any]] = []
+        count = 0
+        for identifier in requested_identifiers:
+            normalized = _normalize_identifier_token(identifier)
+            if not _is_external_gene_identifier(normalized):
+                continue
+            started = time.perf_counter()
+            try:
+                raw = await self.mcp_aggregator.call_tool(
+                    "gene_utils::resolve_gene_identifier",
+                    {"identifier": normalized},
+                )
+                latency_ms = int((time.perf_counter() - started) * 1000)
+            except Exception as exc:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                logger.warning(
+                    "%s Failed to pre-resolve identifier %s: %s",
+                    log_prefix,
+                    normalized,
+                    exc,
+                )
+                raw = {"error": str(exc)}
+
+            result_dict = raw if isinstance(raw, dict) else {"raw": raw}
+            data_status = _classify_tool_result_payload(
+                "gene_utils__resolve_gene_identifier",
+                result_dict,
+            )
+            trace_metrics.append(
+                {
+                    "tool": "gene_utils::resolve_gene_identifier",
+                    "latency_ms": latency_ms,
+                    "status": data_status,
+                }
+            )
+            unique_key = f"gene_utils::resolve_gene_identifier#{count}"
+            count += 1
+            preloaded_results[unique_key] = {
+                "_gene": None,
+                "_args": {"identifier": normalized},
+                "_result": result_dict,
+                "_data_status": data_status,
+            }
+
+            hgnc_symbol = _normalize_identifier_token(
+                result_dict.get("hgnc_symbol") if isinstance(result_dict, dict) else None
+            )
+            if hgnc_symbol and not result_dict.get("error"):
+                resolved_map[normalized] = hgnc_symbol
+
+        if resolved_map:
+            logger.info(
+                "%s Pre-resolved external identifiers: %s",
+                log_prefix,
+                resolved_map,
+            )
+        execution_trace = []
+        if trace_metrics:
+            execution_trace.append(
+                {
+                    "node": "tools",
+                    "step": 0,
+                    "latency_ms": sum(item["latency_ms"] for item in trace_metrics),
+                    "tool_calls": trace_metrics,
+                }
+            )
+        return preloaded_results, resolved_map, execution_trace
+
     async def _prepare_execution_context(
         self,
         query: str,
@@ -2251,7 +2804,7 @@ DIRECT RESPONSE RULES:
         client_ip: Optional[str],
         *,
         log_prefix: str,
-    ) -> tuple[Dict[str, Any], str, str, AgentState]:
+    ) -> tuple[Dict[str, Any], str, str, Optional[AgentState], Optional[QueryPlan]]:
         """Load session context, rebuild the graph, and prepare the initial state."""
         session = await self._get_session(session_id, user_id, client_ip=client_ip)
         effective_query = _expand_contextual_shortcuts(query, session)
@@ -2267,24 +2820,81 @@ DIRECT RESPONSE RULES:
             ctx["active_cancer_type"] = detected_cancer
 
         active_gene = ctx.get("active_gene", "unknown")
-        tool_scope = _infer_tool_scope(
-            effective_query,
-            active_gene if active_gene != "unknown" else None,
-        )
         requested_genes = _extract_query_genes(effective_query)
         requested_identifiers = _extract_query_identifiers(effective_query)
         allow_active_gene_reference = _query_uses_active_gene_reference(effective_query)
-
-        # Detect multi-gene queries so the LLM is told to prefer batch tools
-        multi_gene = len(requested_genes) >= 2
-
-        # Rebuild graph with current active_gene, cancer type, and session goal in system prompt
         active_cancer_type = ctx.get("active_cancer_type")
         session_goal = ctx.get("session_goal", "")
+        preloaded_tool_results: Dict[str, Any] = {}
+        pre_resolved_identifiers: Dict[str, str] = {}
+        preloaded_execution_trace: List[Dict[str, Any]] = []
+
+        if any(_is_external_gene_identifier(token) for token in requested_identifiers):
+            (
+                preloaded_tool_results,
+                pre_resolved_identifiers,
+                preloaded_execution_trace,
+            ) = await self._pre_resolve_external_identifiers(
+                requested_identifiers,
+                log_prefix=log_prefix,
+            )
+            for resolved_symbol in pre_resolved_identifiers.values():
+                if resolved_symbol and resolved_symbol not in requested_genes:
+                    requested_genes.append(resolved_symbol)
+
+        multi_gene = len(requested_genes) >= 2
+        effective_active_gene = active_gene
+        if effective_active_gene == "unknown" and len(pre_resolved_identifiers) == 1:
+            effective_active_gene = next(iter(pre_resolved_identifiers.values()))
+
+        # Build history messages so the planner has real conversation context
+        history_messages = self._format_history(session, limit=10)
+        history_str = "\n".join(
+            f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {str(m.content)[:300]}"
+            for m in history_messages
+        )
+
+        route_decision = _infer_route_decision(
+            effective_query, effective_active_gene if effective_active_gene != "unknown" else None
+        )
+        keyword_scope = route_decision.tool_scope
+        query_plan: Optional[QueryPlan] = None
+        should_use_planner = (
+            settings.USE_PLANNER
+            and self.llm is not None
+            and _should_use_planner_for_query(
+                effective_query,
+                requested_genes,
+                requested_identifiers,
+                effective_active_gene if effective_active_gene != "unknown" else None,
+            )
+        )
+
+        if should_use_planner:
+            query_plan = await _call_planner(
+                self.llm,
+                query=effective_query,
+                history_str=history_str or "(none)",
+                active_gene=effective_active_gene,
+            )
+
+        # If the planner wants clarification, bail out before building the graph
+        if query_plan and query_plan.needs_clarification:
+            return session, effective_query, active_gene, None, query_plan
+
+        # Deterministic routing stays authoritative for explicit scientific queries.
+        tool_scope = keyword_scope
+        workflow = route_decision.workflow
+        force_identifier_resolution = any(
+            _is_external_gene_identifier(token) for token in requested_identifiers
+        )
+
         self._rebuild_graph(
-            active_gene=active_gene, tool_scope=tool_scope, multi_gene=multi_gene,
+            active_gene=effective_active_gene, tool_scope=tool_scope, workflow=workflow, multi_gene=multi_gene,
             active_cancer_type=active_cancer_type,
             session_goal=session_goal or None,
+            force_identifier_resolution=force_identifier_resolution,
+            pre_resolved_identifiers=pre_resolved_identifiers or None,
         )
 
         history_limit = self._history_limit_for_scope(tool_scope)
@@ -2292,18 +2902,20 @@ DIRECT RESPONSE RULES:
         initial_messages = history_messages + [HumanMessage(content=effective_query)]
         initial_state: AgentState = {
             "messages": initial_messages,
-            "tool_results": {},
-            "active_gene": active_gene if active_gene != "unknown" else None,
+            "tool_results": preloaded_tool_results,
+            "active_gene": effective_active_gene if effective_active_gene != "unknown" else None,
             "steps": 0,
             "input_tokens": 0,
             "output_tokens": 0,
-            "execution_trace": [],
+            "execution_trace": preloaded_execution_trace,
             "requested_genes": requested_genes,
             "requested_identifiers": requested_identifiers,
             "allow_active_gene_reference": allow_active_gene_reference,
             "tool_scope": tool_scope,
+            "workflow": workflow,
+            "query_plan": query_plan.model_dump() if query_plan else None,
         }
-        return session, effective_query, active_gene, initial_state
+        return session, effective_query, active_gene, initial_state, query_plan
 
     def _extract_final_state_context(
         self,
@@ -2555,13 +3167,19 @@ DIRECT RESPONSE RULES:
         try:
             logger.info(f"[LangGraph] Processing query: {query}")
 
-            session, effective_query, active_gene, initial_state = await self._prepare_execution_context(
+            session, effective_query, active_gene, initial_state, query_plan = await self._prepare_execution_context(
                 query,
                 user_id,
                 session_id,
                 client_ip,
                 log_prefix="[LangGraph]",
             )
+
+            # Planner requested clarification — no graph execution needed
+            if initial_state is None:
+                formatted_response = self._build_clarification_response(query, session, query_plan)
+                turn_id = await self._save_query(session, query, formatted_response)
+                return {**formatted_response, "session_id": session["id"], "turn_id": turn_id}
 
             if not self._graph:
                 return {
@@ -2619,13 +3237,21 @@ DIRECT RESPONSE RULES:
             logger.info(f"[LangGraph Stream] Processing query: {query}")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Initializing session...'})}\n\n"
 
-            session, effective_query, active_gene, initial_state = await self._prepare_execution_context(
+            session, effective_query, active_gene, initial_state, query_plan = await self._prepare_execution_context(
                 query,
                 user_id,
                 session_id,
                 client_ip,
                 log_prefix="[LangGraph Stream]",
             )
+
+            # Planner requested clarification — emit final event and exit
+            if initial_state is None:
+                formatted_response = self._build_clarification_response(query, session, query_plan)
+                turn_id = await self._save_query(session, query, formatted_response)
+                payload = {**formatted_response, "session_id": session["id"], "turn_id": turn_id}
+                yield f"data: {json.dumps({'type': 'final', 'content': payload})}\n\n"
+                return
 
             if not self._graph:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'LangGraph not available.', 'query': query, 'session_id': session['id']}})}\n\n"
