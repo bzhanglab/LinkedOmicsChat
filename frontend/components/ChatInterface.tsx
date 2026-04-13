@@ -954,6 +954,7 @@ const MessagesPane = memo(function MessagesPane({
                                                             hasSupportingArtifacts
                                                         const isLarge =
                                                             !message.noCollapse &&
+                                                            !message.isGeneralKnowledge &&
                                                             (isPreviewOnly || message.wasPreview || content.length > 4000 || hasMoreThanNLines(content, 80))
                                                         const shouldCollapse = collapseForSupportingData || isLarge
                                                         const collapsedLabel = collapseForSupportingData
