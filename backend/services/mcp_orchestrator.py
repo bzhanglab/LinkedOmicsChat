@@ -6,6 +6,7 @@ Falls back to the legacy single-shot planner when USE_LANGGRAPH=False.
 """
 from typing import Dict, Any, Optional, List, AsyncGenerator
 import logging
+import re
 import time
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,34 @@ from models.database import ChatSession, ChatMessage as DBChatMessage, TokenUsag
 from services.mcp_aggregator import MCPAggregator
 
 logger = logging.getLogger(__name__)
+
+_PENDING_OFFER_RE = re.compile(
+    r"If you['’]d like, I can\s+(.+?)(?:[.?!])?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_pending_offer_from_text(text: Any) -> Optional[str]:
+    """Extract a follow-up offer sentence and convert it into a reusable query."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    matches = list(_PENDING_OFFER_RE.finditer(text.strip()))
+    if not matches:
+        return None
+    offer = re.sub(r"\s+", " ", matches[-1].group(1)).strip().rstrip(".?!")
+    if not offer:
+        return None
+    return offer[:1].upper() + offer[1:]
+
+
+def _extract_pending_offer_from_response(response: Dict[str, Any]) -> Optional[str]:
+    """Prefer the summary offer, then fall back to the full message."""
+    if not isinstance(response, dict):
+        return None
+    return (
+        _extract_pending_offer_from_text(response.get("summary"))
+        or _extract_pending_offer_from_text(response.get("message"))
+    )
 
 # Per-cohort brand colors (CPTAC/LinkedOmics palette)
 _COHORT_COLORS: dict[str, str] = {
@@ -2253,21 +2282,25 @@ class MCPOrchestrator:
             # Get or create session
             session = await self._get_or_create_session(session_id, user_id, client_ip=client_ip)
             usage_tracker = self._new_llm_usage_tracker()
+            from services.langgraph_orchestrator import _expand_contextual_shortcuts
+            effective_query = _expand_contextual_shortcuts(query, session)
+            if effective_query != query:
+                logger.info("Expanded contextual shortcut for legacy processing.")
             
             # Simple intent classification
-            intent = await self._classify_intent(query, session, usage_tracker=usage_tracker)
+            intent = await self._classify_intent(effective_query, session, usage_tracker=usage_tracker)
             logger.info(f"Query intent: {intent}")
             
             # Use LLM to determine which tools to call
-            tools_to_call = await self._determine_tools(query, intent, session, usage_tracker=usage_tracker)
+            tools_to_call = await self._determine_tools(effective_query, intent, session, usage_tracker=usage_tracker)
 
             from services.langgraph_orchestrator import (
                 _extract_query_identifiers,
                 _query_uses_active_gene_reference,
                 _validate_tool_identifier_integrity,
             )
-            requested_identifiers = _extract_query_identifiers(query)
-            allow_active_gene_reference = _query_uses_active_gene_reference(query)
+            requested_identifiers = _extract_query_identifiers(effective_query)
+            allow_active_gene_reference = _query_uses_active_gene_reference(effective_query)
             
             # Execute tools
             results = {}
@@ -2336,7 +2369,7 @@ class MCPOrchestrator:
             # Update session context with last used gene
             if not active_gene:
                 # If no tools were called or no gene found in args, try to extract from query
-                gene_symbols = self._extract_gene_symbols(query)
+                gene_symbols = self._extract_gene_symbols(effective_query)
                 active_gene = gene_symbols[0] if gene_symbols else None
                 
             if "context" not in session:
@@ -2345,7 +2378,7 @@ class MCPOrchestrator:
                 session["context"]["active_gene"] = active_gene
             
             # Generate final response using LLM (pass intent to avoid gene extraction for conversational queries)
-            final_response = await self._generate_response(query, results, session, intent, usage_tracker=usage_tracker)
+            final_response = await self._generate_response(effective_query, results, session, intent, usage_tracker=usage_tracker)
             
             # Format response to match expected API structure (before saving)
             formatted_response = {
@@ -2974,10 +3007,22 @@ Structure your response as:
 
 (1-2 sentences connecting the findings and explaining the biological/clinical implications)
 
+(Optional: ONE brief closing sentence offering the single most useful next analysis step, only when the tool results contain clear positive findings that justify a specific follow-up)
+
 Rules:
 - Output ONLY the markdown text above — no section headers, no extra sections.
 - DO NOT use JSON, code blocks (```), or any preamble/metadata.
 - DO NOT add follow-up questions, suggested next queries, or "you might also want to ask" sections.
+- You MAY add exactly one short final sentence offering the next analysis step, but ONLY when all of the following are true: (1) the tool results contain specific positive findings; (2) the offered next step is directly supported by those findings; (3) the result is not no-data, error-only, clarification-like, or general-knowledge-like; and (4) there is one clearly best next step rather than several equally plausible options.
+- If you include that final sentence, phrase it in this style: "If you'd like, I can <specific supported analysis>." Make it specific, concrete, and immediately doable in LinkedOmicsChat.
+- The offer must be for something LinkedOmicsChat can actually do now from the current findings. Do not offer vague help like "explore further" or "look deeper."
+- Capability guardrails for the optional offer:
+  - Expression follow-ups must stay within tumor-vs-normal CPTAC expression comparisons.
+  - Survival follow-ups must stay within CPTAC or TCGA survival analyses that the tools already support.
+  - Cis-correlation follow-ups must be phrased as molecular-pair correlation / dosage / methylation / RNA-protein questions for a specific gene and optional cancer type.
+  - FunMap follow-ups must be phrased as a functional neighborhood / network query for a gene. FunMap is pan-cancer; do NOT invent cohort-specific or cancer-specific co-expression/network analyses such as "in LUAD".
+  - Do NOT offer unsupported workflows such as ranked co-expressed genes within a specific cohort unless the tool outputs explicitly support that exact capability.
+- Never add a next-step offer when the findings are weak, absent, mixed without a clear direction, or already fully answer the user's request.
 - Use ONLY the provided tool results.
 - If the results include explicit guidance such as `ranking_basis`, `display_basis`, `top_hits_by_abs_correlation_fdr_lt_0_5`, `top_genes_by_fdr_lt_0_05`, `top_studies_by_abs_fdr`, or `reported_top_items`, treat those as authoritative instead of inferring order from raw list position.
 - Be precise with biological terminology.
@@ -3486,6 +3531,43 @@ Please provide a helpful, natural, and professional response. If they are just g
             except Exception as e:
                 logger.error(f"Error formatting LinkedOmics results: {e}", exc_info=True)
 
+        # Resolver-only turns should not expose the internal result wrappers in chat.
+        if results and all(tool_id.startswith("gene_utils::resolve_gene_identifier") for tool_id in results.keys()):
+            summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
+            formatted_results = []
+            for wrapped_result in results.values():
+                payload = wrapped_result.get("_result", wrapped_result) if isinstance(wrapped_result, dict) else wrapped_result
+                args = wrapped_result.get("_args", {}) if isinstance(wrapped_result, dict) else {}
+
+                if not isinstance(payload, dict):
+                    continue
+
+                identifier = str(payload.get("input") or args.get("identifier") or "the identifier").strip()
+                symbol = str(payload.get("hgnc_symbol") or "").strip()
+                error = str(payload.get("error") or "").strip()
+
+                if error:
+                    formatted_results.append(
+                        f"I couldn't resolve **{identifier}** to an official **HGNC symbol**. {error}"
+                    )
+                elif symbol:
+                    if symbol.upper() == identifier.upper():
+                        formatted_results.append(f"**{symbol}** is a valid **HGNC symbol**.")
+                    else:
+                        formatted_results.append(
+                            f"**{identifier}** resolves to the official **HGNC symbol {symbol}**."
+                        )
+
+            message = summary.strip() or "\n\n".join(formatted_results) or "I validated the gene identifier."
+            return {
+                "success": True,
+                "summary": "",
+                "message": message,
+                "query": query,
+                "tools_used": list(results.keys()),
+                "raw_results": results,
+            }
+
         # Format results for display - extract actual gene data
         gene_info = None
         for tool_id, result in results.items():
@@ -3579,6 +3661,7 @@ Please provide a clear, informative response about this gene. Include the key de
             # Format raw results
             formatted_results = []
             for tool_id, result in results.items():
+                display_result = result.get("_result", result) if isinstance(result, dict) else result
                 if isinstance(result, str):
                     try:
                         import json
@@ -3587,7 +3670,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     except:
                         formatted_results.append(f"**{tool_id}**:\n{result}")
                 else:
-                    formatted_results.append(f"**{tool_id}**:\n{result}")
+                    formatted_results.append(f"**{tool_id}**:\n{display_result}")
             message = f"I found the following information:\n\n" + "\n\n".join(formatted_results)
         summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
         return {
@@ -5250,6 +5333,13 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             short = " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
             return (short + " [...]") if len(short) <= max_chars else content[:max_chars] + "..."
 
+        context = session.setdefault("context", {})
+        pending_offer = _extract_pending_offer_from_response(response)
+        if pending_offer:
+            context["pending_offer"] = pending_offer
+        else:
+            context.pop("pending_offer", None)
+
         # Guest sessions: update in-memory + record token usage to DB
         if session.get("user_id") == "guest":
             session.setdefault("history", []).append({
@@ -5744,6 +5834,26 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
 
         return None
 
+    def _derive_pending_offer_from_db_messages(self, messages: List[DBChatMessage]) -> Optional[str]:
+        """Best-effort reconstruction of the latest conversational follow-up offer."""
+        for msg in reversed(messages):
+            resp = msg.response if isinstance(msg.response, dict) else {}
+            offer = _extract_pending_offer_from_response(resp)
+            if offer:
+                return offer
+        return None
+
+    def _derive_session_context_from_db_messages(self, messages: List[DBChatMessage]) -> Dict[str, Any]:
+        """Rebuild persisted session context from the remaining turns."""
+        context: Dict[str, Any] = {}
+        active_gene = self._derive_active_gene_from_db_messages(messages)
+        if active_gene:
+            context["active_gene"] = active_gene
+        pending_offer = self._derive_pending_offer_from_db_messages(messages)
+        if pending_offer:
+            context["pending_offer"] = pending_offer
+        return context
+
     async def _truncate_session_from_message(self, session_id: str, message_id: int) -> Dict[str, int]:
         """Delete the specified turn and all later turns, then rebuild session context."""
         deleted_turns = 0
@@ -5791,8 +5901,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                     .delete(synchronize_session=False)
                 )
 
-                active_gene = self._derive_active_gene_from_db_messages(remaining_messages)
-                db_session.context = {"active_gene": active_gene} if active_gene else {}
+                db_session.context = self._derive_session_context_from_db_messages(remaining_messages)
                 db_session.last_updated = now
                 if not remaining_messages:
                     db_session.title = "New Chat"
@@ -5849,8 +5958,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                 )
                 deleted_turns = delete_result.rowcount or 0
 
-                active_gene = self._derive_active_gene_from_db_messages(remaining_messages)
-                db_session.context = {"active_gene": active_gene} if active_gene else {}
+                db_session.context = self._derive_session_context_from_db_messages(remaining_messages)
                 db_session.last_updated = now
                 if not remaining_messages:
                     db_session.title = "New Chat"
