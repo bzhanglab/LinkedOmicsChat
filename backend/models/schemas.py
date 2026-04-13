@@ -62,7 +62,7 @@ class ChatResponse(BaseModel):
     no_collapse: Optional[bool] = None
     is_general_knowledge: Optional[bool] = None
     execution_trace: List[Dict[str, Any]] = []
-    confidence: Optional[str] = None  # "high" | "partial" | "low" | "general_knowledge"
+    confidence: Optional[str] = None  # "high" | "partial" | "low" | "general_knowledge" | "clarification"
     metadata: Optional[Dict[str, Any]] = None
 
 

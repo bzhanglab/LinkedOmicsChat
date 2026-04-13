@@ -655,6 +655,11 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
     ),
 }
 
+_PENDING_OFFER_RE = re.compile(
+    r"If you['’]d like, I can\s+(.+?)(?:[.?!])?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 _CONVERSATIONAL_QUERIES = {
     "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "cool",
 }
@@ -701,10 +706,11 @@ _TRIAL_KEYWORDS = (
 
 _FUNMAP_KEYWORDS = (
     "funmap", "functional neighbor", "functional neighbourhood", "gene network",
-    "protein network", "co-functional", "network neighbor", "network neighbourhood",
+    "protein network", "functional network", "co-functional", "network neighbor", "network neighbourhood",
     "interaction network", "functional interaction",
     # Additional: common bioinformatics phrasings
     "functional partner", "functional association", "protein partner",
+    "co-regulated", "co regulated",
     "protein-protein interaction", "protein interaction network",
     "interactor", "interactome",
 )
@@ -730,7 +736,7 @@ _CORRELATION_KEYWORDS = (
     "rna vs protein", "rna-protein correlation",
     "copy number effect", "dosage effect",
     # Additional: co-expression / multi-omics correlation phrasing
-    "co-expression", "coexpression", "co expression",
+    "co-expression", "coexpression", "co expression", "co-expressed", "coexpressed", "co expressed",
     "mrna protein correlation", "rna protein",
     "regulated by copy number", "methylation effect",
 )
@@ -1598,10 +1604,33 @@ def _build_clarification_response(gene: str, session_id: str, query: str) -> Dic
         "visualizations": [],
         "session_id": session_id,
         "query": query,
-        "confidence": "general_knowledge",
+        "confidence": "clarification",
         "_input_tokens": 0,
         "_output_tokens": 0,
     }
+
+
+def _extract_pending_offer_from_text(text: Any) -> Optional[str]:
+    """Extract a follow-up offer sentence and convert it into a reusable query."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    matches = list(_PENDING_OFFER_RE.finditer(text.strip()))
+    if not matches:
+        return None
+    offer = re.sub(r"\s+", " ", matches[-1].group(1)).strip().rstrip(".?!")
+    if not offer:
+        return None
+    return offer[:1].upper() + offer[1:]
+
+
+def _extract_pending_offer_from_response(response: Dict[str, Any]) -> Optional[str]:
+    """Prefer the summary offer, then fall back to the full message."""
+    if not isinstance(response, dict):
+        return None
+    return (
+        _extract_pending_offer_from_text(response.get("summary"))
+        or _extract_pending_offer_from_text(response.get("message"))
+    )
 
 
 def _parse_clarification_options(text: str) -> list:
@@ -1634,10 +1663,78 @@ def _last_substantive_user_query(session: Dict[str, Any]) -> str:
     return ""
 
 
+_AFFIRMATIVE_OFFER_PHRASES = {
+    "yes",
+    "yes please",
+    "yeah",
+    "yeah please",
+    "yep",
+    "yep please",
+    "yup",
+    "sure",
+    "sure thing",
+    "ok",
+    "okay",
+    "ok please",
+    "okay please",
+    "alright",
+    "all right",
+    "absolutely",
+    "definitely",
+    "of course",
+    "certainly",
+    "do that",
+    "do it",
+    "please do",
+    "go ahead",
+    "please go ahead",
+    "proceed",
+    "please proceed",
+    "sounds good",
+    "sounds great",
+    "that sounds good",
+    "that sounds great",
+    "works for me",
+    "lets do it",
+    "let's do it",
+    "lets go ahead",
+    "let's go ahead",
+    "can you do that",
+    "could you do that",
+    "would you do that",
+}
+
+_AFFIRMATIVE_PREFIX_RE = re.compile(
+    r"^(?:yes|yeah|yep|yup|sure|ok|okay|alright|all right|absolutely|definitely|of course|certainly)"
+    r"(?: please)?(?:,?\s+(?:go ahead|do that|do it|proceed|please do|please proceed))?$",
+    re.IGNORECASE,
+)
+_AFFIRMATIVE_IMPERATIVE_RE = re.compile(
+    r"^(?:please\s+)?(?:go ahead|do that|do it|proceed|please do|please proceed|lets do it|let's do it|lets go ahead|let's go ahead)$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_affirmative_offer_reply(normalized_query: str) -> bool:
+    """Return True for short, acknowledgment-style acceptances of the pending offer."""
+    if not normalized_query:
+        return False
+    if len(normalized_query.split()) > 8:
+        return False
+    if normalized_query in _AFFIRMATIVE_OFFER_PHRASES:
+        return True
+    return bool(
+        _AFFIRMATIVE_PREFIX_RE.fullmatch(normalized_query)
+        or _AFFIRMATIVE_IMPERATIVE_RE.fullmatch(normalized_query)
+    )
+
+
 def _expand_contextual_shortcuts(query: str, session: Dict[str, Any]) -> str:
     """Expand bare quick-reply shortcuts into context-aware prompts for the LLM."""
     stripped = (query or "").strip()
-    normalized = stripped.casefold()
+    normalized = re.sub(r"\s+", " ", stripped.casefold()).strip(" ?!.,")
+    context = session.get("context") or {}
+    pending_offer = str(context.get("pending_offer") or "").strip()
 
     if normalized == "answer using general knowledge":
         previous_query = _last_substantive_user_query(session)
@@ -1646,6 +1743,9 @@ def _expand_contextual_shortcuts(query: str, session: Dict[str, Any]) -> str:
                 "Answer using general knowledge about the user's previous question: "
                 f"{previous_query}"
             )
+
+    if pending_offer and _looks_like_affirmative_offer_reply(normalized):
+        return pending_offer
 
     return stripped
 
@@ -1765,7 +1865,7 @@ PLANNING RULES:
   * Single-aspect query (survival, expression, enrichment, etc.) -> 1–2 relevant tools only.
   * Explicit comparison -> parallel calls of the same analysis across the requested genes.
   * Broad profile / overview explicitly requested -> up to 4 distinct tools.
-- Do not proactively chain extra analyses. Do NOT mention or suggest follow-up questions in your response — these are handled separately. Only call additional tools when the user explicitly asks.
+- Do not proactively chain extra analyses. Only call additional tools when the user explicitly asks.
 - For survival questions: call only survival tools (`overall_survival_per_cancer`, `tcga_survival_analysis`). Do NOT call `cancer_gene_expression` or `clinical_trial_information` unless the user explicitly asks about expression levels or drugs/treatments.
 - For expression questions: call only expression tools (`cancer_gene_expression`). Do NOT call survival or clinical trial tools unless explicitly asked.
 - Clinical trial tools are only relevant when the user asks about drugs, treatments, or clinical trials — never call them for survival or expression queries. Use the right tool for the question:
@@ -1832,14 +1932,17 @@ SPECIAL MODES:
 - If the question is outside current tool scope, explain that briefly, state the supported scope, and then offer:
   **Options:** `Answer using general knowledge` · `Show what LinkedOmicsChat can analyze for [GENE]`
   Omit the second option if no gene is mentioned.
-- If the request is genuinely ambiguous, ask one focused clarification question.
-  * Use **Options:** only for finite closed choices.
-  * Do not use **Options:** for open-ended inputs like gene names.
+CLARIFICATION — ask BEFORE running tools when the query is under-specified:
+- A gene name alone with no analysis type (e.g. "what about TP53?" / "look at BRCA1" / "can you analyze EGFR?") → respond: "What would you like to know about **GENE**?" then add **Options:** listing only the analysis types that are meaningful for this gene given the available tools. Choose from: `Expression across cancers` · `Survival analysis` · `Drug targets` · `Clinical trials` · `Pathway enrichment` · `Correlation analysis` · `FunMap interactions` · `Literature search`. Omit any option that clearly does not apply.
+- An analysis type missing a critical parameter (e.g. "compare expression" without specifying genes or cancers) → ask for the missing piece. Use **Options:** if the missing piece is a finite closed choice.
+- A request that maps to two or more very different workflows (e.g. "how does MYC correlate?" could mean cis-omics, FunMap network, or clinical-trial correlation) → ask which type using **Options:**.
+- Do NOT ask for clarification when the query is already specific — e.g. "survival analysis for TP53 in BRCA", "drug targets for EGFR", "expression of MYC across cancers".
+- **Options:** format: `**Options:** \`Choice A\` · \`Choice B\` · \`Choice C\``
 
 RESPONSE STYLE:
 - Be concise, analytical, and easy to follow.
 - Never dump raw JSON, Python objects, or raw tool output.
-- Do NOT end your response with suggested follow-up questions or "you might also want to ask" prompts.
+- Close with **one** brief, specific follow-up suggestion grounded in what was actually found — but ONLY when all of the following are true: (1) the response contains specific positive findings from tool results (expression values, survival stats, drug rankings, enriched pathways, etc.); (2) you are not asking the user a clarification question; (3) the result is not `[NO DATA]`, `[NO SIGNIFICANT RESULTS FOUND]`, or an error; (4) the response is not conversational or general-knowledge mode. When any of those conditions fail, omit the suggestion entirely. When included, weave it in as a natural closing sentence — no generic headers like "You might also want to ask:".
 - INLINE CITATIONS: After each factual claim that comes from a tool result, add a short inline source tag using this exact format: [Source](#source:KEY) where KEY is one of: linkedomics, pubmed, funmap, webgestalt, cptac, targets, trials. Use the key that matches the tool you called. For example: "TP53 is significantly overexpressed in LUAD [Source](#source:linkedomics)." Only cite sources that were actually queried — do not cite sources for general knowledge statements.
 
 MARKDOWN FORMATTING — always apply these rules:
@@ -1867,7 +1970,7 @@ DIRECT RESPONSE RULES:
   Omit the second option if no gene is mentioned.
 - If the request depends on recent conversation context, use the recent history provided.
 - Do NOT invent unsupported datasets or capabilities.
-- Do NOT suggest follow-up questions at the end.
+- For conversational or platform-explanation responses, do not add follow-up suggestions.
 """
 
     def __init__(self, parent_orchestrator=None):
@@ -2284,10 +2387,16 @@ DIRECT RESPONSE RULES:
             original_query=query,
         )
 
+        clarification_options_from_llm = _parse_clarification_options(llm_summary)
+        if clarification_options_from_llm:
+            llm_summary = _strip_options_line(llm_summary)
+
         rich_message = llm_summary
         suggestions: List[str] = []
 
         async def _format():
+            if clarification_options_from_llm:
+                return llm_summary, llm_summary, tools_used, raw_results, []
             if raw_results and self._parent is not None:
                 try:
                     formatted = await self._parent._generate_response(
@@ -2324,15 +2433,7 @@ DIRECT RESPONSE RULES:
             return llm_summary, llm_summary, tools_used, raw_results, []
 
         async def _suggest():
-            if not raw_results:
-                return []
-            if self._parent is not None:
-                try:
-                    return await self._parent._generate_suggestions(
-                        effective_query, llm_summary, session, n=3, usage_tracker=usage_tracker
-                    )
-                except Exception as e:
-                    logger.warning(f"{log_prefix} _generate_suggestions failed: {e}")
+            # Suggestions are now embedded inline in the LLM response; pills disabled.
             return []
 
         (rich_message, display_summary, tools_used_final, raw_results_final, visualizations), suggestions = await asyncio.gather(
@@ -2341,11 +2442,11 @@ DIRECT RESPONSE RULES:
 
         clarification_options: List[str] = []
         tool_sources: Dict[str, str] = {}
+        if clarification_options_from_llm:
+            display_summary = _strip_options_line(display_summary)
+            rich_message = _strip_options_line(rich_message)
         if include_stream_metadata:
-            clarification_options = _parse_clarification_options(llm_summary)
-            if clarification_options:
-                llm_summary = _strip_options_line(llm_summary)
-                rich_message = _strip_options_line(rich_message)
+            clarification_options = clarification_options_from_llm
             rich_message = _inlineize_source_blockquotes(rich_message)
             rich_message = _strip_invalid_source_citations(rich_message, tools_used_final)
             rich_message = _ensure_inline_source_citations(rich_message, tools_used_final)
@@ -2369,7 +2470,9 @@ DIRECT RESPONSE RULES:
         no_data_only = bool(raw_results_final) and results_with_data == 0
 
         # Confidence: measure how much data the tools actually returned
-        if is_general_knowledge:
+        if clarification_options_from_llm:
+            confidence = "clarification"
+        elif is_general_knowledge:
             confidence = "general_knowledge"
         elif not raw_results_final:
             confidence = "general_knowledge"
@@ -2427,6 +2530,12 @@ DIRECT RESPONSE RULES:
             formatted_response["clarification_options"] = clarification_options
             formatted_response["tool_sources"] = tool_sources
 
+        pending_offer = _extract_pending_offer_from_response(formatted_response)
+        if pending_offer:
+            session["context"]["pending_offer"] = pending_offer
+        else:
+            session["context"].pop("pending_offer", None)
+
         return formatted_response
 
     # ── Main entry point ───────────────────────────────────────────────────────
@@ -2461,14 +2570,6 @@ DIRECT RESPONSE RULES:
                     "query": query,
                     "session_id": session["id"],
                 }
-
-            # Short-circuit vague "analyze GENE" queries before running any tools
-            requested_genes = initial_state.get("requested_genes") or []
-            if _is_vague_analysis_query(effective_query, requested_genes):
-                gene = requested_genes[0] if requested_genes else (active_gene if active_gene != "unknown" else "this gene")
-                clarification_response = _build_clarification_response(gene, session["id"], query)
-                turn_id = await self._save_query(session, query, clarification_response)
-                return {**clarification_response, "turn_id": turn_id}
 
             # Run the LangGraph agent
             logger.info("[LangGraph] Starting agent graph execution...")
@@ -2528,15 +2629,6 @@ DIRECT RESPONSE RULES:
 
             if not self._graph:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'LangGraph not available.', 'query': query, 'session_id': session['id']}})}\n\n"
-                return
-
-            # Short-circuit vague "analyze GENE" queries before running any tools
-            requested_genes = initial_state.get("requested_genes") or []
-            if _is_vague_analysis_query(effective_query, requested_genes):
-                gene = requested_genes[0] if requested_genes else (active_gene if active_gene != "unknown" else "this gene")
-                clarification_response = _build_clarification_response(gene, session["id"], query)
-                turn_id = await self._save_query(session, query, clarification_response)
-                yield f"data: {json.dumps({'type': 'final', 'content': {**clarification_response, 'turn_id': turn_id}})}\n\n"
                 return
 
             logger.info("[LangGraph Stream] Starting execution...")

@@ -354,7 +354,7 @@ export interface ChatMessage {
     noCollapse?: boolean  // when true, never show "Show details" button
     wasPreview?: boolean  // when true, was fetched on demand — keep collapsible regardless of length
     isGeneralKnowledge?: boolean  // true when LLM answered from training knowledge, not LinkedOmics data
-    confidence?: "high" | "partial" | "low" | "general_knowledge"
+    confidence?: "high" | "partial" | "low" | "general_knowledge" | "clarification"
     isError?: boolean  // true when this message represents an error with a retry option
     timestamp?: Date
     papers?: Paper[]
@@ -448,7 +448,7 @@ export interface ChatResponse {
     tools_used?: string[]
     no_collapse?: boolean
     is_general_knowledge?: boolean
-    confidence?: "high" | "partial" | "low" | "general_knowledge"
+    confidence?: "high" | "partial" | "low" | "general_knowledge" | "clarification"
     execution_trace?: ExecutionTraceStep[]
     metadata?: Record<string, unknown>
 }
