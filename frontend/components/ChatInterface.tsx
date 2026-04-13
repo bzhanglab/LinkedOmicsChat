@@ -119,6 +119,63 @@ const PLOT_MARKER_RE = /^\[PLOT:([^\]]+)\]$/
 const NETWORK_MARKER_RE = /^\[NETWORK:([^\]]+)\]$/
 const TABLE_MARKER_RE = /^\[TABLE:([^\]]+)\]$/
 
+type SupportingDataCounts = {
+    plot: number
+    table: number
+    network: number
+    other: number
+    total: number
+}
+
+function extractInlineVisualizationIds(content: string): string[] {
+    return Array.from(new Set([
+        ...(content.match(/\[PLOT:([^\]]+)\]/g)?.map((m) => m.slice(6, -1)) ?? []),
+        ...(content.match(/\[NETWORK:([^\]]+)\]/g)?.map((m) => m.slice(9, -1)) ?? []),
+        ...(content.match(/\[TABLE:([^\]]+)\]/g)?.map((m) => m.slice(7, -1)) ?? []),
+    ]))
+}
+
+function getSupportingDataArtifacts(content: string, visualizations?: AnyVisualization[]) {
+    const inlineIds = new Set(extractInlineVisualizationIds(content))
+    const vizById = new Map((visualizations || []).map((viz) => [viz.id, viz]))
+    const counts: SupportingDataCounts = { plot: 0, table: 0, network: 0, other: 0, total: 0 }
+
+    const bump = (kind: keyof Omit<SupportingDataCounts, "total">) => {
+        counts[kind] += 1
+        counts.total += 1
+    }
+
+    const classify = (viz?: AnyVisualization): keyof Omit<SupportingDataCounts, "total"> => {
+        if (!viz) return "other"
+        if (viz.type === "network_plot") return "network"
+        if (
+            viz.type === "drug_target_grid" ||
+            viz.type === "target_search_table" ||
+            viz.type === "predictive_results_table" ||
+            viz.type === "tcga_cis_results_table"
+        ) return "table"
+        if (viz.type === "static_plot") return "plot"
+        return "other"
+    }
+
+    inlineIds.forEach((id) => bump(classify(vizById.get(id))))
+
+    const remainingVisualizations = (visualizations || []).filter((viz) => !inlineIds.has(viz.id))
+    remainingVisualizations.forEach((viz) => bump(classify(viz)))
+
+    return { remainingVisualizations, counts }
+}
+
+function supportingDataLabel(counts: SupportingDataCounts): string {
+    if (counts.total === 0) return "supporting data"
+    if (counts.total === 1) {
+        if (counts.plot === 1) return "1 plot"
+        if (counts.table === 1) return "1 table"
+        if (counts.network === 1) return "1 network"
+    }
+    return `${counts.total} items`
+}
+
 const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
     const handleCopyTable = useCallback((tableContent: string) => {
         if (onCopyTable) {
@@ -807,10 +864,10 @@ const MessagesPane = memo(function MessagesPane({
                                     >
                                         <CardContent className="p-4 leading-relaxed tracking-wide">
                                             {message.role === "assistant" && (message.isGeneralKnowledge || message.confidence === "general_knowledge") && (
-                                                <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
-                                                    <span className="mt-0.5 shrink-0">⚠️</span>
+                                                <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-slate-50/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 text-xs">
+                                                    <HelpCircle className="h-4 w-4 mt-0.5 shrink-0 text-slate-500 dark:text-slate-400" />
                                                     <span>
-                                                        <span className="font-semibold">General knowledge response</span> — this answer is based on the AI&apos;s training data, not LinkedOmics database. It may be incomplete or outdated.
+                                                        <span className="font-semibold text-slate-700 dark:text-slate-200">General knowledge mode</span> — answered from model knowledge rather than LinkedOmics data.
                                                     </span>
                                                 </div>
                                             )}
@@ -852,9 +909,10 @@ const MessagesPane = memo(function MessagesPane({
                                                         const fullAvailable = message.hasFullContent === true
                                                         const hasImages = message.hasImages === true
                                                         const isPreviewOnly = message.hasFullContent === false
-                                                        const isLarge =
-                                                            !message.noCollapse &&
-                                                            (isPreviewOnly || message.wasPreview || content.length > 4000 || hasMoreThanNLines(content, 80))
+                                                        const hasSeparateSummary =
+                                                            !!message.summary &&
+                                                            message.summary.trim().length > 0 &&
+                                                            message.summary !== message.content
 
                                                         let enrichmentData = null
                                                         // Regex to find ```json ... ``` blocks or just raw arrays [ ... ]
@@ -882,6 +940,31 @@ const MessagesPane = memo(function MessagesPane({
                                                             }
                                                         }
 
+                                                        const { remainingVisualizations, counts } = getSupportingDataArtifacts(
+                                                            content,
+                                                            message.visualizations
+                                                        )
+                                                        const hasSupportingArtifacts =
+                                                            counts.total > 0 ||
+                                                            message.hasVisualizations === true ||
+                                                            enrichmentData != null
+                                                        const collapseForSupportingData =
+                                                            !message.noCollapse &&
+                                                            hasSeparateSummary &&
+                                                            hasSupportingArtifacts
+                                                        const isLarge =
+                                                            !message.noCollapse &&
+                                                            (isPreviewOnly || message.wasPreview || content.length > 4000 || hasMoreThanNLines(content, 80))
+                                                        const shouldCollapse = collapseForSupportingData || isLarge
+                                                        const collapsedLabel = collapseForSupportingData
+                                                            ? `Show supporting data${counts.total > 0 ? ` (${supportingDataLabel(counts)})` : ""}`
+                                                            : fullAvailable
+                                                                ? hasImages
+                                                                    ? "Load details (show plot)"
+                                                                    : "Load details"
+                                                                : "Show details"
+                                                        const expandedLabel = collapseForSupportingData ? "Hide supporting data" : "Hide details"
+
                                                         const renderEnrichment = () => (
                                                             enrichmentData ? (
                                                                 <div className="mt-2 mb-6 border-b border-border pb-4">
@@ -894,7 +977,27 @@ const MessagesPane = memo(function MessagesPane({
                                                             ) : null
                                                         )
 
-                                                        if (!isLarge || expanded) {
+                                                        const renderAdditionalVisualizations = () => (
+                                                            remainingVisualizations.length > 0 ? (
+                                                                <div className="mt-4 space-y-4">
+                                                                    {remainingVisualizations.map((viz) =>
+                                                                        viz.type === "network_plot"
+                                                                            ? <NetworkPlot key={viz.id} visualization={viz} />
+                                                                            : viz.type === "drug_target_grid"
+                                                                            ? <DrugTargetGrid key={viz.id} visualization={viz} />
+                                                                            : viz.type === "target_search_table"
+                                                                            ? <TargetSearchTable key={viz.id} visualization={viz} />
+                                                                            : viz.type === "predictive_results_table"
+                                                                            ? <PredictiveResultsTable key={viz.id} visualization={viz} />
+                                                                            : viz.type === "tcga_cis_results_table"
+                                                                            ? <TCGACisResultsTable key={viz.id} visualization={viz} />
+                                                                            : <StaticPlot key={viz.id} visualization={viz} />
+                                                                    )}
+                                                                </div>
+                                                            ) : null
+                                                        )
+
+                                                        if (!shouldCollapse || expanded) {
                                                             // Extract gene names for badges
                                                             const genes = extractGeneNames(content)
 
@@ -909,18 +1012,19 @@ const MessagesPane = memo(function MessagesPane({
                                                                             ))}
                                                                         </div>
                                                                     )}
-                                                                    {isLarge && (
+                                                                    {shouldCollapse && (
                                                                         <div className="flex justify-end">
                                                                             <button
                                                                                 className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4"
                                                                                 onClick={() => onToggleExpand(key)}
                                                                             >
-                                                                                Hide details
+                                                                                {expandedLabel}
                                                                             </button>
                                                                         </div>
                                                                     )}
                                                                     {/* Render markdown content (JSON block stripped when shown via EnrichmentRenderer) */}
                                                                     <AssistantMarkdown content={sanitizedContent} toolSources={message.toolSources} visualizations={message.visualizations} />
+                                                                    {renderAdditionalVisualizations()}
                                                                 </div>
                                                             )
                                                         }
@@ -929,14 +1033,11 @@ const MessagesPane = memo(function MessagesPane({
                                                             <div className="rounded-md border border-border bg-background p-3">
                                                                 <div className="flex justify-center">
                                                                     <button
-                                                                        className="text-xs font-medium text-primary hover:underline underline-offset-4"
+                                                                        className="inline-flex items-center gap-2 text-xs font-medium text-primary hover:underline underline-offset-4"
                                                                         onClick={() => onToggleExpand(key)}
                                                                     >
-                                                                        {fullAvailable
-                                                                            ? hasImages
-                                                                                ? "Load details (show plot)"
-                                                                                : "Load details"
-                                                                            : "Show details"}
+                                                                        <ChevronDown className="h-3.5 w-3.5" />
+                                                                        {collapsedLabel}
                                                                     </button>
                                                                 </div>
                                                             </div>
@@ -991,33 +1092,6 @@ const MessagesPane = memo(function MessagesPane({
                                                     <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                                                 )
                                             )}
-                                            {(() => {
-                                                const content = message.content || ""
-                                                const inlined = new Set([
-                                                    ...(content.match(/\[PLOT:([^\]]+)\]/g)?.map(m => m.slice(6, -1)) ?? []),
-                                                    ...(content.match(/\[NETWORK:([^\]]+)\]/g)?.map(m => m.slice(9, -1)) ?? []),
-                                                    ...(content.match(/\[TABLE:([^\]]+)\]/g)?.map(m => m.slice(7, -1)) ?? []),
-                                                ])
-                                                const remaining = (message.visualizations || []).filter(v => !inlined.has(v.id))
-                                                return remaining.length > 0 ? (
-                                                    <div className="mt-4 space-y-4">
-                                                        {remaining.map((viz) =>
-                                                            viz.type === "network_plot"
-                                                                ? <NetworkPlot key={viz.id} visualization={viz} />
-                                                                : viz.type === "drug_target_grid"
-                                                                ? <DrugTargetGrid key={viz.id} visualization={viz} />
-                                                                : viz.type === "target_search_table"
-                                                                ? <TargetSearchTable key={viz.id} visualization={viz} />
-                                                                : viz.type === "predictive_results_table"
-                                                                ? <PredictiveResultsTable key={viz.id} visualization={viz} />
-                                                                : viz.type === "tcga_cis_results_table"
-                                                                ? <TCGACisResultsTable key={viz.id} visualization={viz} />
-                                                                : <StaticPlot key={viz.id} visualization={viz} />
-                                                        )}
-                                                    </div>
-                                                ) : null
-                                            })()}
-
                                             {/* Consolidated data sources footer — only show keys not already cited inline */}
                                             {message.toolSources && Object.keys(message.toolSources).length > 0 && (() => {
                                                 const inlineKeys = new Set(
