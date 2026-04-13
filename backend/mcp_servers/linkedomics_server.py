@@ -711,7 +711,7 @@ def funmap_neighborhood(protein: str) -> dict:
     FunMap is a functional network where proteins are connected if a connection is predicted by a
     machine learning model trained on expression correlation across different cancer types
     and previously identified protein-protein interactions (PPI). This tool is useful for
-    identifying genes that may share similar functions, are co-regulated or co-expressed, or belong to the same pathway or network.
+    identifying genes that may share similar functions, belong to related pathways, or participate in the same biological network or module.
 
     Use this tool when the query involves:
     - Functional partners
@@ -1832,7 +1832,7 @@ def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
     This tool answers questions like:
     - "What biological processes are shared among these cancer genes?"
     - "What pathways are enriched in the FunMap neighborhood of ESR1?"
-    - "After identifying co-expressed partners of MYC, what functions do they share?"
+    - "After identifying FunMap partners of MYC, what functions do they share?"
 
     Best used AFTER:
     - funmap_neighborhood() — to interpret what a gene's functional network does

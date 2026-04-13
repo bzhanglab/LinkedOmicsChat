@@ -120,7 +120,7 @@ const EXAMPLE_CATEGORIES = [
         color: "text-emerald-700 bg-emerald-50 border-emerald-100",
         queries: [
             "Find functional neighbors of TP53 in the FunMap network",
-            "Run pathway enrichment for BRCA1 co-expression partners",
+            "Run pathway enrichment for BRCA1 FunMap partners",
             "What pathways are enriched in PTEN-low tumors?",
         ],
     },

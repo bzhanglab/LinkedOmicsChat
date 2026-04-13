@@ -31,6 +31,9 @@ _PENDING_OFFER_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+_SUMMARY_DANGLING_END_RE = re.compile(r"(?:[,;:/=\-–—(\[{]|(?:\*\*)|`)\s*$")
+_SUMMARY_TERMINAL_PUNCT_RE = re.compile(r"[.!?](?:\*\*|[`\"'\)\]\u201d\u2019]+)?\s*$")
+
 
 def _extract_pending_offer_from_text(text: Any) -> Optional[str]:
     """Extract a follow-up offer sentence and convert it into a reusable query."""
@@ -52,6 +55,90 @@ def _extract_pending_offer_from_response(response: Dict[str, Any]) -> Optional[s
     return (
         _extract_pending_offer_from_text(response.get("summary"))
         or _extract_pending_offer_from_text(response.get("message"))
+    )
+
+
+def _has_balanced_summary_markup(text: str) -> bool:
+    """Return True when common markdown delimiters look balanced."""
+    if text.count("**") % 2 != 0:
+        return False
+    if text.count("`") % 2 != 0:
+        return False
+    for opener, closer in (("(", ")"), ("[", "]"), ("{", "}")):
+        balance = 0
+        for char in text:
+            if char == opener:
+                balance += 1
+            elif char == closer:
+                balance -= 1
+            if balance < 0:
+                return False
+        if balance != 0:
+            return False
+    return True
+
+
+def _summary_has_complete_ending(text: str) -> bool:
+    """Heuristic: summaries should end with balanced markup and terminal punctuation."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if not _has_balanced_summary_markup(stripped):
+        return False
+    if _SUMMARY_DANGLING_END_RE.search(stripped):
+        return False
+    return bool(_SUMMARY_TERMINAL_PUNCT_RE.search(stripped))
+
+
+def _trim_summary_to_complete_boundary(text: str) -> str:
+    """Trim an incomplete summary back to the last sentence boundary."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return ""
+    if _summary_has_complete_ending(stripped):
+        return stripped
+
+    boundary_positions = [
+        match.end()
+        for match in re.finditer(r"[.!?](?:\*\*|[`\"'\)\]\u201d\u2019]+)?(?:\s+|$)", stripped)
+    ]
+    for end in reversed(boundary_positions):
+        candidate = stripped[:end].strip()
+        if _summary_has_complete_ending(candidate):
+            return candidate
+
+    lines = [line.rstrip() for line in stripped.splitlines()]
+    while lines:
+        lines.pop()
+        candidate = "\n".join(lines).strip()
+        if _summary_has_complete_ending(candidate):
+            return candidate
+
+    first_sentence = re.search(r"^.*?[.!?](?:\*\*|[`\"'\)\]\u201d\u2019]+)?(?:\s+|$)", stripped, re.DOTALL)
+    if first_sentence:
+        candidate = first_sentence.group(0).strip()
+        if _summary_has_complete_ending(candidate):
+            return candidate
+    return ""
+
+
+def _normalize_summary_text(text: str) -> str:
+    """Normalize whitespace and remove obviously broken trailing markdown."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return ""
+    stripped = stripped.replace("\r\n", "\n")
+    stripped = re.sub(r"[ \t]+\n", "\n", stripped)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped)
+    return stripped.strip()
+
+
+def _summary_bullet_count(text: str) -> int:
+    """Count markdown bullet lines in a summary."""
+    return sum(
+        1
+        for line in (text or "").splitlines()
+        if re.match(r"^\s*[-*]\s+", line)
     )
 
 # Per-cohort brand colors (CPTAC/LinkedOmics palette)
@@ -2984,8 +3071,38 @@ Classify this query. Return JSON only."""
         try:
             from langchain_core.messages import SystemMessage, HumanMessage
 
+            def _summary_requirements() -> dict[str, Any]:
+                query_lower = (query or "").lower()
+                genes = self._extract_gene_symbols(query or "")
+                compare_like = (
+                    len(genes) >= 2
+                    and any(marker in query_lower for marker in ("compare", "versus", " vs ", "priorit", "rank"))
+                )
+                return {
+                    "genes": genes[:4],
+                    "compare_like": compare_like,
+                    "min_bullets": 2 if compare_like else 1,
+                    "min_chars": 450 if compare_like else 120,
+                }
+
+            requirements = _summary_requirements()
+
+            def _meets_detail_floor(text: str) -> bool:
+                normalized = _normalize_summary_text(text)
+                if not normalized:
+                    return False
+                if len(normalized) < requirements["min_chars"]:
+                    return False
+                if _summary_bullet_count(normalized) < requirements["min_bullets"]:
+                    return False
+                if requirements["compare_like"]:
+                    for gene in requirements["genes"]:
+                        if not re.search(rf"\b{re.escape(gene)}\b", normalized, re.IGNORECASE):
+                            return False
+                return True
+
             evidence = self._compact_results_for_llm(results)
-            prompt = f"""User question:
+            base_prompt = f"""User question:
 {query}
 
 Tool results (sanitized JSON):
@@ -3020,7 +3137,7 @@ Rules:
   - Expression follow-ups must stay within tumor-vs-normal CPTAC expression comparisons.
   - Survival follow-ups must stay within CPTAC or TCGA survival analyses that the tools already support.
   - Cis-correlation follow-ups must be phrased as molecular-pair correlation / dosage / methylation / RNA-protein questions for a specific gene and optional cancer type.
-  - FunMap follow-ups must be phrased as a functional neighborhood / network query for a gene. FunMap is pan-cancer; do NOT invent cohort-specific or cancer-specific co-expression/network analyses such as "in LUAD".
+  - FunMap follow-ups must be phrased as a functional neighborhood / co-functional network query for a gene. Describe FunMap as a co-functional network. FunMap is pan-cancer; do NOT invent cohort-specific or cancer-specific co-expression/network analyses such as "in LUAD".
   - Do NOT offer unsupported workflows such as ranked co-expressed genes within a specific cohort unless the tool outputs explicitly support that exact capability.
 - Never add a next-step offer when the findings are weak, absent, mixed without a clear direction, or already fully answer the user's request.
 - Use ONLY the provided tool results.
@@ -3034,23 +3151,82 @@ Rules:
 - Mention at most 3 specific genes, pathways, cohorts, or terms unless the user explicitly asked for an exhaustive list.
 - Prefer synthesis, ranking, caveats, and notable exceptions over repeating exact values that will already be visible in the detailed output.
 - FORMATTING (mandatory): Use **bold** for every gene name, cancer type/cohort, key statistic (p-value, FDR, correlation, hazard ratio), and notable finding. Example: "**TP53** shows a **Spearman ρ = 0.87** (FDR < **1e-285**) in **BRCA**." Never leave gene names or numerical statistics as plain text.
+- Every paragraph and bullet MUST end cleanly with terminal punctuation. Never leave a sentence, bullet, parenthesis, or markdown marker unfinished.
 """
-            resp = await self._invoke_llm_tracked(
-                [
-                    SystemMessage(
-                        content=(
-                            "You are a Senior Multi-Omics Bioinformatics Analyst.\n"
-                            "FORMATTING: Always use **bold** for gene names, cancer types, cohort names, "
-                            "and all key statistics (p-values, FDR, correlations, hazard ratios). "
-                            "Use bullet lists for multiple findings. Never leave gene names or numbers as plain text.\n"
-                            f"{self.BIO_GUIDELINES}"
-                        )
-                    ),
-                    HumanMessage(content=prompt),
-                ],
-                usage_tracker=usage_tracker,
+
+            async def _generate_summary(prompt_text: str) -> str:
+                resp = await self._invoke_llm_tracked(
+                    [
+                        SystemMessage(
+                            content=(
+                                "You are a Senior Multi-Omics Bioinformatics Analyst.\n"
+                                "FORMATTING: Always use **bold** for gene names, cancer types, cohort names, "
+                                "and all key statistics (p-values, FDR, correlations, hazard ratios). "
+                                "Use bullet lists for multiple findings. Never leave gene names or numbers as plain text.\n"
+                                "Every sentence and bullet must be fully closed and grammatically complete.\n"
+                                f"{self.BIO_GUIDELINES}"
+                            )
+                        ),
+                        HumanMessage(content=prompt_text),
+                    ],
+                    usage_tracker=usage_tracker,
+                )
+                return _normalize_summary_text(resp)
+
+            summary = await _generate_summary(base_prompt)
+            if _summary_has_complete_ending(summary) and _meets_detail_floor(summary):
+                return summary
+
+            repaired = _trim_summary_to_complete_boundary(summary)
+            logger.warning(
+                "Summary output was incomplete or under-detailed; retrying with a stricter complete-summary prompt. original_len=%s repaired_len=%s",
+                len(summary),
+                len(repaired),
             )
-            return (resp or "").strip()
+
+            retry_prompt = f"""User question:
+{query}
+
+Tool results (sanitized JSON):
+{evidence}
+
+Write a COMPLETE executive summary that directly answers the user's question.
+
+Strict format:
+- 1 opening paragraph with the main conclusion.
+- {requirements["min_bullets"]} to 3 bullet points.
+- Optional 1 closing sentence.
+
+Hard requirements:
+- Every bullet must be exactly one complete sentence.
+- Every line must end with a period.
+- Keep the summary between {requirements["min_chars"]} and 1400 characters when possible.
+- Do not leave any markdown, parenthesis, or statistic unfinished.
+- Use **bold** for every gene name, cancer type/cohort, and key statistic.
+- If the query compares multiple genes, mention each compared gene explicitly.
+- Output markdown only. No headings, no JSON, no code fences.
+"""
+            retry_summary = await _generate_summary(retry_prompt)
+            if _summary_has_complete_ending(retry_summary) and _meets_detail_floor(retry_summary):
+                return retry_summary
+
+            retry_repaired = _trim_summary_to_complete_boundary(retry_summary)
+            if retry_repaired and _meets_detail_floor(retry_repaired):
+                logger.warning(
+                    "Returning repaired retry summary after incomplete output. retry_len=%s repaired_len=%s",
+                    len(retry_summary),
+                    len(retry_repaired),
+                )
+                return retry_repaired
+            if repaired and _meets_detail_floor(repaired):
+                logger.warning(
+                    "Retry summary still incomplete; returning repaired first-pass summary."
+                )
+                return repaired
+            logger.warning(
+                "Summary generation failed completeness/detail checks twice; returning empty summary instead of a thin or truncated summary."
+            )
+            return ""
         except Exception as e:
             logger.warning(f"LLM summarization failed: {e}")
             return ""
@@ -3096,7 +3272,7 @@ IMPORTANT — LinkedOmicsChat can ONLY answer questions that use one of these ca
 - TCGA survival analysis for a gene across cohorts or omics layers (RNAseq, RPPA, Methylation, SCNA, miRNASeq)
 - TCGA multi-omics cis associations — correlations between any two omics types (RNAseq, RPPA, Methylation, SCNA, miRNASeq) for a specific gene, cohort, or genome-wide scan
 - CPTAC cis correlations between any omics pair (RNA–protein, DNA–RNA, etc.) for a gene in a cancer type
-- Protein/gene interaction neighborhood from the FunMap functional co-expression network (pan-cancer, no cancer-type filter)
+- Protein/gene interaction neighborhood from the FunMap co-functional network (pan-cancer, no cancer-type filter)
 - Drug target ranking and druggability assessment (oncology evidence tiers T1–T5, tumor dependency) for one or multiple genes
 - Clinical trial treatment-response prediction: which drugs/studies a gene or gene set predicts response to; meta-analysis of top biomarkers across trials; top genes/pathways in a specific study
 - Pathway enrichment analysis (WebGestalt GO overrepresentation) on a list of genes
