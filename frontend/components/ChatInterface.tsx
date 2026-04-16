@@ -795,9 +795,9 @@ const MessagesPane = memo(function MessagesPane({
                         message.turnId != null
                     const userBubbleWrapperClass = message.role === "user"
                         ? isEditingUserMessage
-                            ? "flex w-full max-w-[min(44rem,calc(100%-3rem))] self-end flex-col items-end gap-2"
-                            : "flex w-fit max-w-[80%] self-end flex-col items-end"
-                        : "flex flex-col items-start"
+                            ? "flex min-w-0 w-full max-w-[min(44rem,calc(100%-3rem))] self-end flex-col items-end gap-2"
+                            : "flex min-w-0 w-fit max-w-[80%] self-end flex-col items-end"
+                        : "flex min-w-0 flex-1 flex-col items-start"
 
                     return (
                         <div
@@ -853,16 +853,16 @@ const MessagesPane = memo(function MessagesPane({
                                     ) : (
                                     <Card
                                         className={cn(
-                                            "relative shadow-sm hover:shadow-md transition-shadow duration-300",
+                                            "relative min-w-0 shadow-sm hover:shadow-md transition-shadow duration-300",
                                             message.role === "user"
                                                 ? cn(
                                                     "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm",
                                                     isEditingUserMessage ? "w-full" : ""
                                                 )
-                                                : "max-w-[80%] bg-card rounded-2xl rounded-tl-sm border-muted/60"
+                                                : "w-full max-w-[80%] bg-card rounded-2xl rounded-tl-sm border-muted/60"
                                         )}
                                     >
-                                        <CardContent className="p-4 leading-relaxed tracking-wide">
+                                        <CardContent className="min-w-0 p-4 leading-relaxed tracking-wide">
                                             {message.role === "assistant" && (message.isGeneralKnowledge || message.confidence === "general_knowledge") && (
                                                 <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-slate-50/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 text-xs">
                                                     <HelpCircle className="h-4 w-4 mt-0.5 shrink-0 text-slate-500 dark:text-slate-400" />
@@ -1708,6 +1708,20 @@ async function downloadSessionExport(messages: ChatMessage[]) {
             const v = viz as any
             const rows: any[] = v.rows || []
             if (!rows.length) return ""
+            const isTreatmentMetaAnalysis = (v.plot_type === "treatment_gene" || v.plot_type === "treatment_gene_set") && v.variant !== "clinical_trial"
+            const formatMetaP = (value: any): string =>
+                typeof value === "number" ? value.toExponential(3) : "—"
+            const formatSignedFdr = (row: any): string => {
+                const value = typeof row.meta_fdr_signed === "number"
+                    ? row.meta_fdr_signed
+                    : typeof row.meta_fdr === "number"
+                    ? row.meta_fdr
+                    : null
+                if (typeof value !== "number") return "—"
+                const absValue = Math.abs(value)
+                if (absValue !== 0 && absValue < 1e-4) return value.toExponential(3)
+                return Number(value.toPrecision(4)).toString()
+            }
             if (v.variant === "tcga_cis") {
                 let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
                 html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
@@ -1725,6 +1739,35 @@ async function downloadSessionExport(messages: ChatMessage[]) {
                     html += `<td style="${tdS}font-weight:600;color:hsl(var(--foreground));">${escapeHtml(row.label || "—")}</td>`
                     html += `<td style="${tdCS}font-variant-numeric:tabular-nums;color:${corrColor};font-weight:600;">${row.avg_auroc ?? "—"}</td>`
                     html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(row.meta_fdr_sci || (row.meta_fdr ?? "—"))}</td>`
+                    html += `</tr>`
+                })
+                html += `</tbody></table></div>`
+                if (v.description) html += `<div style="padding:8px 14px;font-size:11px;color:hsl(var(--muted-foreground));border-top:1px solid hsl(var(--border));background:hsl(var(--muted));">${escapeHtml(v.description)}</div>`
+                html += `</div>`
+                return html
+            }
+            if (isTreatmentMetaAnalysis) {
+                const colStudies = v.col_studies || "Datasets"
+                const colPValue = v.col_p_value || "meta-p"
+                const colAuroc = v.col_auroc || "Avg. AUC"
+                const colFdr = v.col_fdr || "FDR"
+                let html = `<div style="margin:16px 0;border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">`
+                html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">`
+                html += `<thead><tr>`
+                html += `<th style="${thS}">${escapeHtml(v.row_label || "Item")}</th>`
+                html += `<th style="${thS}">${escapeHtml(colStudies)}</th>`
+                html += `<th style="${thS}">${escapeHtml(colPValue)}</th>`
+                html += `<th style="${thS}">${escapeHtml(colFdr)}</th>`
+                html += `<th style="${thS}">${escapeHtml(colAuroc)}</th>`
+                html += `</tr></thead><tbody>`
+                rows.forEach((row, i) => {
+                    const rowBg = i % 2 === 0 ? rowEven : rowOdd
+                    html += `<tr style="${rowBg}">`
+                    html += `<td style="${tdS}font-weight:600;color:hsl(var(--foreground));">${escapeHtml(row.label || "—")}</td>`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.studies ?? "—"}</td>`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(formatMetaP(row.p_value))}</td>`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${escapeHtml(formatSignedFdr(row))}</td>`
+                    html += `<td style="${tdCS}font-variant-numeric:tabular-nums;">${row.avg_auroc ?? "—"}</td>`
                     html += `</tr>`
                 })
                 html += `</tbody></table></div>`
