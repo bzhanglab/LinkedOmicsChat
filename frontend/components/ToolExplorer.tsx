@@ -98,6 +98,10 @@ interface ParsedDoc {
     notes: string[]
 }
 
+const appendDocLine = (existing: string, next: string) => (
+    existing ? `${existing}\n${next}` : next
+)
+
 function parseDocstring(raw: string): ParsedDoc {
     const lines = raw.split('\n')
     const result: ParsedDoc = { summary: '', summaryItems: [], whenToUse: [], useCases: [], args: [], returns: [], returnsIntro: '', notes: [] }
@@ -107,6 +111,10 @@ function parseDocstring(raw: string): ParsedDoc {
     const summaryItemLines: string[] = []
     let currentArg: { name: string; type: string; desc: string } | null = null
     let currentReturn: { name: string; type: string; desc: string } | null = null
+    let currentSummaryItemIndex: number | null = null
+    let currentWhenItemIndex: number | null = null
+    let currentCaseItemIndex: number | null = null
+    let currentNoteItemIndex: number | null = null
 
     for (const line of lines) {
         const trimmed = line.trim()
@@ -120,19 +128,52 @@ function parseDocstring(raw: string): ParsedDoc {
         // Skip NumPy-style underline separators (e.g., "----------")
         if (/^[-=]{4,}$/.test(trimmed)) continue
 
-        if (!trimmed) continue
+        if (!trimmed) {
+            currentSummaryItemIndex = null
+            currentWhenItemIndex = null
+            currentCaseItemIndex = null
+            currentNoteItemIndex = null
+            if (section === 'returns' && !currentReturn && result.returnsIntro) {
+                result.returnsIntro = appendDocLine(result.returnsIntro, '')
+            }
+            continue
+        }
 
         if (section === 'summary') {
-            if (/^[-*]\s+/.test(trimmed))
+            if (/^[-*]\s+/.test(trimmed)) {
                 summaryItemLines.push(trimmed.replace(/^[-*]\s+/, ''))
-            else
+                currentSummaryItemIndex = summaryItemLines.length - 1
+            } else if (currentSummaryItemIndex !== null) {
+                summaryItemLines[currentSummaryItemIndex] += ' ' + trimmed
+            } else {
                 summaryLines.push(trimmed)
+            }
         } else if (section === 'when') {
             const bullet = trimmed.replace(/^[-*]\s*/, '')
-            if (bullet) result.whenToUse.push(bullet)
+            if (/^[-*]\s*/.test(trimmed)) {
+                if (bullet) {
+                    result.whenToUse.push(bullet)
+                    currentWhenItemIndex = result.whenToUse.length - 1
+                }
+            } else if (currentWhenItemIndex !== null) {
+                result.whenToUse[currentWhenItemIndex] += ' ' + trimmed
+            } else if (bullet) {
+                result.whenToUse.push(bullet)
+                currentWhenItemIndex = result.whenToUse.length - 1
+            }
         } else if (section === 'cases') {
             const bullet = trimmed.replace(/^[-*"']\s*/, '').replace(/["']$/, '')
-            if (bullet) result.useCases.push(bullet)
+            if (/^[-*"']\s*/.test(trimmed)) {
+                if (bullet) {
+                    result.useCases.push(bullet)
+                    currentCaseItemIndex = result.useCases.length - 1
+                }
+            } else if (currentCaseItemIndex !== null) {
+                result.useCases[currentCaseItemIndex] += ' ' + bullet
+            } else if (bullet) {
+                result.useCases.push(bullet)
+                currentCaseItemIndex = result.useCases.length - 1
+            }
         } else if (section === 'args') {
             // Standard: `param (type): desc`  or NumPy: `param` on its own line then desc indented
             const argMatch = trimmed.match(/^(\w+)\s*\(([^)]+)\):\s*(.*)/)
@@ -152,11 +193,21 @@ function parseDocstring(raw: string): ParsedDoc {
             } else if (currentReturn && trimmed) {
                 currentReturn.desc += ' ' + trimmed
             } else if (!currentReturn && trimmed) {
-                result.returnsIntro = trimmed
+                result.returnsIntro = appendDocLine(result.returnsIntro, trimmed)
             }
         } else if (section === 'notes') {
             const bullet = trimmed.replace(/^[-*]\s*/, '')
-            if (bullet) result.notes.push(bullet)
+            if (/^[-*]\s*/.test(trimmed)) {
+                if (bullet) {
+                    result.notes.push(bullet)
+                    currentNoteItemIndex = result.notes.length - 1
+                }
+            } else if (currentNoteItemIndex !== null) {
+                result.notes[currentNoteItemIndex] += ' ' + trimmed
+            } else if (bullet) {
+                result.notes.push(bullet)
+                currentNoteItemIndex = result.notes.length - 1
+            }
         }
     }
 
@@ -278,7 +329,9 @@ const ToolDocumentation = ({ description }: { description: string }) => {
                         <h4 className="text-xs font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-400">Returns</h4>
                     </div>
                     {doc.returnsIntro && (
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-3 italic">{doc.returnsIntro}</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-3 italic">
+                            <InlineText text={doc.returnsIntro} />
+                        </p>
                     )}
                     {doc.returns.length > 0 ? (
                         <div className="space-y-2.5">

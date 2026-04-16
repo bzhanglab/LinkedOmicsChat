@@ -133,10 +133,11 @@ def search_pubmed(
         max_results (int): Number of articles to return (default 10, max 20).
 
     Returns:
-        dict with keys:
-            "query" (str): The query as submitted.
-            "total_found" (int): Number of articles returned.
-            "articles" (list[dict]): Each article contains title, authors, journal, year, abstract, pmid, doi.
+        query (str): The query as submitted.
+        total_found (int): Number of articles returned.
+        articles (list[dict]): Article records containing title, authors, journal, year, abstract, pmid, doi, and related links.
+        message (str, optional): Present when no articles were found.
+        error (str, optional): Present when the PubMed request fails.
 
     Notes:
     - Use MeSH terms or gene symbols for best results. In Chat, the AI reformulates natural language queries automatically — use precise terms here.
@@ -181,14 +182,14 @@ def get_pubmed_abstract(pmid: str) -> dict[str, Any]:
         pmid (str): PubMed ID (e.g., "25892560").
 
     Returns:
-        dict with keys:
-            "title" (str): Article title.
-            "authors" (list[str]): Author names.
-            "journal" (str): Journal name.
-            "year" (str): Publication year.
-            "abstract" (str): Full abstract text.
-            "pmid" (str): PubMed ID.
-            "doi" (str): DOI if available.
+        title (str): Article title.
+        authors (list[str]): Author names.
+        journal (str): Journal name.
+        year (str): Publication year.
+        abstract (str): Full abstract text.
+        pmid (str): PubMed ID.
+        doi (str): DOI if available.
+        error (str, optional): Present when the PMID is not found or the PubMed request fails.
     """
     pmid = pmid.strip()
     try:

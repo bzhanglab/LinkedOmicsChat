@@ -32,10 +32,9 @@ def resolve_gene_identifier(identifier: str) -> dict[str, Any]:
         identifier (str): Gene symbol, Ensembl Gene ID (ENSG...), or UniProt accession.
 
     Returns:
-        dict with keys:
-            "hgnc_symbol" (str): Resolved uppercase HGNC gene symbol, or empty string on failure.
-            "input" (str): The original identifier as provided.
-            "error" (str, optional): Present only if resolution failed — describes why.
+        hgnc_symbol (str): Resolved uppercase HGNC gene symbol, or an empty string on failure.
+        input (str): The original identifier as provided.
+        error (str, optional): Present only if resolution failed; describes why resolution did not succeed.
     """
     try:
         symbol = resolve_to_hgnc(identifier)
