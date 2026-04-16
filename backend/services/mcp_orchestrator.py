@@ -966,8 +966,8 @@ def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Op
         colors = ["#3b82f6" if a < 0.5 else "#f97316" for a in aurocs]
         fdrs = [g.get("meta_fdr", 1.0) for g in items]
 
-        # Sort: most sensitive (most negative) at bottom, most resistant at top
-        order = sorted(range(len(centered)), key=lambda i: centered[i])
+        # Preserve the reported ranking order so the chart matches the table.
+        order = list(range(len(centered)))
         labels   = [labels[i]   for i in order]
         centered = [centered[i] for i in order]
         aurocs   = [aurocs[i]   for i in order]
@@ -988,6 +988,7 @@ def _generate_meta_analysis_chart(items: list, label_key: str, title: str) -> Op
             ax.barh(y, val, height=0.75, color=col, edgecolor="none", alpha=alpha)
 
         ax.axvline(0, color="#444444", linewidth=1.0)
+        ax.invert_yaxis()
 
         # Value labels: right of bar for resistant, left for sensitive
         for y, val, auc in zip(y_pos, centered, aurocs):
@@ -1662,11 +1663,12 @@ def _compact_meta_analysis_payload_for_summary(
         return compact
 
     compact.update({
-        "ranking_basis": "Use `reported_top_items` as the authoritative ranking. The bidirectional bar chart uses only the first 25 reported items and reorders them by effect direction for display.",
+        "ranking_basis": "Use `reported_top_items` as the authoritative ranking. The bidirectional bar chart uses only the first 25 reported items but preserves that ranking order.",
         "reported_top_items": [
             {
                 "rank": idx,
                 "label": item.get(label_key, ""),
+                "p_value": _safe_float(item.get("meta_p")),
                 "avg_auroc": _safe_float(item.get("avg_auc")),
                 "meta_fdr": _safe_float(item.get("meta_fdr")),
                 "direction": item.get("direction", ""),
@@ -3974,9 +3976,19 @@ Please provide a clear, informative response about this gene. Include the key de
         def _filter_label(f: dict) -> str:
             cat = f.get("treatment_category", "")
             cancers_f = f.get("cancers", [])
+            category_labels = {
+                "ici": "immune checkpoint inhibitors",
+                "Immune Checkpoint Inhibitor": "immune checkpoint inhibitors",
+                "targeted": "targeted",
+                "Targeted Therapy": "targeted therapy",
+                "chemotherapy": "chemotherapy",
+                "Chemotherapy": "chemotherapy",
+                "combinations": "combinations",
+                "Combinations": "combinations",
+            }
             parts = []
             if cat:
-                parts.append(f"treatment={cat}")
+                parts.append(f"treatment={category_labels.get(str(cat), str(cat))}")
             elif f.get("drugs"):
                 parts.append(f"drugs={f['drugs']}")
             if cancers_f:
@@ -4403,6 +4415,18 @@ Please provide a clear, informative response about this gene. Include the key de
                 )
 
                 def _render_single_trial(data: dict, label: str) -> list[str]:
+                    def _signed_neg_log10(value: Any) -> float:
+                        import math
+
+                        try:
+                            numeric = float(value)
+                        except (TypeError, ValueError):
+                            return 0.0
+                        if not math.isfinite(numeric) or numeric == 0:
+                            return 0.0
+                        sign = -1.0 if numeric < 0 else 1.0
+                        return sign * (-math.log10(abs(numeric)))
+
                     lines: list[str] = []
                     total_sig = data.get("total_significant", "")
                     total_all = data.get("total_studies", "")
@@ -4431,6 +4455,7 @@ Please provide a clear, informative response about this gene. Include the key de
                             "studies": s.get("sample_size", ""),
                             "avg_auroc": s.get("auroc"),
                             "meta_fdr": s.get("fdr"),
+                            "meta_fdr_signed": s.get("fdr"),
                             "p_value": s.get("p_value"),
                             "response_evaluation": s.get("response_evaluation", ""),
                             "direction": "resistant",
@@ -4445,14 +4470,15 @@ Please provide a clear, informative response about this gene. Include the key de
                             "studies": s.get("sample_size", ""),
                             "avg_auroc": s.get("auroc"),
                             "meta_fdr": s.get("fdr"),
+                            "meta_fdr_signed": s.get("fdr"),
                             "p_value": s.get("p_value"),
                             "response_evaluation": s.get("response_evaluation", ""),
                             "direction": "sensitive",
                             "disease": s.get("disease", ""),
                             "subtype": s.get("subtype", ""),
                         })
-                    # Sort by FDR magnitude (most significant first)
-                    all_rows.sort(key=lambda r: abs(float(r.get("meta_fdr") or 1)))
+                    # Match the public gene_analysis table: default order uses signed -log10(|p|).
+                    all_rows.sort(key=lambda r: _signed_neg_log10(r.get("p_value")))
                     for i, r in enumerate(all_rows, 1):
                         r["rank"] = i
                     if all_rows:
@@ -4705,6 +4731,11 @@ Please provide a clear, informative response about this gene. Include the key de
                             "id": table_viz_id,
                             "title": "Top Predictive Genes",
                             "row_label": "Gene",
+                            "col_studies": "Datasets",
+                            "col_p_value": "meta-p",
+                            "col_auroc": "Avg. AUC",
+                            "col_fdr": "FDR",
+                            "page_size": 10,
                             "study_list": d.get("study_list", []),
                             "description": f"Studies analyzed: {d.get('study_count',0)} | Filters: {_filter_label(filters)}",
                             "rows": [
@@ -4712,6 +4743,7 @@ Please provide a clear, informative response about this gene. Include the key de
                                     "rank": i,
                                     "label": g.get("gene", ""),
                                     "studies": g.get("datasets", ""),
+                                    "p_value": g.get("meta_p", ""),
                                     "avg_auroc": g.get("avg_auc", ""),
                                     "meta_fdr": g.get("meta_fdr", ""),
                                     "meta_fdr_signed": g.get("meta_fdr_signed", g.get("meta_fdr", "")),
@@ -4763,6 +4795,11 @@ Please provide a clear, informative response about this gene. Include the key de
                             "id": table_viz_id,
                             "title": "Top Predictive Pathways",
                             "row_label": "Pathway / Gene Set",
+                            "col_studies": "Datasets",
+                            "col_p_value": "meta-p",
+                            "col_auroc": "Avg. AUC",
+                            "col_fdr": "FDR",
+                            "page_size": 10,
                             "study_list": d.get("study_list", []),
                             "description": f"Studies analyzed: {d.get('study_count',0)} | Filters: {_filter_label(filters)}",
                             "rows": [
@@ -4770,6 +4807,7 @@ Please provide a clear, informative response about this gene. Include the key de
                                     "rank": i,
                                     "label": g.get("gene_set", ""),
                                     "studies": g.get("datasets", ""),
+                                    "p_value": g.get("meta_p", ""),
                                     "avg_auroc": g.get("avg_auc", ""),
                                     "meta_fdr": g.get("meta_fdr", ""),
                                     "meta_fdr_signed": g.get("meta_fdr_signed", g.get("meta_fdr", "")),

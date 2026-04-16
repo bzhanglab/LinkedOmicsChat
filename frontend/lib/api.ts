@@ -279,6 +279,7 @@ export interface PredictiveResultsTableVisualization {
     study_list?: string[]
     /** Optional column header overrides (used in default/meta-analysis variant) */
     col_studies?: string
+    col_p_value?: string
     col_auroc?: string
     col_fdr?: string
     /** Optional UI page size override */

@@ -16,6 +16,7 @@ Representative Questions & Use Cases:
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any, Literal, Optional
 import sys
 
@@ -36,6 +37,20 @@ from linkedomics_tcga_params import (
     TCGAOmics,
     TCGAStMethod,
 )
+
+try:
+    from core.clinical_trials_treatment_tree import (
+        expand_treatment_category,
+        normalize_treatment_category,
+    )
+except ModuleNotFoundError:
+    backend_dir = Path(__file__).resolve().parents[1]
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+    from core.clinical_trials_treatment_tree import (
+        expand_treatment_category,
+        normalize_treatment_category,
+    )
 
 # Create an MCP server
 mcp = FastMCP("linkedomics_mcp", json_response=True)
@@ -729,13 +744,9 @@ def funmap_neighborhood(protein: str) -> dict:
         protein (str): The gene symbol of the protein of interest (e.g., "ESR1", "TP53").
 
     Returns:
-        dict: A dictionary with:
-            - "nodes" (list[dict]): Each node has "name" (gene symbol) and "value" (score string).
-              The score is a p-value derived from the difference in average protein abundance
-              between tumor and normal samples using the Wilcoxon rank-sum test, based on data
-              from 5 cohorts: CCRCC, HCC, HNSCC, LSCC, and LUAD.
-            - "edges" (list[dict]): Each edge has "source" and "target" gene symbols representing functional connections.
-            - "neighborhood" (list[str]): Flat list of neighbor gene symbols for quick reference.
+        nodes (list[dict]): Network nodes. Each node includes `name` (gene symbol) and `value` (score string derived from tumor-vs-normal protein abundance differences across available cohorts).
+        edges (list[dict]): Network edges, each with `source` and `target` gene symbols representing functional connections.
+        neighborhood (list[str]): Flat list of neighbor gene symbols for quick reference.
     """
     req = requests.get(
         f"https://funmap.linkedomics.org/data/dag/gene/{protein.upper()}.json",
@@ -786,7 +797,7 @@ def get_target(protein: str) -> dict[str, Any]:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: A result dictionary with all available targeting and tumor biology fields.
+        result (dict | str): Detailed targeting and tumor biology fields when the gene is found, otherwise the string `"No target information found"`.
     """
     global targets
 
@@ -833,8 +844,8 @@ def batch_get_target(proteins: list[str]) -> dict[str, Any]:
         proteins (list[str]): List of gene symbols (e.g., ["ESR1", "TP53"]).
 
     Returns:
-        dict[str, Any]: A result dictionary containing tier, family, drugs, dependency, and overexpression summaries for each gene.
-            status of error should not used to formulate the response.
+        status (str): `"available"` when the batch request completes.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `get_target`, or may contain an error payload if an individual lookup fails.
     """
     results = {}
     for protein in proteins:
@@ -948,7 +959,8 @@ def cancer_gene_expression(protein: str) -> dict[str, Any]:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: RNA and Protein expression status (Higher/Lower/No difference) for each cohort.
+        protein_level (dict): Protein-level result wrapper with `status` and cohort-level `data` values such as higher, lower, or no significant difference.
+        RNA_level (dict): RNA-level result wrapper with `status` and cohort-level `data` values such as higher, lower, or no significant difference.
 
     Notes:
     - Available cohorts: BRCA (Breast), COAD (Colon), CCRCC (Kidney), GBM (Brain), HNSCC (Head/Neck), LSCC (Lung Squamous), LUAD (Lung Adeno), OV (Ovarian), PDAC (Pancreatic), UCEC (Uterine).
@@ -998,7 +1010,8 @@ def batch_cancer_gene_expression(proteins: list[str]) -> dict[str, Any]:
         proteins (list[str]): The gene symbols (e.g., ["ESR1", "TP53"]).
 
     Returns:
-        dict[str, Any]: RNA and Protein expression status (Higher/Lower/No difference) per cohort for each gene.
+        status (str): `"available"` when the batch request completes.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `cancer_gene_expression`.
 
     Notes:
     - Available cohorts: BRCA (Breast), COAD (Colon), CCRCC (Kidney), GBM (Brain), HNSCC (Head/Neck), LSCC (Lung Squamous), LUAD (Lung Adeno), OV (Ovarian), PDAC (Pancreatic), UCEC (Uterine).
@@ -1036,7 +1049,8 @@ def overall_survival_per_cancer(protein: str) -> dict[str, Any]:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: Survival association results for RNA and Protein levels across 10 cohorts.
+        protein_level (dict): Protein-level result wrapper with `status` and cohort-level survival interpretations.
+        RNA_level (dict): RNA-level result wrapper with `status` and cohort-level survival interpretations.
 
     Notes:
     - Available omic types: RNA, protein.
@@ -1086,7 +1100,8 @@ def batch_overall_survival_per_cancer(proteins: list[str]) -> dict[str, Any]:
         proteins (list[str]): The gene symbols (e.g., ["ESR1", "TP53"]).
 
     Returns:
-        dict[str, Any]: Survival association results for RNA and Protein levels across 10 cohorts per gene.
+        status (str): `"available"` when the batch request completes.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `overall_survival_per_cancer`.
 
     Notes:
     - Available omic types: RNA, protein.
@@ -1158,10 +1173,8 @@ def clinical_trial_information(protein: str) -> dict[str, Any]:
         protein (str): The gene symbol (e.g., "ESR1").
 
     Returns:
-        dict[str, Any]: Significant resistant and sensitive study lists, each with fields:
-            series, study_id, treatment, disease, subtype, clinical_trial_id, sample_size,
-            auroc, fdr, p_value, and response_evaluation. Also includes total_significant
-            and total_studies counts.
+        status (str): `"available"` when trial results were retrieved, otherwise `"unavailable"`.
+        data (dict): Trial-response summary containing `resistant`, `sensitive`, `total_significant`, and `total_studies`. Each study entry includes series, study_id, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr, p_value, and response_evaluation.
     """
     ret_val = {"status": "unavailable", "data": {}}
     req = requests.get(
@@ -1198,9 +1211,8 @@ def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
         proteins (list[str]): The gene symbols (e.g., ["ESR1", "TP53"]).
 
     Returns:
-        dict[str, Any]: Per-protein results, each with resistant and sensitive study lists
-            containing fields: series, study_id, treatment, disease, subtype,
-            clinical_trial_id, sample_size, auroc, fdr, p_value, and response_evaluation.
+        status (str): `"available"` when the batch request completes.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `clinical_trial_information`.
     """
     results = {}
     for protein in proteins:
@@ -1229,7 +1241,8 @@ def get_study_info(study_id: str) -> dict[str, Any]:
             (e.g., "GSE25066" or "Choueiri_CCR_2016"). The .csv suffix is added automatically.
 
     Returns:
-        dict: Full study metadata including abstract, sample sizes, NCT ID, PubMed ID, download URL.
+        status (str): `"available"` when study metadata was retrieved, otherwise `"unavailable"`.
+        data (dict): Study metadata returned by the API, typically including abstract, sample sizes, cancer type, treatment, NCT trial ID, PubMed ID, and download URL.
     """
     sid = study_id.strip()
     if not sid.endswith(".csv"):
@@ -1257,8 +1270,9 @@ def gene_set_trial_information(gene_set: str) -> dict[str, Any]:
             Spaces are converted to underscores automatically.
 
     Returns:
-        dict: Significant resistant and sensitive study lists with disease, treatment, AUROC,
-            study metadata, and NCT ID.
+        status (str): `"available"` when trial results were retrieved, otherwise `"unavailable"`.
+        gene_set (str): Normalized gene set name used in the API request.
+        data (dict): Trial-response summary containing `resistant`, `sensitive`, `total_significant`, and `total_studies`, with disease, treatment, AUROC, study metadata, and trial identifiers in each entry.
     """
     gs = gene_set.strip().upper().replace(" ", "_")
     req = requests.get(f"https://trials.linkedomics.org/api/table/gene_set/{gs}", timeout=30)
@@ -1267,66 +1281,19 @@ def gene_set_trial_information(gene_set: str) -> dict[str, Any]:
     return {"status": "available", "gene_set": gs, "data": get_top_n_trials(req.json())}
 
 
-# Treatment category → drug substrings used by the LinkedOmics Trials filter API.
-# Derived from the website's TreatmentSelect component (hardcoded in the frontend JS).
-# The filter API does case-insensitive substring matching on study treatment strings.
-TREATMENT_CATEGORIES: dict[str, list[str]] = {
-    "targeted": [
-        "trastuzumab", "pertuzumab", "trastuzumab-emtansine", "rituximab",
-        "ipilimumab", "atezolizumab", "nivolumab", "pembrolizumab", "bevacizumab",
-        "lapatinib", "neratinib", "ganetespib", "ganitumab", "trebananib",
-        "sunitinib", "veliparib", "bortezomib", "MK-2206",
-        "letrozole", "dexamethasone", "thalidomide",
-    ],
-    "chemotherapy": [
-        "paclitaxel", "docetaxel", "taxane",
-        "doxorubicin", "epirubicin", "anthracycline",
-        "fluorouracil", "capecitabine",
-        "cyclophosphamide", "chlorambucil",
-        "carboplatin", "platinum",
-        "ixabepilone", "thiotepa",
-    ],
-    "combinations": [
-        # chemo + targeted combination regimens in the database
-        "paclitaxel,doxorubicin,cyclophosphamide,trastuzumab",
-        "paclitaxel,doxorubicin,cyclophosphamide,pertuzumab",
-        "paclitaxel,doxorubicin,cyclophosphamide,MK-2206",
-        "paclitaxel,doxorubicin,cyclophosphamide,ganetespib",
-        "paclitaxel,doxorubicin,cyclophosphamide,ganitumab",
-        "paclitaxel,doxorubicin,cyclophosphamide,neratinib",
-        "paclitaxel,doxorubicin,cyclophosphamide,pembrolizumab",
-        "paclitaxel,doxorubicin,cyclophosphamide,trebananib",
-        "paclitaxel,doxorubicin,cyclophosphamide,veliparib",
-        "paclitaxel,fluorouracil,epidoxorubicin,cyclophosphamide,lapatinib",
-        "paclitaxel,fluorouracil,epidoxorubicin,cyclophosphamide,trastuzumab",
-        "taxane,anthracycline,cyclophosphamide,trastuzumab",
-        "taxane,fluorouracil,epirubicin,cyclophosphamide,trastuzumab",
-        "carboplatin,paclitaxel,atezolizumab",
-        "atezolizumab,bevacizumab",
-        "nivolumab,ipilimumab",
-        "pembrolizumab,ipilimumab",
-        "pembrolizumab,nivolumab",
-        "rituximab,chlorambucil",
-        "bortezomib,thalidomide,dexamethasone",
-    ],
-}
+def _normalize_treatment_category(value: Optional[str]) -> Optional[str]:
+    """Map user/LLM treatment-category phrasing to a canonical tree label or alias."""
+    return normalize_treatment_category(value)
+
 
 def _resolve_treatment_category(
     treatment_category: Optional[str],
     drugs: Optional[list[str]],
 ) -> list[str]:
-    """Expand a treatment category name to its constituent drug strings."""
+    """Expand a treatment category name to the treatment labels used by the trials API."""
     if not treatment_category:
         return drugs or []
-    key = treatment_category.strip().lower()
-    # Accept aliases
-    if key in ("immunotherapy", "checkpoint inhibitor", "immune checkpoint"):
-        key = "targeted"
-    elif key in ("chemo", "cytotoxic"):
-        key = "chemotherapy"
-    elif key in ("combo", "combination therapy"):
-        key = "combinations"
-    resolved = TREATMENT_CATEGORIES.get(key)
+    resolved = expand_treatment_category(treatment_category)
     if resolved is None:
         # Unknown category — fall back to treating the string as a drug name
         return [treatment_category]
@@ -1355,13 +1322,16 @@ def filter_clinical_trials(
         cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]).
             Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
             Kidney, Bladder, Gastric, Glioblastoma.
-        treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
-            "combinations". Expands to all matching drug substrings automatically.
-            Use instead of `drugs` when the user specifies a category rather than a specific drug.
+        treatment_category (str): ClinicalOmicsDB treatment category label or convenience alias.
+            Examples: "Chemotherapy", "Targeted Therapy", "Immune Checkpoint Inhibitor", "Antibody",
+            "Small Molecule Inhibitor", or "HER2 Inhibitor". Expands to the matching
+            ClinicalOmicsDB treatment labels automatically.
 
     Returns:
-        dict: Matching study list, count, and cancer types present.
+        status (str): `"available"` when matching studies were retrieved, otherwise `"unavailable"`.
+        data (dict): Filter results containing `study_list`, `study_count`, `possible_cancers`, and `filters_applied`.
     """
+    normalized_treatment_category = _normalize_treatment_category(treatment_category)
     resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
     body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
     req = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
@@ -1374,7 +1344,10 @@ def filter_clinical_trials(
             "study_list": r.get("study_list", []),
             "study_count": r.get("length", 0),
             "possible_cancers": r.get("possible_cancers", []),
-            "filters_applied": {**body, **({"treatment_category": treatment_category} if treatment_category else {})},
+            "filters_applied": {
+                **body,
+                **({"treatment_category": normalized_treatment_category} if normalized_treatment_category else {}),
+            },
         },
     }
 
@@ -1400,8 +1373,9 @@ def meta_analysis_predictive_genes(
     - "Which genes best predict paclitaxel response in breast cancer?" → drugs=["paclitaxel"], cancers=["Breast"]
     - "What are the top biomarkers for platinum resistance in ovarian cancer?"
     - "Find the strongest predictors of nivolumab sensitivity across all studies."
-    - "Which genes predict chemotherapy response?" → use treatment_category="chemotherapy"
-    - "Top gene predictors of targeted therapy?" → use treatment_category="targeted"
+    - "Which genes predict chemotherapy response?" → use treatment_category="Chemotherapy"
+    - "Top gene predictors of immune checkpoint inhibitors?" → use treatment_category="Immune Checkpoint Inhibitor"
+    - "Top gene predictors of targeted therapy?" → use treatment_category="Targeted Therapy"
 
     IMPORTANT: only set `cancers` if the user explicitly names a cancer type. Leave it empty ([]) for
     cross-cancer queries.
@@ -1411,20 +1385,21 @@ def meta_analysis_predictive_genes(
         cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]). Leave empty for all cancers.
             Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
             Kidney, Bladder, Gastric, Glioblastoma.
-        treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
-            "combinations". Expands to all matching drug substrings automatically.
-            Use instead of `drugs` when the user specifies a category rather than a specific drug.
+        treatment_category (str): ClinicalOmicsDB treatment category label or convenience alias.
+            Examples: "Chemotherapy", "Targeted Therapy", "Immune Checkpoint Inhibitor", "Antibody",
+            "Small Molecule Inhibitor", or "HER2 Inhibitor". Expands to the matching
+            ClinicalOmicsDB treatment labels automatically.
         top_n (int): Number of top genes to return (default 200).
 
     Returns:
-        dict: Ranked gene list with meta-analysis statistics
-            (meta_fdr, meta_fdr_signed, meta_fdr_sci, avg_auc, datasets, direction).
-            "datasets" = number of studies where the gene was significant.
-            "avg_auc" = average AUROC across studies (<0.5 = sensitive, >0.5 = resistant).
+        status (str): `"available"` when the meta-analysis completes, `"no_studies"` if no studies matched, or `"unavailable"` on request failure.
+        data (dict): Meta-analysis result payload containing `filters`, `study_count`, `study_list`, and `top_genes`.
+        top_genes (list[dict]): Ranked gene entries with `gene`, `datasets`, `meta_p`, `meta_p_sci`, `meta_fdr`, `meta_fdr_signed`, `meta_fdr_sci`, `avg_auc`, and `direction`. Ranking follows the ClinicalOmicsDB treatment-gene table: genes are selected by smallest absolute `meta_p`. `datasets` is the number of studies where the gene was significant; `avg_auc < 0.5` indicates sensitivity and `avg_auc > 0.5` indicates resistance.
     """
+    normalized_treatment_category = _normalize_treatment_category(treatment_category)
     resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
     body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
-    filters_display: dict[str, Any] = {**body, **({"treatment_category": treatment_category} if treatment_category else {})}
+    filters_display: dict[str, Any] = {**body, **({"treatment_category": normalized_treatment_category} if normalized_treatment_category else {})}
     fr = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
     if fr.status_code != 200:
         return {"status": "unavailable", "data": {}}
@@ -1441,16 +1416,19 @@ def meta_analysis_predictive_genes(
         return {"status": "unavailable", "data": {}}
     rows = mr.json()
 
-    rows_sorted = sorted(rows, key=lambda r: abs(float(r.get("fdr", 1))))[:top_n]
+    rows_sorted = sorted(rows, key=lambda r: abs(float(r.get("meta_p", 1))))[:top_n]
     genes = []
     for r in rows_sorted:
         avg_auc = float(r.get("avg_auc", 0.5))
+        meta_p = float(r.get("meta_p", 1))
         fdr_signed = float(r.get("fdr", 1))
         genes.append({
             "gene": r.get("analyte", ""),
             "datasets": r.get("datasets", 0),
-            "meta_fdr": round(abs(fdr_signed), 6),
-            "meta_fdr_signed": round(fdr_signed, 6),
+            "meta_p": meta_p,
+            "meta_p_sci": f"{meta_p:.4e}",
+            "meta_fdr": abs(fdr_signed),
+            "meta_fdr_signed": fdr_signed,
             "meta_fdr_sci": f"{fdr_signed:.3e}",
             "avg_auc": round(avg_auc, 3),
             "direction": "sensitive" if avg_auc < 0.5 else "resistant",
@@ -1487,8 +1465,9 @@ def meta_analysis_predictive_gene_sets(
     - "Which pathways best predict paclitaxel response in breast cancer?" → drugs=["paclitaxel"], cancers=["Breast"]
     - "What biological processes predict platinum resistance in ovarian cancer?"
     - "Find the top pathway predictors of nivolumab sensitivity across all studies."
-    - "Which pathways predict chemotherapy response?" → use treatment_category="chemotherapy"
-    - "Top pathway predictors of targeted therapy?" → use treatment_category="targeted"
+    - "Which pathways predict chemotherapy response?" → use treatment_category="Chemotherapy"
+    - "Top pathway predictors of immune checkpoint inhibitors?" → use treatment_category="Immune Checkpoint Inhibitor"
+    - "Top pathway predictors of targeted therapy?" → use treatment_category="Targeted Therapy"
 
     IMPORTANT: only set `cancers` if the user explicitly names a cancer type. Leave it empty ([]) for
     cross-cancer queries.
@@ -1498,19 +1477,21 @@ def meta_analysis_predictive_gene_sets(
         cancers (list[str]): Cancer types to filter by (e.g., ["Breast"]). Leave empty for all cancers.
             Available: Breast, Ovarian, Lung, Leukemia, Myeloma, Melanoma, Esophageal,
             Kidney, Bladder, Gastric, Glioblastoma.
-        treatment_category (str): Broad treatment class — "chemotherapy", "targeted", or
-            "combinations". Expands to all matching drug substrings automatically.
-            Use instead of `drugs` when the user specifies a category rather than a specific drug.
+        treatment_category (str): ClinicalOmicsDB treatment category label or convenience alias.
+            Examples: "Chemotherapy", "Targeted Therapy", "Immune Checkpoint Inhibitor", "Antibody",
+            "Small Molecule Inhibitor", or "HER2 Inhibitor". Expands to the matching
+            ClinicalOmicsDB treatment labels automatically.
         top_n (int): Number of top gene sets to return (default 200).
 
     Returns:
-        dict: Ranked gene set list with meta-analysis statistics (meta_fdr, avg_auc, datasets, direction).
-            "datasets" = number of studies where the gene set was significant.
-            "avg_auc" = average AUROC across studies (>0.5 = resistant, <0.5 = sensitive).
+        status (str): `"available"` when the meta-analysis completes, `"no_studies"` if no studies matched, or `"unavailable"` on request failure.
+        data (dict): Meta-analysis result payload containing `filters`, `study_count`, `study_list`, and `top_gene_sets`.
+        top_gene_sets (list[dict]): Ranked gene-set entries with `gene_set`, `datasets`, `meta_p`, `meta_p_sci`, `meta_fdr`, `meta_fdr_signed`, `meta_fdr_sci`, `avg_auc`, and `direction`. Ranking follows the ClinicalOmicsDB treatment-gene-set table: gene sets are selected by smallest absolute `meta_p`. `datasets` is the number of studies where the gene set was significant; `avg_auc < 0.5` indicates sensitivity and `avg_auc > 0.5` indicates resistance.
     """
+    normalized_treatment_category = _normalize_treatment_category(treatment_category)
     resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
     body: dict[str, Any] = {"drugs": resolved_drugs, "cancers": cancers or []}
-    filters_display: dict[str, Any] = {**body, **({"treatment_category": treatment_category} if treatment_category else {})}
+    filters_display: dict[str, Any] = {**body, **({"treatment_category": normalized_treatment_category} if normalized_treatment_category else {})}
     fr = requests.post("https://trials.linkedomics.org/api/filter", json=body, timeout=30)
     if fr.status_code != 200:
         return {"status": "unavailable", "data": {}}
@@ -1528,16 +1509,21 @@ def meta_analysis_predictive_gene_sets(
     rows = mr.json()
 
     rows_sorted = sorted(
-        rows, key=lambda r: abs(float(r.get("fdr", 1)))
+        rows, key=lambda r: abs(float(r.get("meta_p", 1)))
     )[:top_n]
     gene_sets = []
     for r in rows_sorted:
         avg_auc = float(r.get("avg_auc", 0.5))
+        meta_p = float(r.get("meta_p", 1))
+        fdr_signed = float(r.get("fdr", 1))
         gene_sets.append({
             "gene_set": r.get("analyte", ""),
             "datasets": r.get("datasets", 0),
-            "meta_fdr": round(abs(float(r.get("fdr", 1))), 3),
-            "meta_fdr_sci": f"{abs(float(r.get('fdr', 1))):.3e}",
+            "meta_p": meta_p,
+            "meta_p_sci": f"{meta_p:.4e}",
+            "meta_fdr": abs(fdr_signed),
+            "meta_fdr_signed": fdr_signed,
+            "meta_fdr_sci": f"{fdr_signed:.3e}",
             "avg_auc": round(avg_auc, 3),
             "direction": "sensitive" if avg_auc < 0.5 else "resistant",
         })
@@ -1581,9 +1567,10 @@ def get_study_predictive_genes(study_id: str, top_n: int = 20) -> dict[str, Any]
         top_n (int): Number of top genes to return (default 20).
 
     Returns:
-        dict: Ranked gene list with auc, fdr, and direction (sensitive/resistant).
-            direction="sensitive" means higher expression → better response (auc < 0.5).
-            direction="resistant" means higher expression → worse response (auc > 0.5).
+        status (str): `"available"` when study-level results were retrieved, otherwise `"unavailable"`.
+        study_id (str): Study identifier requested by the user.
+        data (dict): Study-level payload containing `study_id`, `total_genes`, and `top_genes`.
+        top_genes (list[dict]): Ranked gene entries with `analyte`, `auc`, `fdr`, and `direction`. `direction="sensitive"` means higher expression is associated with better response (`auc < 0.5`); `direction="resistant"` means higher expression is associated with worse response (`auc > 0.5`).
     """
     sid = study_id.strip()
     if not sid.endswith(".csv"):
@@ -1617,7 +1604,10 @@ def get_study_predictive_gene_sets(study_id: str, top_n: int = 20) -> dict[str, 
         top_n (int): Number of top gene sets to return (default 20).
 
     Returns:
-        dict: Ranked gene set list with auc, fdr, and direction (sensitive/resistant).
+        status (str): `"available"` when study-level results were retrieved, otherwise `"unavailable"`.
+        study_id (str): Study identifier requested by the user.
+        data (dict): Study-level payload containing `study_id`, `total_gene_sets`, and `top_gene_sets`.
+        top_gene_sets (list[dict]): Ranked gene-set entries with `analyte`, `auc`, `fdr`, and `direction`.
     """
     sid = study_id.strip()
     if not sid.endswith(".csv"):
@@ -1667,8 +1657,15 @@ def get_cis_correlations(
             ["BRCA"] or ["breast cancer", "OV"]. If omitted, all available cohorts are returned.
 
     Returns:
-        dict[str, Any]: Correlation coefficients (val) and p-values for the requested
-        molecular pairs across cohorts. Defaults to all pairs and all cohorts when no filter is provided.
+        status (str): `"available"` when cis-correlation data was retrieved, or `"error"` if the request or filters were invalid.
+        data (dict): Cohort-keyed cis-correlation records for the requested molecular pairs. Each record typically includes x, y, val, and p-value-like fields from the source dataset.
+        requested_pairs (list[str], optional): Raw pair filters supplied by the user.
+        applied_pairs (list[str], optional): Recognized molecular pair filters applied to the result.
+        ignored_pairs (list[str], optional): Pair filters that were not recognized.
+        requested_cancers (list[str], optional): Raw cancer filters supplied by the user.
+        applied_cancers (list[str], optional): Recognized cancer filters applied to the result.
+        ignored_cancers (list[str], optional): Cancer filters that were not recognized.
+        message (str, optional): Present when no records matched the requested filters or an error occurred.
 
     Notes:
     - RNA vs. Protein: translation efficiency (mRNA → protein conversion rate).
@@ -1770,8 +1767,14 @@ def batch_get_cis_correlations(
             ["BRCA"] or ["breast cancer", "OV"]. If omitted, all available cohorts are returned.
 
     Returns:
-        dict[str, Any]: Correlation coefficients (val) and p-values for the requested
-        molecular pairs across cohorts per gene. Defaults to all pairs and all cohorts when no filter is provided.
+        status (str): `"available"` when the batch request completes, or `"error"` if the filters were invalid.
+        data (dict): Per-gene cis-correlation results keyed by gene symbol; each value matches `get_cis_correlations`.
+        requested_pairs (list[str], optional): Raw pair filters supplied by the user.
+        applied_pairs (list[str], optional): Recognized molecular pair filters applied to the result.
+        ignored_pairs (list[str], optional): Pair filters that were not recognized.
+        requested_cancers (list[str], optional): Raw cancer filters supplied by the user.
+        applied_cancers (list[str], optional): Recognized cancer filters applied to the result.
+        ignored_cancers (list[str], optional): Cancer filters that were not recognized.
 
     Notes:
     - RNA vs. Protein: translation efficiency (mRNA → protein conversion rate).
@@ -1849,25 +1852,9 @@ def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
             Default: 5. Recommended: 10–20 for exploratory analysis.
 
     Returns:
-        dict with keys:
-            "status" (str): "success" or error indicator.
-            "data" (list[dict]): List of enriched gene sets, each containing:
-                - "geneSet" (str): GO term ID (e.g., "GO:0044843")
-                - "description" (str): Human-readable GO term name
-                  (e.g., "cell cycle G1/S phase transition")
-                - "link" (str): AmiGO URL for the GO term — use to get full term details
-                - "size" (int): Total number of genes annotated to this GO term
-                  in the reference genome
-                - "overlap" (int): Number of your input genes found in this GO term
-                - "expect" (float): Expected overlap by chance given input list size
-                - "enrichmentRatio" (float): overlap / expect — values >>1 indicate
-                  strong enrichment (e.g., 32.0 = 32x over background)
-                - "pValue" (float): Hypergeometric p-value (uncorrected)
-                - "FDR" (float): Benjamini-Hochberg corrected p-value — use this
-                  for significance calls; FDR < 0.05 is the standard threshold
-                - "overlapId" (str): Semicolon-delimited Entrez Gene IDs of the
-                  overlapping genes (useful for identifying which input genes
-                  drive the enrichment)
+        status (str): `"success"` on successful enrichment analysis, or an error indicator otherwise.
+        data (list[dict]): Enriched GO terms. Each entry includes `geneSet`, `description`, `link`, `size`, `overlap`, `expect`, `enrichmentRatio`, `pValue`, `FDR`, and `overlapId`.
+        message (str, optional): Present when the enrichment request fails or returns no usable results.
 
     Notes:
     - Sort results by FDR (already sorted in output) — not raw pValue.
@@ -1973,71 +1960,22 @@ def tcga_survival_analysis(
         omics (str, optional): Omics type — one of: Methylation, RNAseq, RPPA, SCNA, miRNASeq.
 
     Returns:
-        dict:
-            A dictionary containing survival results from the TCGA backend.
-
-            The response always has the form:
-
-                {
-                    "dataset": "TCGA",
-                    "mode": mode,
-                    "query": params,
-                    "n_results": len(results),
-                    "results": [...]
-                }
-
-            `results` is always a list of gene-level result objects.
-
-            Common fields that may appear in each result item:
-            - cohort
-            - omics
-            - gene
-            - hr
-            - pvalue
-            - fdr
-            - n
-            - samples
-
-            Returned fields depend on query mode because keys already provided
-            in the request are removed from each result item.
-
-            Mode 1 (`cohort + gene + omics`)
-            - Returns one detailed single-gene result.
-            - Result items typically contain:
-            hr, pvalue, n, samples
-
-            Mode 2 (`cohort + gene`)
-            - Returns one detailed single-gene result per available omics type.
-            - Result items typically contain:
-            omics, hr, pvalue, n, samples
-
-            Mode 3 (`gene + omics`)
-            - Returns one result per cohort.
-            - Result items typically contain:
-            cohort, hr, pvalue, n
-            - `fdr` is removed for this mode.
-
-            Mode 4 (`cohort + omics`)
-            - Returns one result per gene for the requested cohort and omics.
-            - Result items typically contain:
-            gene, hr, pvalue, fdr, n
-
-            On request failure, the function returns:
-
-                {
-                    "status": "error",
-                    "dataset": "TCGA",
-                    "mode": mode,
-                    "query": params,
-                    "message": "...",
-                    "results": []
-                }
+        dataset (str): Always "TCGA".
+        mode (int): Query mode 1–4, inferred from which parameters were provided.
+        query (dict): Normalized parameters sent to the API (cohort, gene, omics).
+        n_results (int): Number of result objects returned on success.
+        results (list[dict]): Gene-level result objects. Mode 1 returns one object with hr, pvalue, n, samples. Mode 2 returns one object per omics type with omics, hr, pvalue, n, samples. Mode 3 returns one object per cohort with cohort, hr, pvalue, n. Mode 4 returns one object per gene with gene, hr, pvalue, fdr, n.
+        status (str, optional): Present on request failure; typically "error".
+        message (str, optional): Error details when the request fails.
 
 
     Notes:
     - Four query modes: (1) cohort+gene+omics, (2) cohort+gene all omics, (3) gene+omics all cohorts, (4) cohort+omics genome-wide scan.
     - Supported cohorts: ACC, BLCA, BRCA, CESC, CHOL, COADREAD, DLBC, ESCA, GBM, GBMLGG, HNSC, KICH, KIPAN, KIRC, KIRP, LAML, LGG, LIHC, LUAD, LUSC, MESO, OV, PAAD, PCPG, PRAD, SARC, SKCM, STAD, STES, TGCT, THCA, THYM, UCEC, UCS, UVM.
     - Supported omics: Methylation, RNAseq, RPPA, SCNA, miRNASeq.
+    - Common per-result fields may include cohort, omics, gene, hr, pvalue, fdr, n, and samples.
+    - Fields already specified in the query are omitted from each result item.
+    - In mode 3, `fdr` is omitted from the result items.
     - Significant associations rely on p-values or FDR thresholds (interpretation depends on downstream processing).
     - Positive vs. negative associations reflect directionality of risk (e.g., high expression → worse survival).
     - Mode 4 (genome-wide scan) may return large datasets; downstream filtering is recommended.
@@ -2172,12 +2110,13 @@ def tcga_cis_association_analysis(
         st_method (str, optional): Statistical method — one of: spearman, pearson.
 
     Returns:
-        A dictionary with cis-association results. Fields depend on the query mode.
         dataset (str): Always "TCGA cis association".
         mode (int): Query mode 1–4, inferred from which parameters were provided.
-        query (dict): The parameters sent to the API (cohort, gene, source_omics, target_omics, st_method).
-        n_results (int): Number of result objects returned.
-        results (list): List of result objects. Mode 1 — one object with correlation, pvalue, n, samples (patient-level points). Mode 2 — one object per omics pair with source_omics, target_omics, correlation, pvalue, n, samples. Mode 3 — one object per cohort with cohort, correlation, pvalue, n. Mode 4 — one object per gene with gene, correlation, pvalue, fdr, n.
+        query (dict): Normalized parameters sent to the API (cohort, gene, source_omics, target_omics, st_method).
+        n_results (int): Number of result objects returned on success.
+        results (list[dict]): Result objects whose fields depend on the query mode. Mode 1 returns one object with correlation, pvalue, n, samples. Mode 2 returns one object per omics pair with source_omics, target_omics, correlation, pvalue, n, samples. Mode 3 returns one object per cohort with cohort, correlation, pvalue, n. Mode 4 returns one object per gene with gene, correlation, pvalue, fdr, n.
+        status (str, optional): Present on request failure; typically "error".
+        message (str, optional): Error details when the request fails.
 
 
     Notes:

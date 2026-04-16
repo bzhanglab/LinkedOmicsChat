@@ -637,6 +637,12 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "linkedomics::get_study_predictive_genes",
         "linkedomics::get_study_predictive_gene_sets",
     ),
+    "trials_genes": (
+        "linkedomics::meta_analysis_predictive_genes",
+    ),
+    "trials_pathways": (
+        "linkedomics::meta_analysis_predictive_gene_sets",
+    ),
     "literature": (
         "literature::search_pubmed",
         "literature::get_pubmed_abstract",
@@ -712,6 +718,8 @@ _DEFAULT_WORKFLOW_BY_SCOPE: Dict[str, str] = {
     "tcga_survival": "survival_tcga_only",
     "targets": "target_lookup",
     "trials": "clinical_trials",
+    "trials_genes": "clinical_trials_gene_biomarkers",
+    "trials_pathways": "clinical_trials_pathway_biomarkers",
     "literature": "literature_search",
     "funmap": "funmap_neighborhood",
     "tcga_cis": "tcga_cis_association",
@@ -745,9 +753,24 @@ _TRIAL_KEYWORDS = (
     "predict response", "predict treatment", "response to", "therapy",
     # Additional: predictive value / chemotherapy / immunotherapy contexts
     "predictive", "chemo", "chemotherapy", "immunotherapy", "targeted therapy",
+    "checkpoint inhibitor", "checkpoint inhibitors", "immune checkpoint", "ici",
     "drug response", "drug sensitivity", "drug resistance", "chemoresist",
     "treatment response", "treatment resistance", "treatment sensitivity",
     "anticancer", "anti-cancer", "antitumor", "anti-tumor",
+)
+
+_TRIAL_META_GENE_KEYWORDS = (
+    " gene ", " genes ", "biomarker", "biomarkers", "marker", "markers",
+)
+
+_TRIAL_META_PATHWAY_KEYWORDS = (
+    "pathway", "pathways", "gene set", "gene sets", "geneset", "genesets",
+    "signature", "signatures",
+)
+
+_TRIAL_META_INTENT_KEYWORDS = (
+    "predict", "predictive", "predictor", "predictors", "top", "best",
+    "most predictive", "robust", "biomarker", "biomarkers",
 )
 
 _FUNMAP_KEYWORDS = (
@@ -1081,6 +1104,27 @@ def _infer_survival_route_decision(query: str, initial_scope: str) -> RouteDecis
     return RouteDecision(tool_scope="survival", workflow="survival_dual_dataset")
 
 
+def _infer_trials_route_decision(query: str) -> RouteDecision:
+    """Choose a narrower clinical-trials workflow for explicit genes-vs-pathways requests."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    padded = f" {normalized} "
+
+    # Keep study-specific and study-discovery requests on the broader trials workflow.
+    if "study" in normalized or "studies" in normalized or re.search(r"\bgse\d+\b", normalized, re.IGNORECASE):
+        return RouteDecision(tool_scope="trials", workflow="clinical_trials")
+
+    has_meta_intent = any(keyword in normalized for keyword in _TRIAL_META_INTENT_KEYWORDS)
+    has_gene_request = any(keyword in padded for keyword in _TRIAL_META_GENE_KEYWORDS)
+    has_pathway_request = any(keyword in normalized for keyword in _TRIAL_META_PATHWAY_KEYWORDS)
+
+    if has_meta_intent and has_gene_request and not has_pathway_request:
+        return RouteDecision(tool_scope="trials_genes", workflow="clinical_trials_gene_biomarkers")
+    if has_meta_intent and has_pathway_request and not has_gene_request:
+        return RouteDecision(tool_scope="trials_pathways", workflow="clinical_trials_pathway_biomarkers")
+
+    return RouteDecision(tool_scope="trials", workflow="clinical_trials")
+
+
 def _infer_route_decision(query: str, active_gene: Optional[str] = None) -> RouteDecision:
     """Infer a deterministic tool scope plus a more specific workflow label."""
     normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
@@ -1098,6 +1142,8 @@ def _infer_route_decision(query: str, active_gene: Optional[str] = None) -> Rout
     tool_scope = _infer_tool_scope(query, active_gene)
     if tool_scope in {"survival", "tcga_survival"}:
         return _infer_survival_route_decision(query, tool_scope)
+    if tool_scope == "trials":
+        return _infer_trials_route_decision(query)
     return RouteDecision(
         tool_scope=tool_scope,
         workflow=_DEFAULT_WORKFLOW_BY_SCOPE.get(tool_scope, "broad_full"),
@@ -2176,10 +2222,16 @@ PLANNING RULES:
   - Gene rankings within one specific study: `get_study_predictive_genes`
   - Pathway rankings within one specific study: `get_study_predictive_gene_sets`
   - Workflow — study-specific analysis: call `filter_clinical_trials` first to find matching studies, then `get_study_predictive_genes` or `get_study_predictive_gene_sets` on a specific study ID, then optionally `get_study_info` for context
-- IMPORTANT — drug name resolution: when the user specifies a broad treatment class, use the `treatment_category` parameter (not `drugs`) in `filter_clinical_trials`, `meta_analysis_predictive_genes`, and `meta_analysis_predictive_gene_sets`. Accepted values: "chemotherapy", "targeted", "combinations". The tool expands these to the correct drug substrings automatically.
-  - "chemotherapy" / "chemo" / "cytotoxic" → treatment_category="chemotherapy"
-  - "targeted therapy" / "targeted" / "immunotherapy" / "checkpoint inhibitor" → treatment_category="targeted"
-  - "combination" / "combo" / "combination therapy" → treatment_category="combinations"
+- For cross-study biomarker discovery, match the modality exactly:
+  - If the user asks for genes / biomarkers / markers, call only `meta_analysis_predictive_genes`.
+  - If the user asks for pathways / gene sets / signatures, call only `meta_analysis_predictive_gene_sets`.
+  - Do NOT call both unless the user explicitly asks for both genes and pathways/signatures.
+- IMPORTANT — drug name resolution: when the user specifies a broad or nested treatment class, use the `treatment_category` parameter (not `drugs`) in `filter_clinical_trials`, `meta_analysis_predictive_genes`, and `meta_analysis_predictive_gene_sets`. The tool accepts convenience aliases and ClinicalOmicsDB treatment-tree labels, then expands them to the correct treatment labels automatically.
+  - "chemotherapy" / "chemo" / "cytotoxic" → treatment_category="Chemotherapy"
+  - "targeted therapy" / "targeted" → treatment_category="Targeted Therapy"
+  - "immune checkpoint inhibitor" / "checkpoint inhibitor" / "immune checkpoint" / "ICI" / "immunotherapy" / "PD-1" / "PD-L1" / "CTLA-4" → treatment_category="Immune Checkpoint Inhibitor"
+  - "combination" / "combo" / "combination therapy" → treatment_category="Combinations"
+  - Nested treatment classes should stay specific: "antibody" → `treatment_category="Antibody"`, "small molecule inhibitor" → `treatment_category="Small Molecule Inhibitor"`, "HER2 inhibitor" → `treatment_category="HER2 Inhibitor"`
   - Specific drug name (e.g. "paclitaxel", "nivolumab") → use `drugs=["paclitaxel"]` as before
 - For `rank_targets`, separate tier eligibility from ranking intent:
   - "approved", "validated", "clinically established", "most druggable" → `ranking_mode="established"`
@@ -2424,6 +2476,16 @@ DIRECT RESPONSE RULES:
             "clinical_trials": (
                 "WORKFLOW ROUTING: This query is about treatment response or clinical studies. Stay within the "
                 "clinical-trial tool family.\n"
+            ),
+            "clinical_trials_gene_biomarkers": (
+                "WORKFLOW ROUTING: This is a cross-study gene-biomarker query. Use "
+                "`meta_analysis_predictive_genes` only; do NOT add pathway/gene-set tools unless the user "
+                "explicitly asks for pathways or signatures too.\n"
+            ),
+            "clinical_trials_pathway_biomarkers": (
+                "WORKFLOW ROUTING: This is a cross-study pathway/signature biomarker query. Use "
+                "`meta_analysis_predictive_gene_sets` only; do NOT add gene-level biomarker tools unless the user "
+                "explicitly asks for genes too.\n"
             ),
             "literature_search": (
                 "WORKFLOW ROUTING: This is a literature query. Stay within the PubMed tools.\n"

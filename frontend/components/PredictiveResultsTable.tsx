@@ -30,6 +30,28 @@ function formatMetaFdr(row: Row) {
     return "—"
 }
 
+function formatMetaP(value?: number | null) {
+    return typeof value === "number" ? value.toExponential(3) : "—"
+}
+
+function formatSignedFdr(row: Row) {
+    const value = typeof row.meta_fdr_signed === "number"
+        ? row.meta_fdr_signed
+        : typeof row.meta_fdr === "number"
+        ? row.meta_fdr
+        : undefined
+    if (typeof value !== "number") return "—"
+    const absValue = Math.abs(value)
+    if (absValue !== 0 && absValue < 1e-4) return value.toExponential(3)
+    return Number(value.toPrecision(4)).toString()
+}
+
+function signedNegLog10(value?: number | null) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value === 0) return 0
+    const sign = value < 0 ? -1 : 1
+    return sign * (-Math.log10(Math.abs(value)))
+}
+
 function directionText(direction?: string) {
     if (direction === "sensitive") return "↑ Sensitive"
     if (direction === "resistant") return "↓ Resistant"
@@ -223,12 +245,21 @@ function PlotModal({ gene, plotType, studyList, row, onClose }: PlotModalProps) 
 
 export function PredictiveResultsTable({ visualization }: Props) {
     const { ref, isVisible } = useLazyVisible()
+    const defaultSortKey: SortKey = (
+        visualization.variant === "clinical_trial" && visualization.plot_type !== "gene_set"
+    ) ? "p_value" : "rank"
     const [resolvedViz, setResolvedViz] = useState<PredictiveResultsTableVisualization>(visualization)
     const [fetchError, setFetchError] = useState(false)
     const [page, setPage] = useState(1)
-    const [sortKey, setSortKey] = useState<SortKey>("rank")
+    const [sortKey, setSortKey] = useState<SortKey>(defaultSortKey)
     const [sortDir, setSortDir] = useState<SortDir>("asc")
     const [selectedRow, setSelectedRow] = useState<Row | null>(null)
+
+    useEffect(() => {
+        setPage(1)
+        setSortKey(defaultSortKey)
+        setSortDir("asc")
+    }, [defaultSortKey, visualization.id])
 
     useEffect(() => {
         if (!isVisible) return
@@ -251,6 +282,17 @@ export function PredictiveResultsTable({ visualization }: Props) {
 
     const rows = resolvedViz.rows ?? []
     const pageSize = Math.max(1, resolvedViz.page_size ?? DEFAULT_PAGE_SIZE)
+    const gene = resolvedViz.gene
+    const isTreatmentGene = resolvedViz.plot_type === "treatment_gene" || resolvedViz.plot_type === "treatment_gene_set"
+    const isClickable = !!gene || isTreatmentGene
+    const isClinicalTrial = resolvedViz.variant === "clinical_trial"
+    const isTcgaCis = resolvedViz.variant === "tcga_cis"
+    const isTreatmentMetaAnalysis = isTreatmentGene && !isClinicalTrial
+    const isGeneCentricClinicalTrial = isClinicalTrial && resolvedViz.plot_type !== "gene_set"
+    const colStudies = resolvedViz.col_studies ?? "Studies"
+    const colPValue = resolvedViz.col_p_value ?? "meta-p"
+    const colAuroc = resolvedViz.col_auroc ?? "Avg AUROC"
+    const colFdr = resolvedViz.col_fdr ?? "Meta-FDR"
 
     const sortedRows = useMemo(() => {
         const numericKeys = new Set<SortKey>(["rank", "studies", "avg_auroc", "meta_fdr", "meta_fdr_signed", "p_value"])
@@ -258,8 +300,14 @@ export function PredictiveResultsTable({ visualization }: Props) {
             if (numericKeys.has(sortKey)) {
                 let av = Number((a as Record<string, unknown>)[sortKey] ?? 0)
                 let bv = Number((b as Record<string, unknown>)[sortKey] ?? 0)
-                // meta_fdr sorts by absolute value (smallest = most significant first)
-                if (sortKey === "meta_fdr") {
+                if ((isTreatmentMetaAnalysis || isGeneCentricClinicalTrial) && sortKey === "p_value") {
+                    av = signedNegLog10(av)
+                    bv = signedNegLog10(bv)
+                } else if ((isTreatmentMetaAnalysis || isGeneCentricClinicalTrial) && sortKey === "meta_fdr") {
+                    av = signedNegLog10(Number((a as Record<string, unknown>).meta_fdr_signed ?? av))
+                    bv = signedNegLog10(Number((b as Record<string, unknown>).meta_fdr_signed ?? bv))
+                } else if (sortKey === "meta_fdr") {
+                    // Non-treatment tables sort FDR by absolute value (smallest = most significant first).
                     av = Math.abs(Number((a as Record<string, unknown>).meta_fdr_signed ?? av))
                     bv = Math.abs(Number((b as Record<string, unknown>).meta_fdr_signed ?? bv))
                 }
@@ -270,7 +318,7 @@ export function PredictiveResultsTable({ visualization }: Props) {
             const cmp = av.localeCompare(bv)
             return sortDir === "asc" ? cmp : -cmp
         })
-    }, [rows, sortDir, sortKey])
+    }, [isGeneCentricClinicalTrial, isTreatmentMetaAnalysis, rows, sortDir, sortKey])
 
     const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize))
     const currentPage = Math.min(page, totalPages)
@@ -293,15 +341,6 @@ export function PredictiveResultsTable({ visualization }: Props) {
 
     const buttonClass = "flex items-center gap-1 hover:text-teal-700 dark:hover:text-teal-400 transition-colors"
     const thCls = "px-3 py-2 text-left font-semibold text-xs text-foreground whitespace-nowrap select-none"
-
-    const gene = resolvedViz.gene
-    const isTreatmentGene = resolvedViz.plot_type === "treatment_gene" || resolvedViz.plot_type === "treatment_gene_set"
-    const isClickable = !!gene || isTreatmentGene
-    const isClinicalTrial = resolvedViz.variant === "clinical_trial"
-    const isTcgaCis = resolvedViz.variant === "tcga_cis"
-    const colStudies = resolvedViz.col_studies ?? "Studies"
-    const colAuroc = resolvedViz.col_auroc ?? "Avg AUROC"
-    const colFdr = resolvedViz.col_fdr ?? "Meta-FDR"
 
     if (!isVisible) {
         return (
@@ -350,6 +389,12 @@ export function PredictiveResultsTable({ visualization }: Props) {
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("label")}>Gene <SortIcon col="label" /></button></th>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("avg_auroc")}>{colAuroc} <SortIcon col="avg_auroc" /></button></th>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("meta_fdr")}>{colFdr} <SortIcon col="meta_fdr" /></button></th>
+                                </>) : isTreatmentMetaAnalysis ? (<>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("label")}>{resolvedViz.row_label} <SortIcon col="label" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("studies")}>{colStudies} <SortIcon col="studies" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("p_value")}>{colPValue} <SortIcon col="p_value" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("meta_fdr")}>{colFdr} <SortIcon col="meta_fdr" /></button></th>
+                                    <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("avg_auroc")}>{colAuroc} <SortIcon col="avg_auroc" /></button></th>
                                 </>) : (<>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("rank")}># <SortIcon col="rank" /></button></th>
                                     <th className={thCls}><button type="button" className={buttonClass} onClick={() => handleSort("label")}>{resolvedViz.row_label} <SortIcon col="label" /></button></th>
@@ -412,6 +457,17 @@ export function PredictiveResultsTable({ visualization }: Props) {
                                         </tr>
                                     )
                                 }
+                                if (isTreatmentMetaAnalysis) {
+                                    return (
+                                        <tr key={`${row.label}-${row.rank}`} onClick={onClick} className={trClass}>
+                                            <td className="px-3 py-1.5 font-medium text-foreground">{row.label}</td>
+                                            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{row.studies ?? "—"}</td>
+                                            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{formatMetaP(row.p_value)}</td>
+                                            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{formatSignedFdr(row)}</td>
+                                            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{formatAuroc(row.avg_auroc)}</td>
+                                        </tr>
+                                    )
+                                }
                                 return (
                                     <tr key={`${row.label}-${row.rank}`} onClick={onClick} className={trClass}>
                                         <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{row.rank}</td>
@@ -432,7 +488,7 @@ export function PredictiveResultsTable({ visualization }: Props) {
                             })}
                             {pageRows.length === 0 && (
                                 <tr>
-                                    <td colSpan={isClinicalTrial ? 8 : isTcgaCis ? 4 : 6} className="px-3 py-6 text-center text-muted-foreground italic">No results.</td>
+                                    <td colSpan={isClinicalTrial ? 8 : isTcgaCis ? 4 : isTreatmentMetaAnalysis ? 5 : 6} className="px-3 py-6 text-center text-muted-foreground italic">No results.</td>
                                 </tr>
                             )}
                         </tbody>

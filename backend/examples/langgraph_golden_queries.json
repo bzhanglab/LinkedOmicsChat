@@ -222,6 +222,32 @@
       "notes": "Pathway-level cross-study biomarker discovery should use meta_analysis_predictive_gene_sets."
     },
     {
+      "id": "trials_meta_analysis_genes_ici_only",
+      "query": "What genes best predict immune checkpoint inhibitor response?",
+      "expected_tools_all": [
+        "linkedomics::meta_analysis_predictive_genes"
+      ],
+      "forbidden_tools": [
+        "linkedomics::meta_analysis_predictive_gene_sets",
+        "linkedomics::webgestalt",
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "ICI biomarker queries that ask for genes should stay gene-level only and must not add pathway analysis."
+    },
+    {
+      "id": "trials_meta_analysis_genes_antibody_category",
+      "query": "What genes best predict antibody treatment response?",
+      "expected_tools_all": [
+        "linkedomics::meta_analysis_predictive_genes"
+      ],
+      "forbidden_tools": [
+        "linkedomics::meta_analysis_predictive_gene_sets",
+        "linkedomics::clinical_trial_information",
+        "linkedomics::webgestalt"
+      ],
+      "notes": "Nested treatment classes such as antibody should still route to gene-level trial meta-analysis when the user asks for genes."
+    },
+    {
       "id": "trials_study_info_followup_anchor",
       "session_key": "trials_study_info",
       "query": "Which drugs are patients likely to be resistant to if they have high ESR1 expression?",
