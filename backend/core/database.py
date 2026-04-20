@@ -1,7 +1,7 @@
 """
 Database configuration and initialization
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, sessionmaker
 from core.config import settings
@@ -49,6 +49,8 @@ else:
 def _run_sqlite_migrations(conn):
     """Add any missing columns to existing SQLite tables."""
     cursor = conn.cursor()
+    changed = False
+
     cursor.execute("PRAGMA table_info(chat_sessions)")
     existing = {row[1] for row in cursor.fetchall()}
     if "shared_token" not in existing:
@@ -56,6 +58,78 @@ def _run_sqlite_migrations(conn):
         cursor.execute("ALTER TABLE chat_sessions ADD COLUMN shared_token VARCHAR")
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_chat_sessions_shared_token ON chat_sessions (shared_token)")
         logger.info("Migration: added shared_token column to chat_sessions")
+        changed = True
+
+    cursor.execute("PRAGMA table_info(users)")
+    existing = {row[1] for row in cursor.fetchall()}
+    if "email_verified" not in existing:
+        cursor.execute("ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT 1")
+        logger.info("Migration: added email_verified column to users")
+        changed = True
+    if "email_verification_token" not in existing:
+        cursor.execute("ALTER TABLE users ADD COLUMN email_verification_token VARCHAR")
+        logger.info("Migration: added email_verification_token column to users")
+        changed = True
+    if "email_verification_expires" not in existing:
+        cursor.execute("ALTER TABLE users ADD COLUMN email_verification_expires FLOAT")
+        logger.info("Migration: added email_verification_expires column to users")
+        changed = True
+    cursor.execute("CREATE INDEX IF NOT EXISTS ix_users_email_verification_token ON users (email_verification_token)")
+
+    if changed:
+        conn.commit()
+
+
+async def _run_postgres_migrations(conn):
+    """Add any missing columns to existing PostgreSQL tables."""
+    changed = False
+
+    result = await conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'chat_sessions'"
+        )
+    )
+    chat_session_columns = {row[0] for row in result.fetchall()}
+    if "shared_token" not in chat_session_columns:
+        await conn.execute(text("ALTER TABLE chat_sessions ADD COLUMN shared_token VARCHAR"))
+        logger.info("Migration: added shared_token column to chat_sessions")
+        changed = True
+    await conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_chat_sessions_shared_token "
+            "ON chat_sessions (shared_token)"
+        )
+    )
+
+    result = await conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'users'"
+        )
+    )
+    user_columns = {row[0] for row in result.fetchall()}
+    if "email_verified" not in user_columns:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT TRUE"))
+        logger.info("Migration: added email_verified column to users")
+        changed = True
+    if "email_verification_token" not in user_columns:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN email_verification_token VARCHAR"))
+        logger.info("Migration: added email_verification_token column to users")
+        changed = True
+    if "email_verification_expires" not in user_columns:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN email_verification_expires DOUBLE PRECISION"))
+        logger.info("Migration: added email_verification_expires column to users")
+        changed = True
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_users_email_verification_token "
+            "ON users (email_verification_token)"
+        )
+    )
+
+    if changed:
+        logger.info("PostgreSQL schema migrations applied successfully")
 
 
 async def init_db():
@@ -71,6 +145,7 @@ async def init_db():
         else:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await _run_postgres_migrations(conn)
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")

@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     ADMIN_EMAILS: Union[List[str], str] = "[]"
+    EMAIL_VERIFICATION_ENABLED: bool = False
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
+    APP_BASE_URL: str = "http://localhost:3000"
+
+    # SMTP email delivery
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "LinkedOmicsChat"
+    SMTP_USE_TLS: bool = True
+    SMTP_USE_SSL: bool = False
     
     # CORS - stored as string, will be parsed to list
     CORS_ORIGINS: Union[List[str], str] = '["http://localhost:3000","http://localhost:3001"]'

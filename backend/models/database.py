@@ -16,11 +16,14 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    email_verified = Column(Boolean, default=True, nullable=False)
     created_at = Column(Float, nullable=False)
     
     # Password reset fields
     reset_token = Column(String, nullable=True, index=True)
     reset_token_expires = Column(Float, nullable=True)
+    email_verification_token = Column(String, nullable=True, index=True)
+    email_verification_expires = Column(Float, nullable=True)
     
     # Relationship to sessions
     sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")

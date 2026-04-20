@@ -11,6 +11,7 @@ export default function RegisterPage() {
     const [password, setPassword] = useState("")
     const [confirmPassword, setConfirmPassword] = useState("")
     const [error, setError] = useState("")
+    const [info, setInfo] = useState("")
     const [loading, setLoading] = useState(false)
     const { register, user, loading: authLoading } = useAuth()
     const router = useRouter()
@@ -24,6 +25,7 @@ export default function RegisterPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setError("")
+        setInfo("")
 
         if (password.length < 8) {
             setError("Password must be at least 8 characters long")
@@ -38,7 +40,12 @@ export default function RegisterPage() {
         setLoading(true)
 
         try {
-            await register(username, email, password)
+            const response = await register(username, email, password)
+            if (response.requires_email_verification) {
+                router.push(`/verify-email?email=${encodeURIComponent(response.email)}`)
+                return
+            }
+            setInfo(response.message)
             router.push("/")
         } catch (err: any) {
             setError(err.message || "Registration failed. Please try again.")
@@ -67,6 +74,12 @@ export default function RegisterPage() {
                     {error && (
                         <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">
                             {error}
+                        </div>
+                    )}
+
+                    {info && (
+                        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 text-sm">
+                            {info}
                         </div>
                     )}
 

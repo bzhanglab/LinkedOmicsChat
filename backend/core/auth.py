@@ -144,7 +144,14 @@ async def get_user_by_id(db, user_id: str) -> Optional[User]:
 
 
 async def create_user(
-    db, username: str, email: str, password: str
+    db,
+    username: str,
+    email: str,
+    password: str,
+    *,
+    email_verified: bool = True,
+    email_verification_token: Optional[str] = None,
+    email_verification_expires: Optional[float] = None,
 ) -> User:
     """Create a new user (works with both sync and async sessions)"""
     from core.config import settings as db_settings
@@ -155,6 +162,9 @@ async def create_user(
         email=email,
         password_hash=hashed_password,
         is_active=True,
+        email_verified=email_verified,
+        email_verification_token=email_verification_token,
+        email_verification_expires=email_verification_expires,
         created_at=time.time(),
     )
     
@@ -183,6 +193,11 @@ async def create_user(
 
 def generate_reset_token() -> str:
     """Generate a secure random token for password reset"""
+    return secrets.token_urlsafe(32)
+
+
+def generate_email_verification_token() -> str:
+    """Generate a secure random token for email verification."""
     return secrets.token_urlsafe(32)
 
 
@@ -243,6 +258,87 @@ async def get_user_by_reset_token(db, token: str) -> Optional[User]:
     except Exception as e:
         logger.error(f"Error getting user by reset token: {e}")
         return None
+
+
+async def set_email_verification_token(
+    db, user_id: str, token: str, expires_in_hours: int = 24
+) -> None:
+    """Set or refresh the email verification token for a user."""
+    from core.config import settings as db_settings
+    expires_at = time.time() + (expires_in_hours * 3600)
+
+    try:
+        if db_settings.DATABASE_URL.startswith("sqlite"):
+            from sqlalchemy.orm import Session
+            db_sync: Session = db
+            user = db_sync.query(User).filter(User.id == user_id).first()
+            if user:
+                user.email_verification_token = token
+                user.email_verification_expires = expires_at
+                db_sync.commit()
+        else:
+            result = await db.execute(select(User).filter(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                user.email_verification_token = token
+                user.email_verification_expires = expires_at
+                await db.commit()
+    except Exception as e:
+        logger.error(f"Error setting email verification token: {e}")
+        raise
+
+
+async def get_user_by_email_verification_token(db, token: str) -> Optional[User]:
+    """Get user by verification token if valid and not expired."""
+    try:
+        from core.config import settings as db_settings
+        current_time = time.time()
+
+        if db_settings.DATABASE_URL.startswith("sqlite"):
+            from sqlalchemy.orm import Session
+            db_sync: Session = db
+            return db_sync.query(User).filter(
+                User.email_verification_token == token,
+                User.email_verification_expires > current_time
+            ).first()
+
+        result = await db.execute(
+            select(User).filter(
+                User.email_verification_token == token,
+                User.email_verification_expires > current_time
+            )
+        )
+        return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"Error getting user by email verification token: {e}")
+        return None
+
+
+async def mark_user_email_verified(db, user_id: str) -> None:
+    """Mark a user email as verified and clear the verification token."""
+    from core.config import settings as db_settings
+
+    try:
+        if db_settings.DATABASE_URL.startswith("sqlite"):
+            from sqlalchemy.orm import Session
+            db_sync: Session = db
+            user = db_sync.query(User).filter(User.id == user_id).first()
+            if user:
+                user.email_verified = True
+                user.email_verification_token = None
+                user.email_verification_expires = None
+                db_sync.commit()
+        else:
+            result = await db.execute(select(User).filter(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                user.email_verified = True
+                user.email_verification_token = None
+                user.email_verification_expires = None
+                await db.commit()
+    except Exception as e:
+        logger.error(f"Error marking email verified: {e}")
+        raise
 
 
 async def update_user_password(

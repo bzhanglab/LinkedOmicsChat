@@ -13,9 +13,13 @@ from models.schemas import (
     UserLogin,
     Token,
     UserResponse,
+    RegistrationResponse,
     ForgotPasswordRequest,
     ResetPasswordRequest,
     PublicRuntimeConfig,
+    EmailVerificationRequest,
+    EmailVerificationResponse,
+    ResendVerificationRequest,
 )
 from core.database import get_db
 from core.auth import (
@@ -25,13 +29,18 @@ from core.auth import (
     get_user_by_email,
     create_user,
     generate_reset_token,
+    generate_email_verification_token,
     set_password_reset_token,
     get_user_by_reset_token,
     update_user_password,
+    set_email_verification_token,
+    get_user_by_email_verification_token,
+    mark_user_email_verified,
 )
 from core.config import settings
 from core.dependencies import get_current_user, is_admin_user
 from core.database import SessionLocal
+from core.email import email_delivery_configured, send_verification_email
 from models.database import User, TokenUsage
 import time
 
@@ -52,7 +61,11 @@ def _infer_llm_provider(model_name: str) -> str:
     return "OpenAI"
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def _email_verification_required() -> bool:
+    return settings.EMAIL_VERIFICATION_ENABLED
+
+
+@router.post("/register", response_model=RegistrationResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserRegister,
     db = Depends(get_db)
@@ -82,23 +95,58 @@ async def register(
             detail="Email already registered"
         )
     
+    verification_required = _email_verification_required()
+    if verification_required and not email_delivery_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email verification is enabled but SMTP email delivery is not configured"
+        )
+
+    verification_token = None
+    verification_expires = None
+    if verification_required:
+        verification_token = generate_email_verification_token()
+        verification_expires = time.time() + (settings.EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS * 3600)
+
     # Create new user
     try:
         user = await create_user(
             db,
             username=user_data.username,
             email=user_data.email,
-            password=user_data.password
+            password=user_data.password,
+            email_verified=not verification_required,
+            email_verification_token=verification_token,
+            email_verification_expires=verification_expires,
         )
         logger.info(f"New user registered: {user.username}")
-        
-        return UserResponse(
-            id=user.id,
-            username=user.username,
+
+        if verification_required and verification_token:
+            message = (
+                "Your account was created. Check your inbox for a verification link "
+                "before signing in."
+            )
+            try:
+                send_verification_email(user.username, user.email, verification_token)
+            except Exception as e:
+                logger.error("Failed to send verification email to %s: %s", user.email, e, exc_info=True)
+                message = (
+                    "Your account was created, but we could not send the verification "
+                    "email right now. Please request a new verification email before signing in."
+                )
+
+            return RegistrationResponse(
+                message=message,
+                email=user.email,
+                requires_email_verification=True,
+                auto_login=False,
+            )
+
+        return RegistrationResponse(
+            message="Account created successfully.",
             email=user.email,
-            is_active=user.is_active,
-            is_admin=is_admin_user(user),
-            created_at=user.created_at
+            requires_email_verification=False,
+            auto_login=True,
         )
     except Exception as e:
         logger.error(f"Error creating user: {e}")
@@ -146,6 +194,12 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
         )
+
+    if _email_verification_required() and not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email before signing in"
+        )
     
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -191,7 +245,78 @@ async def get_current_user_info(
         email=current_user.email,
         is_active=current_user.is_active,
         is_admin=is_admin_user(current_user),
+        email_verified=current_user.email_verified,
         created_at=current_user.created_at
+    )
+
+
+@router.post("/verify-email", response_model=EmailVerificationResponse)
+async def verify_email(
+    request: EmailVerificationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Verify an account using the emailed verification token."""
+    user = await get_user_by_email_verification_token(db, request.token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token"
+        )
+
+    await mark_user_email_verified(db, user.id)
+    logger.info("Email verified for user: %s", user.username)
+
+    return EmailVerificationResponse(
+        message="Email verified successfully. You can now sign in.",
+        email=user.email,
+    )
+
+
+@router.post("/resend-verification", response_model=EmailVerificationResponse)
+async def resend_verification_email(
+    request: ResendVerificationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Resend the verification email for an existing unverified account."""
+    if not _email_verification_required():
+        return EmailVerificationResponse(
+            message="Email verification is not enabled for this deployment."
+        )
+
+    if not email_delivery_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SMTP email delivery is not configured"
+        )
+
+    user = await get_user_by_email(db, request.email)
+    generic_message = (
+        "If this email belongs to an unverified account, a new verification link has been sent."
+    )
+
+    if not user or user.email_verified:
+        return EmailVerificationResponse(message=generic_message)
+
+    token = generate_email_verification_token()
+    await set_email_verification_token(
+        db,
+        user.id,
+        token,
+        expires_in_hours=settings.EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS,
+    )
+
+    try:
+        send_verification_email(user.username, user.email, token)
+    except Exception as e:
+        logger.error("Failed to resend verification email to %s: %s", user.email, e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send verification email right now"
+        )
+
+    return EmailVerificationResponse(
+        message=generic_message,
+        email=user.email,
     )
 
 
@@ -206,6 +331,7 @@ async def get_public_runtime_config():
         max_tokens=settings.MAX_TOKENS,
         architecture="MCP-based agents",
         orchestration="LangGraph" if settings.USE_LANGGRAPH else "Legacy orchestrator",
+        email_verification_enabled=settings.EMAIL_VERIFICATION_ENABLED,
     )
 
 

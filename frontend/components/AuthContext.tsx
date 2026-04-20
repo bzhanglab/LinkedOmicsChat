@@ -1,7 +1,7 @@
 "use client"
 
 import React, { createContext, useContext, useState, useEffect } from "react"
-import { User, authAPI, getAuthToken, setAuthToken, removeAuthToken } from "@/lib/auth"
+import { User, authAPI, getAuthToken, setAuthToken, removeAuthToken, type RegistrationResponse } from "@/lib/auth"
 import { useRouter } from "next/navigation"
 
 interface AuthContextType {
@@ -9,7 +9,7 @@ interface AuthContextType {
     loading: boolean
     isGuest: boolean
     login: (username: string, password: string) => Promise<void>
-    register: (username: string, email: string, password: string) => Promise<void>
+    register: (username: string, email: string, password: string) => Promise<RegistrationResponse>
     logout: () => void
     enterGuestMode: () => void
     isAuthenticated: boolean
@@ -131,9 +131,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const register = async (username: string, email: string, password: string) => {
         try {
-            await authAPI.register({ username, email, password })
-            // After registration, automatically log in
-            await login(username, password)
+            const response = await authAPI.register({ username, email, password })
+            if (response.auto_login) {
+                await login(username, password)
+            }
+            return response
         } catch (error: any) {
             throw new Error(error.response?.data?.detail || "Registration failed")
         }

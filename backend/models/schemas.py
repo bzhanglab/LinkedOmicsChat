@@ -162,7 +162,32 @@ class UserResponse(BaseModel):
     email: str
     is_active: bool
     is_admin: bool = False
+    email_verified: bool = True
     created_at: float
+
+
+class RegistrationResponse(BaseModel):
+    """Registration response schema."""
+    message: str
+    email: str
+    requires_email_verification: bool = False
+    auto_login: bool = True
+
+
+class EmailVerificationRequest(BaseModel):
+    """Verify an account using an email token."""
+    token: str
+
+
+class EmailVerificationResponse(BaseModel):
+    """Email verification / resend response payload."""
+    message: str
+    email: Optional[str] = None
+
+
+class ResendVerificationRequest(BaseModel):
+    """Request a fresh verification email."""
+    email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -193,6 +218,7 @@ class PublicRuntimeConfig(BaseModel):
     max_tokens: int
     architecture: str
     orchestration: str
+    email_verification_enabled: bool = False
 
 
 class AdminOverview(BaseModel):
