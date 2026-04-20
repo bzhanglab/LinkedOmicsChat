@@ -4,9 +4,10 @@ import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
 import type { TargetSearchVisualization } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
+import { resolveApiUrl } from "@/lib/runtime-url"
 import { DrugTargetsPrimer, getDrugTargetTierDefinition } from "@/components/DrugTargetsPrimer"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const API_URL = resolveApiUrl()
 
 const TIER_LABELS: Record<string, string> = {
     T1: "Approved oncology",

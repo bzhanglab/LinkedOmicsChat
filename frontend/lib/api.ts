@@ -1,18 +1,6 @@
 import axios from "axios"
 import { getAuthToken } from "./auth"
-
-// Dynamically derive the API URL from the current browser hostname.
-// This makes the app work correctly regardless of whether it's accessed via
-// localhost, a LAN IP address, or a domain name — no env var restart needed.
-function resolveApiUrl(): string {
-    if (typeof window !== "undefined") {
-        const hostname = window.location.hostname
-        if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-            return `http://${hostname}:8000`
-        }
-    }
-    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-}
+import { resolveApiUrl } from "./runtime-url"
 
 export const API_URL = resolveApiUrl()
 

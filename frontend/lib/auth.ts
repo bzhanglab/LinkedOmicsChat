@@ -2,18 +2,7 @@
  * Authentication API and utilities
  */
 import axios from "axios"
-
-// Define API_URL locally to avoid circular dependency with api.ts.
-// Match api.ts behavior so auth requests work on LAN and deployed hostnames too.
-function resolveApiUrl(): string {
-    if (typeof window !== "undefined") {
-        const hostname = window.location.hostname
-        if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-            return `http://${hostname}:8000`
-        }
-    }
-    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-}
+import { resolveApiUrl } from "./runtime-url"
 
 const API_URL = resolveApiUrl()
 
@@ -23,6 +12,7 @@ export interface User {
     email: string
     is_active: boolean
     is_admin: boolean
+    email_verified: boolean
     created_at: number
 }
 
@@ -40,6 +30,13 @@ export interface RegisterRequest {
 export interface TokenResponse {
     access_token: string
     token_type: string
+}
+
+export interface RegistrationResponse {
+    message: string
+    email: string
+    requires_email_verification: boolean
+    auto_login: boolean
 }
 
 export interface ForgotPasswordRequest {
@@ -63,6 +60,11 @@ export interface ResetPasswordResponse {
     message: string
 }
 
+export interface EmailVerificationResponse {
+    message: string
+    email?: string
+}
+
 export interface PublicRuntimeConfig {
     llm_provider: string
     llm_model: string
@@ -70,6 +72,7 @@ export interface PublicRuntimeConfig {
     max_tokens: number
     architecture: string
     orchestration: string
+    email_verification_enabled: boolean
 }
 
 const AUTH_TOKEN_KEY = "linkedomicsai-auth-token"
@@ -88,8 +91,8 @@ export const authAPI = {
     /**
      * Register a new user
      */
-    async register(data: RegisterRequest): Promise<User> {
-        const response = await authHttp.post<User>(`/api/v1/auth/register`, data)
+    async register(data: RegisterRequest): Promise<RegistrationResponse> {
+        const response = await authHttp.post<RegistrationResponse>(`/api/v1/auth/register`, data)
         return response.data
     },
 
@@ -142,6 +145,22 @@ export const authAPI = {
      */
     async resetPassword(data: ResetPasswordRequest): Promise<ResetPasswordResponse> {
         const response = await authHttp.post<ResetPasswordResponse>(`/api/v1/auth/reset-password`, data)
+        return response.data
+    },
+
+    /**
+     * Verify a user email with a verification token.
+     */
+    async verifyEmail(token: string): Promise<EmailVerificationResponse> {
+        const response = await authHttp.post<EmailVerificationResponse>(`/api/v1/auth/verify-email`, { token })
+        return response.data
+    },
+
+    /**
+     * Resend the verification email.
+     */
+    async resendVerification(email: string): Promise<EmailVerificationResponse> {
+        const response = await authHttp.post<EmailVerificationResponse>(`/api/v1/auth/resend-verification`, { email })
         return response.data
     },
 }

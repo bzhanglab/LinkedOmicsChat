@@ -4,6 +4,7 @@ import { createPortal } from "react-dom"
 import { Download, Table, Maximize2, Minimize2, X } from "lucide-react"
 import type { AnyVisualization, StaticVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
+import { resolveApiUrl } from "@/lib/runtime-url"
 
 interface AtRiskRow {
     time: number
@@ -42,7 +43,7 @@ function parseAtRiskCsv(csv: string): { rows: AtRiskRow[]; groups: string[] } | 
     return rows.length > 0 ? { rows, groups } : null
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const API_URL = resolveApiUrl()
 
 interface StaticPlotProps {
     visualization: AnyVisualization

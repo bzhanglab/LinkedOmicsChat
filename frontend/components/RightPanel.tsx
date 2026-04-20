@@ -6,10 +6,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, X, LayoutGrid, Table2, Network, BarChart2 } from "lucide-react"
 import type { Paper, AnalysisResult, AnyVisualization, StaticVisualization } from "@/lib/api"
+import { resolveApiUrl } from "@/lib/runtime-url"
 // Paper and AnalysisResult kept for RightPanelContext interface compatibility
 import { StaticPlot } from "@/components/StaticPlot"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const API_URL = resolveApiUrl()
 
 export interface RightPanelContext {
   lastAssistantText?: string

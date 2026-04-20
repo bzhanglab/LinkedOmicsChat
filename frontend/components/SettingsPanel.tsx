@@ -5,6 +5,7 @@ import { Settings, Cpu, Palette, Key, Database, X } from "lucide-react"
 import { useTheme } from "@/components/ThemeProvider"
 import { Button } from "@/components/ui/button"
 import { authAPI, type PublicRuntimeConfig } from "@/lib/auth"
+import { describeApiUrl } from "@/lib/runtime-url"
 
 interface SettingsPanelProps {
     open: boolean
@@ -119,7 +120,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
                             <span className="text-xs text-muted-foreground/60 ml-auto">server-configured</span>
                         </div>
                         <div className="rounded-md bg-muted/40 border border-border px-4 divide-y divide-border">
-                            <InfoRow label="API endpoint" value={process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"} />
+                            <InfoRow label="API endpoint" value={describeApiUrl()} />
                             <InfoRow label="Architecture" value={runtimeConfig?.architecture || "Loading..."} />
                             <InfoRow label="Orchestration" value={runtimeConfig?.orchestration || "Loading..."} />
                         </div>

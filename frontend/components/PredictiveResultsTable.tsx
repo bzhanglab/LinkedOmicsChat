@@ -6,9 +6,10 @@ import { ChevronDown, ChevronUp, ChevronsUpDown, X, Download, Maximize2, Minimiz
 import type { PredictiveResultsTableVisualization } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
+import { resolveApiUrl } from "@/lib/runtime-url"
 import { ClinicalTrialsPrimer } from "@/components/ClinicalTrialsPrimer"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const API_URL = resolveApiUrl()
 const DEFAULT_PAGE_SIZE = 15
 
 type SortKey = "rank" | "label" | "studies" | "avg_auroc" | "meta_fdr" | "meta_fdr_signed" | "direction" | "series" | "disease" | "subtype" | "p_value" | "response_evaluation"

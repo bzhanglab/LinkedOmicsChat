@@ -6,9 +6,10 @@ import type { Core, ElementDefinition, LayoutOptions, StylesheetStyle } from "cy
 import { Download, Maximize2, X, ZoomIn, ZoomOut, Minimize2 } from "lucide-react"
 import type { NetworkVisualization } from "@/lib/api"
 import { getAuthToken } from "@/lib/auth"
+import { resolveApiUrl } from "@/lib/runtime-url"
 import { ToolCategoryGuide } from "@/components/ToolCategoryGuide"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const API_URL = resolveApiUrl()
 
 const EDGE_COLOR = "#cccccc"
 const BAR_H = 80  // px — must match the SVG height in ColorLegend

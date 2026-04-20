@@ -5,9 +5,10 @@ import { X, ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react
 import type { DrugTargetVisualization, DrugDetail } from "@/lib/api"
 import { useLazyVisible } from "@/hooks/useLazyVisible"
 import { getAuthToken } from "@/lib/auth"
+import { resolveApiUrl } from "@/lib/runtime-url"
 import { DrugTargetsPrimer, getDrugTargetTierDefinition } from "@/components/DrugTargetsPrimer"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const API_URL = resolveApiUrl()
 
 function TierBadge({ tier }: { tier: string }) {
     const colors: Record<string, string> = {
