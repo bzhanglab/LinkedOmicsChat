@@ -56,13 +56,15 @@ class MCPAggregator:
 
             if not server_path.exists():
                 logger.error(f"MCP LinkedOmics Server not found at: {server_path}")
-                raise FileNotFoundError(f"MCP LinkedOmics Server not found: {server_path}")
-
-            await self.connect_server(
-                "linkedomics",
-                str(sys.executable),
-                [str(server_path)],
-            )
+            else:
+                try:
+                    await self.connect_server(
+                        "linkedomics",
+                        str(sys.executable),
+                        [str(server_path)],
+                    )
+                except Exception as e:
+                    logger.error(f"LinkedOmics MCP server failed to start: {e}")
         
         # Gene utilities MCP server (identifier resolution: Ensembl/UniProt → HGNC)
         if settings.MCP_GENE_UTILS_SERVER_ENABLED:

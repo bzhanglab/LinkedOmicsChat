@@ -878,6 +878,11 @@ _GENE_STOPWORDS = {
     "TCGA", "CPTAC", "WHO", "FDA", "USA", "UK", "OR", "AND",
     "NOT", "FOR", "THE", "WITH", "FROM", "BRCA", "LUAD", "LUSC",
     "HNSC", "HNSCC", "CCRCC", "UCEC", "PDAC", "COAD", "LSCC",
+    # Common English words that look like gene symbols when uppercased
+    "HOW", "WHY", "WHAT", "WHEN", "WHERE", "IS", "ARE", "IN", "VS",
+    "TUMOR", "NORMAL", "CANCER", "EXPRESSED", "EXPRESSION", "LEVEL",
+    "HIGH", "LOW", "FIND", "SHOW", "GET", "LIST", "COMPARE", "ANALYSIS",
+    "DATA", "GENE", "PROTEIN", "STUDY", "TYPE", "PLOT", "CHART",
 }
 _CANCER_TYPE_MAP: Dict[str, str] = {
     "BRCA": "breast cancer (BRCA)",

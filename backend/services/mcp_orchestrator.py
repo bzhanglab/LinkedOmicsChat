@@ -2221,9 +2221,9 @@ class MCPOrchestrator:
         self.valid_genes = set()
         try:
             import os
-            # Assume valid_genes.txt is in the project root (2 levels up from services/)
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            valid_genes_path = os.path.join(project_root, "valid_genes.txt")
+            # valid_genes.txt lives in the backend dir (1 level up from services/)
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            valid_genes_path = os.path.join(backend_dir, "valid_genes.txt")
             if os.path.exists(valid_genes_path):
                 with open(valid_genes_path, "r") as f:
                     self.valid_genes = {line.strip().upper() for line in f if line.strip()}

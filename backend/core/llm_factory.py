@@ -69,17 +69,19 @@ class LLMFactory:
                 **{k: v for k, v in kwargs.items() if k not in ["ollama_model", "base_url"]}
             )
         
-        # Check for Google/Gemini (only when model name explicitly says gemini)
-        if "gemini" in model_name.lower():
-            logger.info(f"Creating Google Gemini LLM: {model_name}")
+        # Check for Google/Gemini — by model name or by API key presence
+        google_api_key = settings.GOOGLE_API_KEY or kwargs.get("google_api_key")
+        if "gemini" in model_name.lower() or (google_api_key and not settings.OPENAI_API_KEY and not settings.ANTHROPIC_API_KEY):
+            gemini_model = model_name if "gemini" in model_name.lower() else "gemini-2.0-flash"
+            logger.info(f"Creating Google Gemini LLM: {gemini_model}")
             return ChatGoogleGenerativeAI(
-                model=model_name,
+                model=gemini_model,
                 temperature=temperature,
                 max_output_tokens=kwargs.get("max_tokens") or settings.MAX_TOKENS,
-                google_api_key=settings.GOOGLE_API_KEY or kwargs.get("google_api_key"),
+                google_api_key=google_api_key,
                 **{k: v for k, v in kwargs.items() if k not in ["google_api_key", "ollama_model", "max_tokens"]}
             )
-        
+
         # Check for Anthropic/Claude
         if "claude" in model_name.lower() or settings.ANTHROPIC_API_KEY:
             logger.info(f"Creating Anthropic LLM: {model_name}")
@@ -90,7 +92,7 @@ class LLMFactory:
                 anthropic_api_key=settings.ANTHROPIC_API_KEY or kwargs.get("anthropic_api_key"),
                 **{k: v for k, v in kwargs.items() if k not in ["anthropic_api_key", "ollama_model", "max_tokens"]}
             )
-        
+
         # Default to OpenAI
         logger.info(f"Creating OpenAI LLM: {model_name}")
         return ChatOpenAI(
