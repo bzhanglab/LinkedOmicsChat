@@ -177,8 +177,8 @@ tmp/
 temp/
 *.tmp
 
-# Docker volumes (server-specific)
-data/
+# Docker volumes (server-specific) — /data/ anchored to root so backend/data/ is still synced
+/data/
 
 # Virtual environments (should use Docker instead)
 venv/

@@ -123,18 +123,20 @@ if [ ! -f ".env" ]; then
     echo "Choose LLM provider:"
     echo "1. Ollama (Local LLM - Free but slower, no API key needed)"
     echo "2. OpenAI (Faster but costs money, requires API key)"
-    echo "3. Mock mode (for testing, no real AI)"
+    echo "3. Google Gemini (Fast, requires Google API key)"
+    echo "4. Mock mode (for testing, no real AI)"
     echo ""
-    echo "   Note: You can switch between Ollama and OpenAI later by editing .env"
-    read -p "Enter choice (1-3, default: 1): " LLM_CHOICE
+    echo "   Note: You can switch providers later by editing .env"
+    read -p "Enter choice (1-4, default: 1): " LLM_CHOICE
     LLM_CHOICE=${LLM_CHOICE:-1}
-    
+
     USE_OLLAMA="false"
     MOCK_MODE="false"
     OPENAI_KEY=""
     ANTHROPIC_KEY=""
+    GOOGLE_KEY=""
     OLLAMA_MODEL="llama3"
-    
+
     case $LLM_CHOICE in
         1)
             USE_OLLAMA="true"
@@ -154,11 +156,20 @@ if [ ! -f ".env" ]; then
             echo "   To switch to Ollama later: Edit .env (USE_OLLAMA=true)"
             ;;
         3)
+            read -p "Enter Google API Key: " GOOGLE_KEY
+            if [ -z "$GOOGLE_KEY" ]; then
+                echo "❌ Google API key is required"
+                exit 1
+            fi
+            echo "✅ Using Google Gemini"
+            echo "   To switch providers later: Edit .env (GOOGLE_API_KEY, or set USE_OLLAMA=true)"
+            ;;
+        4)
             MOCK_MODE="true"
             echo "✅ Using mock mode (for testing only)"
             ;;
     esac
-    
+
     if [ "$USE_OLLAMA" = "true" ]; then
         read -p "Enter Anthropic API Key (optional, press Enter to skip): " ANTHROPIC_KEY
     fi
@@ -174,6 +185,7 @@ DB_PASSWORD=$DB_PASSWORD
 # API Keys
 OPENAI_API_KEY=${OPENAI_KEY:-}
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY:-}
+GOOGLE_API_KEY=${GOOGLE_KEY:-}
 USE_OLLAMA=$USE_OLLAMA
 OLLAMA_MODEL=$OLLAMA_MODEL
 OLLAMA_BASE_URL=http://ollama:11434
@@ -185,20 +197,21 @@ DEBUG=False
 SECRET_KEY=$SECRET_KEY
 
 # CORS (comma-separated format for easier parsing)
-CORS_ORIGINS=http://$DOMAIN:3000,http://$DOMAIN,http://$PUBLIC_IP:3000,http://$PUBLIC_IP
+CORS_ORIGINS=https://$DOMAIN,http://$DOMAIN:3000,http://$DOMAIN,http://$PUBLIC_IP:3000,http://$PUBLIC_IP
 
 # Database URL
 DATABASE_URL=postgresql://linkedomicsai:$DB_PASSWORD@postgres:5432/linkedomicsai
 REDIS_URL=redis://redis:6379/0
 
 # Frontend URLs
-NEXT_PUBLIC_API_URL=http://$DOMAIN:8000
-NEXT_PUBLIC_WS_URL=ws://$DOMAIN:8000
+# Use the public HTTPS origin so the browser can stay same-origin in production.
+NEXT_PUBLIC_API_URL=https://$DOMAIN
+NEXT_PUBLIC_WS_URL=wss://$DOMAIN
 EOF
     
     echo "✅ .env file created"
     echo ""
-    echo "⚠️  IMPORTANT: Update NEXT_PUBLIC_API_URL in docker-compose.yml to match your domain/IP"
+    echo "⚠️  IMPORTANT: Keep NEXT_PUBLIC_API_URL aligned with your public HTTPS domain"
 else
     echo "✅ .env file already exists"
 fi
@@ -209,8 +222,8 @@ if [ -f "docker-compose.yml" ]; then
     read -p "Update frontend API URL in docker-compose.yml? (y/n) " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "Enter API URL (default: http://$PUBLIC_IP:8000): " API_URL
-        API_URL=${API_URL:-"http://$PUBLIC_IP:8000"}
+        read -p "Enter API URL (default: https://$DOMAIN): " API_URL
+        API_URL=${API_URL:-"https://$DOMAIN"}
         
         # Update docker-compose.yml (simple sed replacement)
         if grep -q "NEXT_PUBLIC_API_URL" docker-compose.yml; then
@@ -263,9 +276,9 @@ echo "- Configure firewall rules"
 echo "- Set up automated backups"
 echo ""
 if [ "$USE_OLLAMA" = "true" ]; then
-    echo "🔄 To switch to OpenAI (faster):"
-    echo "   1. Edit .env: Set USE_OLLAMA=false and add OPENAI_API_KEY=your-key"
-    echo "   2. Restart: docker compose restart backend"
+    echo "🔄 To switch providers:"
+    echo "   OpenAI:  Edit .env (USE_OLLAMA=false, OPENAI_API_KEY=your-key), then: docker compose restart backend"
+    echo "   Gemini:  Edit .env (USE_OLLAMA=false, GOOGLE_API_KEY=your-key), then: docker compose restart backend"
 elif [ "$MOCK_MODE" = "false" ]; then
     echo "🔄 To switch to Ollama (free but slower):"
     echo "   1. Edit .env: Set USE_OLLAMA=true"
