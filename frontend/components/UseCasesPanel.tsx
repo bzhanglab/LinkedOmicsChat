@@ -14,16 +14,6 @@ interface UseCase {
 }
 
 const USE_CASES: UseCase[] = [
-    // Gene Utilities
-    {
-        id: "resolve-gene-id",
-        title: "Gene ID Resolution",
-        description: "Resolve Ensembl or UniProt identifiers to HGNC symbols before downstream analysis.",
-        exampleQuery: "What gene is ENSG00000141510?",
-        tools: ["resolve_gene_identifier"],
-        category: "Gene Utilities",
-        icon: Dna,
-    },
     // Expression Analysis
     {
         id: "tumor-normal-expression",
@@ -247,6 +237,16 @@ const USE_CASES: UseCase[] = [
         category: "Literature",
         icon: Library,
     },
+    // Gene Utilities
+    {
+        id: "resolve-gene-id",
+        title: "Gene ID Resolution",
+        description: "Resolve Ensembl or UniProt identifiers to HGNC symbols before downstream analysis.",
+        exampleQuery: "What gene is ENSG00000141510?",
+        tools: ["resolve_gene_identifier"],
+        category: "Gene Utilities",
+        icon: Dna,
+    },
 ]
 
 interface CategoryDef {
@@ -257,12 +257,6 @@ interface CategoryDef {
 }
 
 const CATEGORIES: CategoryDef[] = [
-    {
-        label: "Gene Utilities",
-        icon: Dna,
-        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
-        borderColor: "border-violet-400 dark:border-violet-500",
-    },
     {
         label: "Expression Analysis",
         icon: BarChart2,
@@ -305,6 +299,12 @@ const CATEGORIES: CategoryDef[] = [
         color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
         borderColor: "border-indigo-400 dark:border-indigo-500",
     },
+    {
+        label: "Gene Utilities",
+        icon: Dna,
+        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
+        borderColor: "border-violet-400 dark:border-violet-500",
+    },
 ]
 
 const TOOL_LABELS: Record<string, string> = {
@@ -342,44 +342,47 @@ function UseCaseCard({ uc, catDef, onStartChat }: {
     return (
         <button
             onClick={() => onStartChat(uc.exampleQuery)}
-            className="group flex flex-col items-start text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50/50 dark:hover:bg-teal-900/20 hover:shadow-md transition-all duration-200"
+            className="group flex flex-col items-start text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50/50 dark:hover:bg-teal-900/20 hover:shadow-md border-l-4 border-l-transparent hover:border-l-teal-400 dark:hover:border-l-teal-500 transition-all duration-200"
         >
-            {/* Icon + title */}
-            <div className="flex items-center gap-3 w-full mb-2">
-                <div className={`h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
-                    <Icon className="h-4 w-4" />
-                </div>
-                <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors text-sm leading-snug">
-                    {uc.title}
-                </h3>
-            </div>
-
-            {/* Description */}
-            <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3 line-clamp-2">
-                {uc.description}
-            </p>
-
-            {/* Tool badges */}
-            <div className="flex flex-wrap gap-1.5 mb-3">
-                {uc.tools.map((tool) => (
-                    <span
-                        key={tool}
-                        className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 font-mono"
-                    >
-                        {TOOL_LABELS[tool] ?? tool}
-                    </span>
-                ))}
-            </div>
-
-            {/* Example query */}
-            <p className="text-xs text-gray-400 dark:text-gray-500 italic line-clamp-2 mb-3">
+            {/* Example query — hero */}
+            <p className="text-base font-medium text-gray-900 dark:text-gray-100 group-hover:text-teal-700 dark:group-hover:text-teal-300 transition-colors leading-snug mb-3">
                 &ldquo;{uc.exampleQuery}&rdquo;
             </p>
 
-            {/* CTA */}
-            <div className="flex items-center gap-1.5 text-xs font-medium text-teal-500 dark:text-teal-400 group-hover:text-teal-600 dark:group-hover:text-teal-300 transition-colors mt-auto">
-                Try this query
-                <ArrowRight className="w-3.5 h-3.5" />
+            {/* Divider */}
+            <div className="w-full border-t border-gray-100 dark:border-gray-700 mb-3" />
+
+            {/* Icon + title + description */}
+            <div className="flex items-start gap-2 w-full mb-2">
+                <div className={`h-6 w-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${color} opacity-70`}>
+                    <Icon className="h-3 w-3" />
+                </div>
+                <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 leading-snug">
+                        {uc.title}
+                    </p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed line-clamp-2 mt-0.5">
+                        {uc.description}
+                    </p>
+                </div>
+            </div>
+
+            {/* Tool badges + CTA */}
+            <div className="flex items-center justify-between w-full mt-auto pt-1">
+                <div className="flex flex-wrap gap-1">
+                    {uc.tools.map((tool) => (
+                        <span
+                            key={tool}
+                            className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 font-mono"
+                        >
+                            {TOOL_LABELS[tool] ?? tool}
+                        </span>
+                    ))}
+                </div>
+                <div className="flex items-center gap-1 text-xs font-medium text-teal-500 dark:text-teal-400 group-hover:text-teal-600 dark:group-hover:text-teal-300 transition-colors shrink-0 ml-2">
+                    Ask
+                    <ArrowRight className="w-3 h-3" />
+                </div>
             </div>
         </button>
     )

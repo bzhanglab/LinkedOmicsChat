@@ -868,13 +868,6 @@ interface CategoryDef {
 
 const CATEGORIES: CategoryDef[] = [
     {
-        label: "Gene Utilities",
-        icon: Dna,
-        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
-        borderColor: "border-violet-400 dark:border-violet-500",
-        tools: ["resolve_gene_identifier"],
-    },
-    {
         label: "Expression Analysis",
         icon: BarChart2,
         color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
@@ -923,6 +916,13 @@ const CATEGORIES: CategoryDef[] = [
         borderColor: "border-indigo-400 dark:border-indigo-500",
         tools: [],
         serverPrefix: "literature",
+    },
+    {
+        label: "Gene Utilities",
+        icon: Dna,
+        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
+        borderColor: "border-violet-400 dark:border-violet-500",
+        tools: ["resolve_gene_identifier"],
     },
 ]
 
