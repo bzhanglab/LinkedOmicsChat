@@ -201,6 +201,9 @@ htmlcov/
 *.backup
 *.bak
 
+# Personal/local-only folders
+notes/
+
 # Deployment scripts (optional - uncomment if you don't want to sync these)
 # deploy_aws.sh
 # deploy_rsync.sh
