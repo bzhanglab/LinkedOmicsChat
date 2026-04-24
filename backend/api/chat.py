@@ -1302,23 +1302,40 @@ async def share_session(
     Returns a shareable URL that anyone can view without logging in.
     """
     try:
-        db = SessionLocal()
-        try:
-            sess = (
-                db.query(ChatSession)
-                .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
-                .first()
-            )
-            if not sess:
-                raise HTTPException(status_code=404, detail="Session not found")
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                sess = (
+                    db.query(ChatSession)
+                    .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+                    .first()
+                )
+                if not sess:
+                    raise HTTPException(status_code=404, detail="Session not found")
 
-            if not sess.shared_token:
-                sess.shared_token = str(uuid.uuid4())
-                db.commit()
+                if not sess.shared_token:
+                    sess.shared_token = str(uuid.uuid4())
+                    db.commit()
 
-            return {"shared_token": sess.shared_token}
-        finally:
-            db.close()
+                return {"shared_token": sess.shared_token}
+            finally:
+                db.close()
+        else:
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(ChatSession).filter(
+                        ChatSession.id == session_id, ChatSession.user_id == current_user.id
+                    )
+                )
+                sess = result.scalar_one_or_none()
+                if not sess:
+                    raise HTTPException(status_code=404, detail="Session not found")
+
+                if not sess.shared_token:
+                    sess.shared_token = str(uuid.uuid4())
+                    await db.commit()
+
+                return {"shared_token": sess.shared_token}
     except HTTPException:
         raise
     except Exception as e:
@@ -1333,35 +1350,66 @@ async def get_shared_session(token: str):
     No authentication required.
     """
     try:
-        db = SessionLocal()
-        try:
-            sess = db.query(ChatSession).filter(ChatSession.shared_token == token).first()
-            if not sess:
-                raise HTTPException(status_code=404, detail="Shared session not found")
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                sess = db.query(ChatSession).filter(ChatSession.shared_token == token).first()
+                if not sess:
+                    raise HTTPException(status_code=404, detail="Shared session not found")
 
-            msgs = (
-                db.query(DBChatMessage)
-                .filter(DBChatMessage.session_id == sess.id)
-                .order_by(DBChatMessage.timestamp.asc())
-                .all()
-            )
-            history = [
-                {
-                    "id": m.id,
-                    "query": m.query,
-                    "response": m.response,
-                    "timestamp": m.timestamp,
+                msgs = (
+                    db.query(DBChatMessage)
+                    .filter(DBChatMessage.session_id == sess.id)
+                    .order_by(DBChatMessage.timestamp.asc())
+                    .all()
+                )
+                history = [
+                    {
+                        "id": m.id,
+                        "query": m.query,
+                        "response": m.response,
+                        "timestamp": m.timestamp,
+                    }
+                    for m in msgs
+                ]
+                return {
+                    "session_id": sess.id,
+                    "title": sess.title or "Shared Research Session",
+                    "history": history,
+                    "created_at": sess.created_at,
                 }
-                for m in msgs
-            ]
-            return {
-                "session_id": sess.id,
-                "title": sess.title or "Shared Research Session",
-                "history": history,
-                "created_at": sess.created_at,
-            }
-        finally:
-            db.close()
+            finally:
+                db.close()
+        else:
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(ChatSession).filter(ChatSession.shared_token == token)
+                )
+                sess = result.scalar_one_or_none()
+                if not sess:
+                    raise HTTPException(status_code=404, detail="Shared session not found")
+
+                msgs_result = await db.execute(
+                    select(DBChatMessage)
+                    .filter(DBChatMessage.session_id == sess.id)
+                    .order_by(DBChatMessage.timestamp.asc())
+                )
+                msgs = list(msgs_result.scalars().all())
+                history = [
+                    {
+                        "id": m.id,
+                        "query": m.query,
+                        "response": m.response,
+                        "timestamp": m.timestamp,
+                    }
+                    for m in msgs
+                ]
+                return {
+                    "session_id": sess.id,
+                    "title": sess.title or "Shared Research Session",
+                    "history": history,
+                    "created_at": sess.created_at,
+                }
     except HTTPException:
         raise
     except Exception as e:
