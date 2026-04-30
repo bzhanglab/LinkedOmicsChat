@@ -794,7 +794,7 @@ _TCGA_CIS_KEYWORDS = (
     "rnaseq.*methylation", "rna.*methylation",
     "mirna.*rnaseq", "mirnaseq.*rnaseq",
     # genome-wide / pan-cancer cis scan phrasing
-    "genome-wide cis", "pan-cancer cis", "across tcga", "across all tcga",
+    "genome-wide cis", "pan-cancer cis",
     "strongest.*cis", "top.*cis", "cis.*across",
 )
 
