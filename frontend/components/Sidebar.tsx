@@ -85,19 +85,21 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
             <div className={cn("p-6 border-b border-border", isCollapsed && "p-2")}>
                 {!isCollapsed ? (
                     <>
-                        <div className="flex items-center gap-2.5">
+                        <a href="/welcome" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
                             <img src="/logo.png" alt="LinkedOmicsChat" className="h-7 w-auto" />
                             <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
                                 LinkedOmics<span className="text-teal-600 dark:text-teal-400">Chat</span>
                             </span>
-                        </div>
+                        </a>
                         <p className="text-sm text-muted-foreground mt-1">
                             Multi-Omics AI Platform
                         </p>
                     </>
                 ) : (
                     <div className="flex justify-center">
-                        <img src="/logo.png" alt="LinkedOmicsChat" className="h-8 w-auto" />
+                        <a href="/welcome" target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity">
+                            <img src="/logo.png" alt="LinkedOmicsChat" className="h-8 w-auto" />
+                        </a>
                     </div>
                 )}
             </div>

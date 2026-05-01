@@ -60,13 +60,10 @@ export default function Home() {
         return null
     })
 
-    // Redirect to login if not authenticated
+    // Redirect to welcome page if not authenticated
     useEffect(() => {
         if (!loading && !isAuthenticated) {
-            // Send first-time visitors to the welcome/landing page,
-            // but returning users (who have ever logged in) go straight to login.
-            const hasVisited = localStorage.getItem("linkedomicsai-has-visited")
-            router.push(hasVisited ? "/login" : "/welcome")
+            router.push("/welcome")
         }
     }, [isAuthenticated, loading, router])
 

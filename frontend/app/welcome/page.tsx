@@ -201,12 +201,6 @@ export default function WelcomePage() {
     const router = useRouter()
     const [selected, setSelected] = useState<{ text: string; cat: Category } | null>(null)
 
-    useEffect(() => {
-        if (!loading && isAuthenticated && !isGuest) {
-            router.replace("/")
-        }
-    }, [isAuthenticated, isGuest, loading, router])
-
     if (loading) return null
 
     const handleChipClick = (text: string, cat: Category) => setSelected({ text, cat })
