@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useState } from "react"
+import { FormEvent, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { authAPI } from "@/lib/auth"
@@ -11,42 +11,28 @@ export default function VerifyEmailClient() {
     const token = searchParams.get("token") || ""
     const [email, setEmail] = useState(searchParams.get("email") || "")
     const [message, setMessage] = useState(
-        token
-            ? "Verifying your email..."
-            : "Check your inbox for a verification link. You need to confirm your email before signing in."
+        "Check your inbox for a verification link. You need to confirm your email before signing in."
     )
     const [error, setError] = useState("")
-    const [loading, setLoading] = useState(Boolean(token))
+    const [loading, setLoading] = useState(false)
     const [resendLoading, setResendLoading] = useState(false)
     const [verified, setVerified] = useState(false)
 
-    useEffect(() => {
+    const handleVerify = async () => {
         if (!token) return
-
-        let cancelled = false
         setLoading(true)
         setError("")
-
-        authAPI
-            .verifyEmail(token)
-            .then((response) => {
-                if (cancelled) return
-                setVerified(true)
-                setMessage(response.message)
-                if (response.email) setEmail(response.email)
-            })
-            .catch((err: any) => {
-                if (cancelled) return
-                setError(err.response?.data?.detail || "Could not verify your email. The link may be invalid or expired.")
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false)
-            })
-
-        return () => {
-            cancelled = true
+        try {
+            const response = await authAPI.verifyEmail(token)
+            setVerified(true)
+            setMessage(response.message)
+            if (response.email) setEmail(response.email)
+        } catch (err: any) {
+            setError(err.response?.data?.detail || "Could not verify your email. The link may be invalid or expired.")
+        } finally {
+            setLoading(false)
         }
-    }, [token])
+    }
 
     const handleResend = async (e: FormEvent) => {
         e.preventDefault()
@@ -78,12 +64,6 @@ export default function VerifyEmailClient() {
                     </p>
                 </div>
 
-                {loading && (
-                    <div className="px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-sm">
-                        Verifying your email...
-                    </div>
-                )}
-
                 {!loading && message && (
                     <div className="px-3 py-2.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 text-sm">
                         {message}
@@ -104,6 +84,17 @@ export default function VerifyEmailClient() {
                             className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-medium text-sm transition-all shadow-sm shadow-teal-200"
                         >
                             Go to Sign In
+                        </button>
+                    </div>
+                ) : token ? (
+                    <div className="space-y-3">
+                        <button
+                            type="button"
+                            onClick={handleVerify}
+                            disabled={loading}
+                            className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-medium text-sm transition-all shadow-sm shadow-teal-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {loading ? "Verifying..." : "Confirm my email"}
                         </button>
                     </div>
                 ) : (

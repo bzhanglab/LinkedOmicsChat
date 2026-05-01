@@ -8,6 +8,7 @@ import { useAuth } from "@/components/AuthContext"
 export default function RegisterPage() {
     const [username, setUsername] = useState("")
     const [email, setEmail] = useState("")
+    const [confirmEmail, setConfirmEmail] = useState("")
     const [password, setPassword] = useState("")
     const [confirmPassword, setConfirmPassword] = useState("")
     const [error, setError] = useState("")
@@ -26,6 +27,11 @@ export default function RegisterPage() {
         e.preventDefault()
         setError("")
         setInfo("")
+
+        if (email !== confirmEmail) {
+            setError("Email addresses do not match")
+            return
+        }
 
         if (password.length < 8) {
             setError("Password must be at least 8 characters long")
@@ -114,6 +120,22 @@ export default function RegisterPage() {
                                 required
                                 placeholder="Enter your email"
                                 autoComplete="email"
+                                className="glass-input-light w-full px-3.5 py-2.5 rounded-xl text-sm transition-all"
+                            />
+                        </div>
+
+                        <div>
+                            <label htmlFor="confirmEmail" className="block text-sm font-medium text-slate-700 mb-1.5">
+                                Confirm Email
+                            </label>
+                            <input
+                                id="confirmEmail"
+                                type="email"
+                                value={confirmEmail}
+                                onChange={(e) => setConfirmEmail(e.target.value)}
+                                required
+                                placeholder="Re-enter your email"
+                                autoComplete="off"
                                 className="glass-input-light w-full px-3.5 py-2.5 rounded-xl text-sm transition-all"
                             />
                         </div>
