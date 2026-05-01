@@ -98,6 +98,17 @@ export default function VerifyEmailClient() {
                         </button>
                     </div>
                 ) : (
+                    <div className="px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm space-y-1.5">
+                        <p className="font-medium">Before requesting a new link:</p>
+                        <ul className="list-disc list-inside space-y-1 text-amber-700">
+                            <li>Delivery can take up to 10 minutes depending on your mail server.</li>
+                            <li>Check your <span className="font-medium">spam or junk</span> folder.</li>
+                            <li>Requesting a new link will invalidate the previous one — do not click the old link after resending.</li>
+                        </ul>
+                    </div>
+                )}
+
+                {!verified && !token && (
                     <form onSubmit={handleResend} className="space-y-4">
                         <div>
                             <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
