@@ -176,6 +176,30 @@ function supportingDataLabel(counts: SupportingDataCounts): string {
     return `${counts.total} items`
 }
 
+function isMachineReadableSourceUrl(url?: string): boolean {
+    if (!url) return false
+    try {
+        const parsed = new URL(url)
+        const host = parsed.hostname.toLowerCase()
+        const path = parsed.pathname.toLowerCase()
+        return (
+            host === "aws1.zhang-lab.org" ||
+            path.endsWith(".json") ||
+            path.includes("/api/") ||
+            path.startsWith("/data/")
+        )
+    } catch {
+        return false
+    }
+}
+
+function resolveInlineSourceUrl(key: string, toolSources?: Record<string, string>): string | undefined {
+    const fallbackUrl = INLINE_SOURCE_MAP[key]?.url
+    const toolUrl = toolSources?.[key]
+    if (toolUrl && !isMachineReadableSourceUrl(toolUrl)) return toolUrl
+    return fallbackUrl
+}
+
 const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
     const handleCopyTable = useCallback((tableContent: string) => {
         if (onCopyTable) {
@@ -565,8 +589,7 @@ function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void
                 const key = href.replace("#source:", "")
                 const src = INLINE_SOURCE_MAP[key]
                 const label = src?.label || String(children)
-                // Use the specific API endpoint URL if available, otherwise fall back to root
-                const url = toolSources?.[key] ?? src?.url ?? "#"
+                const url = resolveInlineSourceUrl(key, toolSources) ?? "#"
                 return (
                     <a
                         href={url}
@@ -652,7 +675,7 @@ function rewriteExportInlineSourceLinks(markdown: string, toolSources?: Record<s
     if (!markdown) return ""
 
     return markdown.replace(/\[([^\]]+)\]\(#source:([^)]+)\)/g, (_match, label, key) => {
-        const resolvedUrl = toolSources?.[key] || INLINE_SOURCE_MAP[key]?.url
+        const resolvedUrl = resolveInlineSourceUrl(key, toolSources)
         return resolvedUrl ? `[${label}](${resolvedUrl})` : label
     })
 }
@@ -1105,10 +1128,11 @@ const MessagesPane = memo(function MessagesPane({
                                                         {footerEntries.map(([key, url]) => {
                                                             const src = INLINE_SOURCE_MAP[key]
                                                             if (!src) return null
+                                                            const resolvedUrl = resolveInlineSourceUrl(key, { [key]: url as string })
                                                             return (
                                                                 <a
                                                                     key={key}
-                                                                    href={(url as string) || src.url}
+                                                                    href={resolvedUrl || src.url}
                                                                     target="_blank"
                                                                     rel="noopener noreferrer"
                                                                     className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors no-underline"

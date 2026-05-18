@@ -1655,38 +1655,47 @@ _TOOL_SOURCE_KEY: dict = {
 
 
 def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
-    """Return the actual API URL that was called for a given tool + args."""
+    """Return a user-facing source URL for inline citations.
+
+    Keep these links on human-readable landing pages. Raw JSON/API endpoints are
+    exposed through plot/table downloads where appropriate, and make poor
+    citation targets in chat.
+    """
     gene = args.get("protein") or args.get("gene_symbol") or args.get("gene")
     gene = str(gene).upper() if gene else None
+    linkedomics_home = "https://www.linkedomics.org"
+    targets_home = "https://targets.linkedomics.org"
+    trials_home = "https://trials.linkedomics.org"
     _TEMPLATES: Dict[str, Any] = {
-        "cancer_gene_expression":      lambda g: f"https://kb.linkedomics.org/data/tn/gene?gene={g}&sort=metap&order=asc&offset=0&limit=10",
-        "batch_cancer_gene_expression": lambda _: "https://kb.linkedomics.org/data/tn/gene",
-        "get_cis_correlations":        lambda g: f"https://kb.linkedomics.org/gene/{g}",
-        "batch_get_cis_correlations":  lambda _: "https://kb.linkedomics.org/gene",
-        "get_trans_correlations":      lambda g: f"https://kb.linkedomics.org/gene/{g}",
-        "overall_survival_per_cancer": lambda g: f"https://kb.linkedomics.org/data/associations/phenotype/gene?phenotype=clinical__overall_survival&gene={g}",
-        "batch_overall_survival_per_cancer": lambda _: "https://kb.linkedomics.org/data/associations/phenotype/gene?phenotype=clinical__overall_survival",
-        "tcga_survival_analysis":      lambda g: f"http://aws1.zhang-lab.org:8236/api/survival?gene={g}" if g else "http://aws1.zhang-lab.org:8236/api/survival",
-        "funmap_neighborhood":         lambda g: f"https://funmap.linkedomics.org/data/dag/gene/{g}.json",
-        "get_target":                  lambda g: f"https://targets.linkedomics.org/{g}/",
-        "batch_get_target":            lambda _: "https://targets.linkedomics.org",
-        "search_targets":              lambda _: "https://targets.linkedomics.org",
-        "rank_targets":                lambda _: "https://targets.linkedomics.org",
-        "clinical_trial_information":       lambda g: f"https://trials.linkedomics.org/api/table/gene/{g}",
-        "batch_clinical_trial_information": lambda _: "https://trials.linkedomics.org",
-        "filter_clinical_trials":               lambda _: "https://trials.linkedomics.org/treatment_gene/",
-        "meta_analysis_predictive_genes":       lambda _: "https://trials.linkedomics.org/treatment_gene/",
-        "meta_analysis_predictive_gene_sets":   lambda _: "https://trials.linkedomics.org/treatment_gene_set/",
+        "cancer_gene_expression":      lambda _: linkedomics_home,
+        "batch_cancer_gene_expression": lambda _: linkedomics_home,
+        "get_cis_correlations":        lambda _: linkedomics_home,
+        "batch_get_cis_correlations":  lambda _: linkedomics_home,
+        "get_trans_correlations":      lambda _: linkedomics_home,
+        "overall_survival_per_cancer": lambda _: linkedomics_home,
+        "batch_overall_survival_per_cancer": lambda _: linkedomics_home,
+        "tcga_survival_analysis":      lambda _: linkedomics_home,
+        "tcga_cis_association_analysis": lambda _: linkedomics_home,
+        "funmap_neighborhood":         lambda _: "https://funmap.linkedomics.org",
+        "get_target":                  lambda g: f"{targets_home}/{g}/" if g else targets_home,
+        "batch_get_target":            lambda _: targets_home,
+        "search_targets":              lambda _: targets_home,
+        "rank_targets":                lambda _: targets_home,
+        "clinical_trial_information":       lambda _: trials_home,
+        "batch_clinical_trial_information": lambda _: trials_home,
+        "filter_clinical_trials":               lambda _: f"{trials_home}/treatment_gene/",
+        "meta_analysis_predictive_genes":       lambda _: f"{trials_home}/treatment_gene/",
+        "meta_analysis_predictive_gene_sets":   lambda _: f"{trials_home}/treatment_gene_set/",
         "webgestalt":                       lambda _: "https://www.webgestalt.org",
         "search_literature":                lambda _: "https://pubmed.ncbi.nlm.nih.gov",
         "search_pubmed":                    lambda _: "https://pubmed.ncbi.nlm.nih.gov",
     }
     # Tools that need the full args dict rather than the extracted gene string
     _ARGS_TEMPLATES: Dict[str, Any] = {
-        "get_study_info":                   lambda a: f"https://trials.linkedomics.org/api/info/{a.get('study_id','')}",
-        "gene_set_trial_information":       lambda a: f"https://trials.linkedomics.org/api/table/gene_set/{a.get('gene_set','')}",
-        "get_study_predictive_genes":       lambda a: f"https://trials.linkedomics.org/api/table/study/gene/{a.get('study_id','')}",
-        "get_study_predictive_gene_sets":   lambda a: f"https://trials.linkedomics.org/api/table/study/gene_set/{a.get('study_id','')}",
+        "get_study_info":                   lambda a: trials_home,
+        "gene_set_trial_information":       lambda a: f"{trials_home}/treatment_gene_set/",
+        "get_study_predictive_genes":       lambda a: f"{trials_home}/treatment_gene/",
+        "get_study_predictive_gene_sets":   lambda a: f"{trials_home}/treatment_gene_set/",
     }
     if bare_tool_name in _ARGS_TEMPLATES:
         try:
@@ -1703,7 +1712,7 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
 
 
 def _build_tool_sources(raw_results: dict) -> Dict[str, str]:
-    """Build a {source_key: actual_api_url} map from raw tool results."""
+    """Build a {source_key: user-facing source URL} map from raw tool results."""
     sources: Dict[str, str] = {}
     for key, value in raw_results.items():
         if not isinstance(value, dict):
