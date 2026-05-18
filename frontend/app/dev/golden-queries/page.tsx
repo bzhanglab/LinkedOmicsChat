@@ -470,7 +470,7 @@ export default function GoldenQueriesPage() {
         return `Turn ${siblings.findIndex((c) => c.id === gc.id) + 1}/${siblings.length}`
     }
 
-    const vizs = (selectedResult?.response?.visualizations ?? []) as AnyVisualization[]
+    const vizs = (selectedResult?.response?.visualizations ?? []) as unknown as AnyVisualization[]
     const responseText = selectedResult?.response?.message ?? selectedResult?.streamedText ?? ""
 
     return (
