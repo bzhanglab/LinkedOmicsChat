@@ -3226,6 +3226,150 @@ DIRECT RESPONSE RULES:
         )
         return llm_summary, is_general_knowledge, raw_results, tools_used, usage_tracker, execution_trace
 
+    async def _ensure_dual_survival_results(
+        self,
+        *,
+        raw_results: Dict[str, Any],
+        execution_trace: List[Dict[str, Any]],
+        final_state: AgentState,
+        query: str,
+        log_prefix: str,
+    ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Backfill a missing survival dataset when deterministic routing chose dual survival."""
+        if final_state.get("workflow") != "survival_dual_dataset":
+            return raw_results, execution_trace
+
+        available_tools = self.mcp_aggregator.list_tools()
+        requested_genes = [
+            _normalize_identifier_token(gene)
+            for gene in (final_state.get("requested_genes") or [])
+            if _normalize_identifier_token(gene)
+        ]
+        if not requested_genes:
+            requested_genes = list(_resolved_identifier_map(raw_results).values())
+        gene = next((g for g in requested_genes if g), "")
+        if not gene:
+            return raw_results, execution_trace
+
+        cohort_codes = _extract_cancer_codes(query)
+        cohort = cohort_codes[0] if cohort_codes else ""
+        present_tools = {key.rsplit("#", 1)[0] for key in raw_results}
+        missing_calls: list[tuple[str, Dict[str, Any]]] = []
+
+        def _has_tcga_all_omics_for_gene_cohort() -> bool:
+            if not cohort:
+                return "linkedomics::tcga_survival_analysis" in present_tools
+            for key, wrapped in raw_results.items():
+                if key.rsplit("#", 1)[0] != "linkedomics::tcga_survival_analysis":
+                    continue
+                if not isinstance(wrapped, dict):
+                    continue
+                args = wrapped.get("_args") or {}
+                payload = wrapped.get("_result") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                query_meta = payload.get("query") if isinstance(payload, dict) else {}
+                if not isinstance(query_meta, dict):
+                    query_meta = {}
+                existing_gene = _normalize_identifier_token(
+                    query_meta.get("gene") or args.get("gene") or wrapped.get("_gene")
+                )
+                existing_cohort = _normalize_identifier_token(query_meta.get("cohort") or args.get("cohort"))
+                existing_omics = query_meta.get("omics") or args.get("omics")
+                if existing_gene == gene and existing_cohort == cohort and (
+                    payload.get("mode") == 2 or not existing_omics
+                ):
+                    return True
+            return False
+
+        if (
+            "linkedomics::overall_survival_per_cancer" not in present_tools
+            and "linkedomics::overall_survival_per_cancer" in available_tools
+        ):
+            missing_calls.append(("linkedomics::overall_survival_per_cancer", {"protein": gene}))
+
+        if (
+            (
+                "linkedomics::tcga_survival_analysis" not in present_tools
+                or not _has_tcga_all_omics_for_gene_cohort()
+            )
+            and "linkedomics::tcga_survival_analysis" in available_tools
+        ):
+            tcga_args: Dict[str, Any] = {"gene": gene}
+            if cohort:
+                tcga_args["cohort"] = cohort
+            else:
+                tcga_args["omics"] = "RNAseq"
+            missing_calls.append(("linkedomics::tcga_survival_analysis", tcga_args))
+
+        if not missing_calls:
+            return raw_results, execution_trace
+
+        updated_results = dict(raw_results)
+        call_counts: Dict[str, int] = {}
+        for existing_key in updated_results:
+            base_key, sep, suffix = existing_key.rpartition("#")
+            normalized_key = base_key if sep and suffix.isdigit() else existing_key
+            next_count = int(suffix) + 1 if sep and suffix.isdigit() else 1
+            call_counts[normalized_key] = max(call_counts.get(normalized_key, 0), next_count)
+
+        trace_metrics: List[Dict[str, Any]] = []
+        started = time.perf_counter()
+        for tool_id, args in missing_calls:
+            tool_started = time.perf_counter()
+            try:
+                raw = await self.mcp_aggregator.call_tool(tool_id, args)
+                latency_ms = int((time.perf_counter() - tool_started) * 1000)
+            except Exception as exc:
+                latency_ms = int((time.perf_counter() - tool_started) * 1000)
+                logger.warning("%s Failed to backfill %s: %s", log_prefix, tool_id, exc)
+                raw = {"error": str(exc)}
+
+            if isinstance(raw, dict):
+                result_dict = raw
+            elif isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    result_dict = parsed if isinstance(parsed, dict) else {"raw": parsed}
+                except Exception:
+                    result_dict = {"raw": raw}
+            else:
+                result_dict = {"raw": raw}
+
+            data_status = _classify_tool_result_payload(tool_id.replace("::", "__"), result_dict)
+            count = call_counts.get(tool_id, 0)
+            unique_key = f"{tool_id}#{count}"
+            call_counts[tool_id] = count + 1
+            updated_results[unique_key] = {
+                "_gene": gene,
+                "_args": args,
+                "_result": result_dict,
+                "_data_status": data_status,
+            }
+            trace_metrics.append(
+                {
+                    "tool": tool_id,
+                    "latency_ms": latency_ms,
+                    "status": data_status,
+                }
+            )
+
+        updated_trace = list(execution_trace)
+        if trace_metrics:
+            updated_trace.append(
+                {
+                    "node": "tools",
+                    "step": final_state.get("steps", 0),
+                    "latency_ms": int((time.perf_counter() - started) * 1000),
+                    "tool_calls": trace_metrics,
+                    "backfilled": True,
+                }
+            )
+        return updated_results, updated_trace
+
     async def _build_response_from_final_state(
         self,
         *,
@@ -3252,6 +3396,14 @@ DIRECT RESPONSE RULES:
             log_prefix=log_prefix,
             original_query=query,
         )
+        raw_results, execution_trace = await self._ensure_dual_survival_results(
+            raw_results=raw_results,
+            execution_trace=execution_trace,
+            final_state=final_state,
+            query=effective_query,
+            log_prefix=log_prefix,
+        )
+        tools_used = [key.rsplit("#", 1)[0] for key in raw_results.keys()]
 
         clarification_options_from_llm = _parse_clarification_options(llm_summary)
         if clarification_options_from_llm:

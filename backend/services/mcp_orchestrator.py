@@ -5158,10 +5158,50 @@ Please provide a clear, informative response about this gene. Include the key de
                 omics_query = ""
                 for p in parsed_list:
                     mode = p.get("mode", 1)
-                    omics_query = omics_query or p.get("query", {}).get("omics", "")
-                    all_results.extend(p.get("results") or [])
+                    query_meta = p.get("query", {}) if isinstance(p.get("query"), dict) else {}
+                    omics_query = omics_query or query_meta.get("omics", "")
+                    for result_item in p.get("results") or []:
+                        if not isinstance(result_item, dict):
+                            continue
+                        normalized_item = dict(result_item)
+                        if not normalized_item.get("gene") and query_meta.get("gene"):
+                            normalized_item["gene"] = query_meta.get("gene")
+                        if not normalized_item.get("cohort") and query_meta.get("cohort"):
+                            normalized_item["cohort"] = query_meta.get("cohort")
+                        if not normalized_item.get("omics") and query_meta.get("omics"):
+                            normalized_item["omics"] = query_meta.get("omics")
+                        all_results.append(normalized_item)
                 if not all_results:
                     continue
+                deduped_results: list[dict[str, Any]] = []
+                dedupe_index: dict[tuple[str, str, str], int] = {}
+
+                def _tcga_result_score(result_item: dict[str, Any]) -> tuple[int, int, float]:
+                    samples = result_item.get("samples") or []
+                    sample_count = len(samples) if isinstance(samples, list) else 0
+                    try:
+                        n_value = int(result_item.get("n") or 0)
+                    except Exception:
+                        n_value = 0
+                    try:
+                        p_value = float(result_item.get("pvalue") or 1.0)
+                    except Exception:
+                        p_value = 1.0
+                    return (1 if sample_count else 0, max(sample_count, n_value), -p_value)
+
+                for result_item in all_results:
+                    dedupe_key = (
+                        str(result_item.get("gene") or gene_name_k or "").upper(),
+                        str(result_item.get("cohort") or cohort_key_k or "").upper(),
+                        str(result_item.get("omics") or omics_query or "").upper(),
+                    )
+                    existing_index = dedupe_index.get(dedupe_key)
+                    if existing_index is None:
+                        dedupe_index[dedupe_key] = len(deduped_results)
+                        deduped_results.append(result_item)
+                    elif _tcga_result_score(result_item) > _tcga_result_score(deduped_results[existing_index]):
+                        deduped_results[existing_index] = result_item
+                all_results = deduped_results
                 first_res = all_results[0]
                 g = first_res.get("gene") or gene_name_k or "Gene"
                 logger.info(f"[tcga_survival] grouped mode={mode} gene={g} cohort={cohort_key_k!r} n_results={len(all_results)}")
