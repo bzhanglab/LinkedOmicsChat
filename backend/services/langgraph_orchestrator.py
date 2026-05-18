@@ -499,6 +499,34 @@ def _resolved_identifier_map(tool_results: Dict[str, Any]) -> Dict[str, str]:
     return resolved
 
 
+def _derived_webgestalt_gene_values(tool_results: Dict[str, Any]) -> set[str]:
+    """Return gene symbols from prior same-turn results that may feed WebGestalt."""
+    derived: set[str] = set()
+    for key, value in tool_results.items():
+        if _bare_tool_name(key) != "funmap_neighborhood":
+            continue
+        if not isinstance(value, dict):
+            continue
+        payload = value.get("_result") or {}
+        if not isinstance(payload, dict) or payload.get("error"):
+            continue
+        neighborhood = payload.get("neighborhood") or []
+        if isinstance(neighborhood, list):
+            for gene in neighborhood:
+                normalized = _normalize_identifier_token(gene)
+                if normalized:
+                    derived.add(normalized)
+        nodes = payload.get("nodes") or []
+        if isinstance(nodes, list):
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                normalized = _normalize_identifier_token(node.get("name"))
+                if normalized:
+                    derived.add(normalized)
+    return derived
+
+
 def _format_identifier_choices(values: Sequence[str]) -> str:
     """Render a short human-readable list of identifiers."""
     unique_values: List[str] = []
@@ -543,6 +571,8 @@ def _validate_tool_identifier_integrity(
     allowed_nonresolver_values = set(explicit_gene_symbols)
     allowed_nonresolver_values.update(resolved_map.values())
     allowed_nonresolver_values.update(context_values)
+    if bare == "webgestalt":
+        allowed_nonresolver_values.update(_derived_webgestalt_gene_values(tool_results))
 
     if bare == "resolve_gene_identifier":
         identifier = _normalize_identifier_token(args.get("identifier"))
@@ -1752,6 +1782,118 @@ def _ensure_inline_source_citations(text: str, tools_used: list) -> str:
     return "\n".join(lines)
 
 
+def _normalize_duplicate_markdown_headings(text: str) -> str:
+    """Collapse headings like `### ### Results` to `### Results`."""
+    if not isinstance(text, str) or not text:
+        return text
+    return re.sub(r"(?m)^(#{1,6})[ \t]+(?:#{1,6}[ \t]+)+", r"\1 ", text)
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if numeric == numeric else None
+
+
+def _format_pvalue(value: Any) -> str:
+    numeric = _safe_float(value)
+    if numeric is None:
+        text = str(value or "").strip()
+        return text or "NA"
+    if numeric == 0:
+        return "0"
+    return f"{numeric:.2e}"
+
+
+def _webgestalt_top_terms(raw_results: Dict[str, Any], limit: int = 4) -> List[Dict[str, Any]]:
+    """Extract top WebGestalt enrichment rows from raw tool results."""
+    terms: List[Dict[str, Any]] = []
+    for key, wrapped in (raw_results or {}).items():
+        if _bare_tool_name(key) != "webgestalt" or not isinstance(wrapped, dict):
+            continue
+        payload = wrapped.get("_result", wrapped)
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                continue
+        if not isinstance(payload, dict) or payload.get("error"):
+            continue
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict):
+                terms.append(row)
+
+    def _rank(row: Dict[str, Any]) -> float:
+        fdr = _safe_float(row.get("FDR"))
+        pval = _safe_float(row.get("pValue"))
+        return fdr if fdr is not None else (pval if pval is not None else 1.0)
+
+    return sorted(terms, key=_rank)[:limit]
+
+
+def _text_covers_webgestalt_terms(text: str, terms: List[Dict[str, Any]]) -> bool:
+    """Return True when the text already names WebGestalt or the top terms."""
+    normalized = (text or "").lower()
+    if "webgestalt" in normalized:
+        return True
+    if not terms:
+        return False
+    matches = 0
+    for row in terms[:3]:
+        description = str(row.get("description") or row.get("geneSet") or "").strip().lower()
+        if description and description in normalized:
+            matches += 1
+    return matches >= min(2, len(terms[:3]))
+
+
+def _ordered_unique_strings(values: Sequence[Any]) -> List[str]:
+    """Return non-empty strings in first-seen order."""
+    unique_values: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        unique_values.append(text)
+        seen.add(text)
+    return unique_values
+
+
+def _build_webgestalt_enrichment_sentence(raw_results: Dict[str, Any], limit: int = 4) -> str:
+    """Build a deterministic one-sentence summary for WebGestalt results."""
+    terms = _webgestalt_top_terms(raw_results, limit=limit)
+    if not terms:
+        return ""
+    term_bits = []
+    for row in terms:
+        description = str(row.get("description") or row.get("geneSet") or "enriched term").strip()
+        term_bits.append(f"**{description}** (FDR={_format_pvalue(row.get('FDR'))})")
+    return (
+        "WebGestalt pathway enrichment highlights "
+        + ", ".join(term_bits[:-1])
+        + (f", and {term_bits[-1]}" if len(term_bits) > 1 else term_bits[0])
+        + " [Source](#source:webgestalt)."
+    )
+
+
+def _ensure_webgestalt_enrichment_summary(text: str, raw_results: Dict[str, Any], *, section: bool = False) -> str:
+    """Ensure responses explicitly summarize WebGestalt enrichment results."""
+    terms = _webgestalt_top_terms(raw_results)
+    if not terms or _text_covers_webgestalt_terms(text, terms):
+        return text
+    sentence = _build_webgestalt_enrichment_sentence(raw_results)
+    if not sentence:
+        return text
+    addition = f"### Pathway Enrichment\n{sentence}" if section else sentence
+    stripped = (text or "").strip()
+    return f"{stripped}\n\n{addition}" if stripped else addition
+
+
 _VAGUE_ANALYSIS_RE = re.compile(
     r"\b(analyz|study|investigat|explor|summar|overview|tell me about|what can you tell|show me everything)",
     re.IGNORECASE,
@@ -2838,7 +2980,16 @@ DIRECT RESPONSE RULES:
                 )
                 raw = {"error": str(exc)}
 
-            result_dict = raw if isinstance(raw, dict) else {"raw": raw}
+            if isinstance(raw, dict):
+                result_dict = raw
+            elif isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    result_dict = parsed if isinstance(parsed, dict) else {"raw": parsed}
+                except Exception:
+                    result_dict = {"raw": raw}
+            else:
+                result_dict = {"raw": raw}
             data_status = _classify_tool_result_payload(
                 "gene_utils__resolve_gene_identifier",
                 result_dict,
@@ -3120,10 +3271,11 @@ DIRECT RESPONSE RULES:
                                 lines.append(f"**{tool_name}**{' (' + gene + ')' if gene else ''}: completed")
                         msg_out = "\n".join(lines)
                     summary_out = _summary.strip() or llm_summary
+                    formatted_tools = formatted.get("tools_used") or []
                     return (
                         msg_out,
                         summary_out,
-                        formatted.get("tools_used") or tools_used,
+                        _ordered_unique_strings([*tools_used, *formatted_tools]),
                         formatted.get("raw_results") or raw_results,
                         formatted.get("visualizations") or [],
                     )
@@ -3144,6 +3296,10 @@ DIRECT RESPONSE RULES:
         if clarification_options_from_llm:
             display_summary = _strip_options_line(display_summary)
             rich_message = _strip_options_line(rich_message)
+        rich_message = _normalize_duplicate_markdown_headings(rich_message)
+        display_summary = _normalize_duplicate_markdown_headings(display_summary)
+        rich_message = _ensure_webgestalt_enrichment_summary(rich_message, raw_results_final, section=True)
+        display_summary = _ensure_webgestalt_enrichment_summary(display_summary, raw_results_final)
         if include_stream_metadata:
             clarification_options = clarification_options_from_llm
             rich_message = _inlineize_source_blockquotes(rich_message)
@@ -3210,7 +3366,7 @@ DIRECT RESPONSE RULES:
             "summary": display_summary if show_summary else "",
             "message": rich_message,
             "query": query,
-            "tools_used": list(set(tools_used_final)),
+            "tools_used": _ordered_unique_strings(tools_used_final),
             "raw_results": raw_results_final,
             "visualizations": visualizations,
             "analyses": [],

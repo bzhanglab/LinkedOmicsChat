@@ -3670,9 +3670,12 @@ Please provide a helpful, natural, and professional response. If they are just g
                     "query": query
                 }
         
-        # Literature tools: the LangGraph agent already produced a formatted summary
-        # in llm_summary; just return that rather than re-formatting raw JSON.
-        if any(tool_id.startswith("literature::") for tool_id in results.keys()):
+        has_literature_results = any(tool_id.startswith("literature::") for tool_id in results.keys())
+        has_linkedomics_results = any(tool_id.startswith("linkedomics::") for tool_id in results.keys())
+
+        # Literature-only tools: the LangGraph agent already produced a formatted
+        # summary in llm_summary; just return that rather than re-formatting raw JSON.
+        if has_literature_results and not has_linkedomics_results:
             # Pull the LLM's own summary out of the results wrapper if present,
             # otherwise fall back gracefully.
             return {
@@ -3685,24 +3688,35 @@ Please provide a helpful, natural, and professional response. If they are just g
             }
 
         # If LinkedOmics tools were used, format them nicely as markdown
-        if any(tool_id.startswith("linkedomics::") for tool_id in results.keys()):
+        if has_linkedomics_results:
             try:
                 fmt = self._format_linkedomics_results(results, query, session_id=session.get("id", ""))
                 message = fmt["message"]
                 visualizations = fmt.get("visualizations", [])
                 rendered_ids = fmt.get("rendered_tool_ids", set())
-                # Only surface badges for tools that actually produced visible output
+                # Keep utility tools (for example identifier resolution) in the
+                # API metadata even when they do not produce a visible panel.
                 if rendered_ids:
-                    tools_used = [k for k in results.keys() if (k.split('#')[0] if '#' in k else k) in rendered_ids]
+                    tools_used = [
+                        k for k in results.keys()
+                        if (
+                            (k.split('#')[0] if '#' in k else k) in rendered_ids
+                            or not (k.split('#')[0] if '#' in k else k).startswith("linkedomics::")
+                        )
+                    ]
                 else:
                     tools_used = list(results.keys())
                 summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
+                # Mixed LinkedOmics + literature responses should keep the
+                # LangGraph-authored narrative while still attaching the
+                # visualization objects produced by the LinkedOmics formatter.
+                is_mixed_literature = has_literature_results
                 return {
                     "success": True,
-                    "summary": summary or "",
-                    "message": message,
+                    "summary": "" if is_mixed_literature else summary or "",
+                    "message": None if is_mixed_literature else message,
                     "query": query,
-                    "tools_used": tools_used,
+                    "tools_used": list(results.keys()) if is_mixed_literature else tools_used,
                     "raw_results": results,
                     "visualizations": visualizations,
                 }
