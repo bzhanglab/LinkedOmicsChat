@@ -685,6 +685,12 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "gene_utils::resolve_gene_identifier",
         "linkedomics::tcga_cis_association_analysis",
     ),
+    "cis_dual": (
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::get_cis_correlations",
+        "linkedomics::batch_get_cis_correlations",
+        "linkedomics::tcga_cis_association_analysis",
+    ),
     "correlation": (
         "gene_utils::resolve_gene_identifier",
         "linkedomics::get_cis_correlations",
@@ -753,6 +759,7 @@ _DEFAULT_WORKFLOW_BY_SCOPE: Dict[str, str] = {
     "literature": "literature_search",
     "funmap": "funmap_neighborhood",
     "tcga_cis": "tcga_cis_association",
+    "cis_dual": "cis_dual_dataset",
     "correlation": "cptac_cis_correlation",
     "pathway": "pathway_enrichment",
     "full": "broad_full",
@@ -815,18 +822,31 @@ _FUNMAP_KEYWORDS = (
 )
 
 _TCGA_CIS_KEYWORDS = (
-    # explicit cis association phrasing
+    # TCGA-specific cis-association phrasing
     "cis association", "cis-association", "cis associations", "cis-associations",
-    # cross-omics correlation in TCGA context
-    "methylation correlat", "methylation associat",
-    "scna.*rnaseq", "copy number.*rnaseq", "scna.*rna", "copy number.*rna",
-    "scna.*rppa", "copy number.*rppa", "scna.*protein",
-    "rnaseq.*methylation", "rna.*methylation",
-    "mirna.*rnaseq", "mirnaseq.*rnaseq",
-    # genome-wide / pan-cancer cis scan phrasing
     "genome-wide cis", "pan-cancer cis",
     "strongest.*cis", "top.*cis", "cis.*across",
 )
+
+_TCGA_CIS_ASSOCIATION_WORDS = (
+    "associat", "correlat", "relationship", "relation", "cis", " vs ", " versus ",
+)
+
+_TCGA_SPECIFIC_CIS_TERMS = (
+    "rppa", "scna", "mirnaseq", "mirna-seq",
+)
+
+_TCGA_CIS_OMICS_PATTERNS: Dict[str, tuple[str, ...]] = {
+    "RNAseq": ("rnaseq", "rna-seq", "rna seq", "mrna", "rna expression"),
+    "RPPA": ("rppa", "protein"),
+    "Methylation": ("methylation", "methylated"),
+    "SCNA": ("scna", "scnv", "copy number", "copy-number", "cnv"),
+    "miRNASeq": ("mirna", "mirnaseq", "mirna-seq", "mirna seq"),
+}
+
+_OMICS_LAYER_TOKENS = frozenset({
+    "RNASEQ", "RPPA", "SCNA", "SCNV", "MIRNA", "MIRNASEQ", "METHYLATION",
+})
 
 _CORRELATION_KEYWORDS = (
     "cis-correl", "cis correl",
@@ -846,10 +866,143 @@ def _has_cptac_cis_correlation_intent(normalized_query: str) -> bool:
         return False
     if any(keyword in normalized_query for keyword in _CORRELATION_KEYWORDS):
         return True
+    layers = _mentioned_cross_omics_layers(normalized_query)
+    if len(layers) >= 2 and any(marker in normalized_query for marker in _TCGA_CIS_ASSOCIATION_WORDS):
+        return True
     return "cis" in normalized_query and any(
         marker in normalized_query
         for marker in ("correlat", "association", "associat", "across")
     )
+
+
+def _mentioned_tcga_cis_omics_layers(normalized_query: str) -> set[str]:
+    """Return TCGA cis omics layers mentioned as data layers, not genes."""
+    layers: set[str] = set()
+    for layer, aliases in _TCGA_CIS_OMICS_PATTERNS.items():
+        if any(re.search(rf"\b{re.escape(alias)}\b", normalized_query) for alias in aliases):
+            layers.add(layer)
+    return layers
+
+
+def _mentioned_cross_omics_layers(normalized_query: str) -> set[str]:
+    """Return generic molecular layers mentioned in a cross-omics query."""
+    patterns: Dict[str, tuple[str, ...]] = {
+        "RNA": ("rna", "mrna", "rnaseq", "rna-seq", "rna seq", "rna expression"),
+        "Protein": ("protein", "rppa"),
+        "Methylation": ("methylation", "methylated"),
+        "CopyNumber": ("copy number", "copy-number", "cnv", "scnv", "scna"),
+        "miRNA": ("mirna", "mirnaseq", "mirna-seq", "mirna seq"),
+    }
+    layers: set[str] = set()
+    for layer, aliases in patterns.items():
+        if any(re.search(rf"\b{re.escape(alias)}\b", normalized_query) for alias in aliases):
+            layers.add(layer)
+    return layers
+
+
+def _has_tcga_cis_association_intent(normalized_query: str) -> bool:
+    """Return True for cross-omics association/correlation wording."""
+    if "cptac" in normalized_query:
+        return False
+
+    if "tcga" in normalized_query:
+        layers = _mentioned_cross_omics_layers(normalized_query)
+        if len(layers) < 2:
+            layers = _mentioned_tcga_cis_omics_layers(normalized_query)
+        return len(layers) >= 2
+
+    # Without an explicit dataset, keep generic RNA/RNAseq + protein/methylation/
+    # copy-number wording ambiguous. Only TCGA-specific layer names such as RPPA,
+    # SCNA, or miRNASeq should imply the TCGA cis-association tool.
+    if not _has_tcga_specific_cis_terms(normalized_query):
+        return False
+
+    layers = _mentioned_tcga_cis_omics_layers(normalized_query)
+    if len(layers) < 2:
+        return False
+    return any(marker in normalized_query for marker in _TCGA_CIS_ASSOCIATION_WORDS)
+
+
+def _has_tcga_specific_cis_terms(normalized_query: str) -> bool:
+    """Return True when the query uses TCGA-style omics layer names."""
+    return any(re.search(rf"\b{re.escape(term)}\b", normalized_query) for term in _TCGA_SPECIFIC_CIS_TERMS)
+
+
+def _has_dual_cis_association_intent(normalized_query: str) -> bool:
+    """Return True for generic cross-omics cis wording that should query both datasets."""
+    if not normalized_query or "cptac" in normalized_query or "tcga" in normalized_query:
+        return False
+    if _has_tcga_specific_cis_terms(normalized_query):
+        return False
+    if "cis-correl" in normalized_query or "cis correl" in normalized_query:
+        # In this app, "cis-correlations" is the CPTAC tool wording.
+        return False
+    if not any(marker in normalized_query for marker in _TCGA_CIS_ASSOCIATION_WORDS):
+        return False
+    layers = _mentioned_cross_omics_layers(normalized_query)
+    dual_supported_layers = {"RNA", "Protein", "Methylation", "CopyNumber"}
+    return len(layers) >= 2 and layers.issubset(dual_supported_layers)
+
+
+_CROSS_OMICS_LAYER_ALIASES: Dict[str, tuple[str, ...]] = {
+    "RNA": ("rna expression", "rna-seq", "rna seq", "rnaseq", "mrna", "rna"),
+    "Protein": ("protein", "rppa"),
+    "Methylation": ("methylation", "methylated"),
+    "CopyNumber": ("copy number", "copy-number", "scnv", "scna", "cnv"),
+}
+
+_CPTAC_CIS_LAYER_BY_GENERIC = {
+    "RNA": "RNA",
+    "Protein": "Protein",
+    "Methylation": "Methylation",
+    "CopyNumber": "SCNV",
+}
+
+_TCGA_CIS_LAYER_BY_GENERIC = {
+    "RNA": "RNAseq",
+    "Protein": "RPPA",
+    "Methylation": "Methylation",
+    "CopyNumber": "SCNA",
+}
+
+
+def _ordered_cross_omics_layers(query: str) -> List[str]:
+    """Return generic omics layers in first-mentioned order."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    positions: Dict[str, int] = {}
+    for layer, aliases in _CROSS_OMICS_LAYER_ALIASES.items():
+        for alias in aliases:
+            match = re.search(rf"\b{re.escape(alias)}\b", normalized)
+            if match:
+                positions[layer] = min(positions.get(layer, match.start()), match.start())
+    return [layer for layer, _ in sorted(positions.items(), key=lambda item: item[1])]
+
+
+def _infer_dual_cis_tool_args(query: str, gene: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Infer matching CPTAC and TCGA cis tool args for a generic cross-omics query."""
+    cptac_args: Dict[str, Any] = {"protein": gene}
+    tcga_args: Dict[str, Any] = {"gene": gene}
+
+    cohort_codes = _extract_cancer_codes(query)
+    if cohort_codes:
+        cohort = cohort_codes[0]
+        cptac_args["cancers"] = [cohort]
+        tcga_args["cohort"] = cohort
+
+    layers = _ordered_cross_omics_layers(query)
+    if len(layers) >= 2:
+        left, right = layers[0], layers[1]
+        cptac_left = _CPTAC_CIS_LAYER_BY_GENERIC.get(left)
+        cptac_right = _CPTAC_CIS_LAYER_BY_GENERIC.get(right)
+        tcga_left = _TCGA_CIS_LAYER_BY_GENERIC.get(left)
+        tcga_right = _TCGA_CIS_LAYER_BY_GENERIC.get(right)
+        if cptac_left and cptac_right:
+            cptac_args["pairs"] = [f"{cptac_left} vs {cptac_right}"]
+        if tcga_left and tcga_right:
+            tcga_args["source_omics"] = tcga_left
+            tcga_args["target_omics"] = tcga_right
+
+    return cptac_args, tcga_args
 
 
 _PATHWAY_KEYWORDS = (
@@ -996,6 +1149,10 @@ def _looks_like_explicit_gene_token(token: str) -> bool:
         return True
     if not any(ch.isalpha() for ch in normalized):
         return False
+    # Molecular layer names can look like uppercase gene symbols (e.g. RPPA).
+    # Only treat them as genes if the HGNC symbol list explicitly contains them.
+    if normalized in _OMICS_LAYER_TOKENS and normalized not in _VALID_GENES:
+        return False
     # Accept unambiguous alphanumeric symbols like TP53 / BRCA1 / C11ORF1 even
     # when the user types them in lowercase, but avoid plain lowercase words.
     if any(ch.isdigit() for ch in normalized):
@@ -1115,12 +1272,18 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "pathway"
     if any(keyword in normalized for keyword in _FUNMAP_KEYWORDS):
         return "funmap"
+    # Generic cross-omics wording like "RNA/RNAseq associated with protein" can
+    # be answered from both CPTAC and TCGA, so query both instead of guessing.
+    if _has_dual_cis_association_intent(normalized):
+        return "cis_dual"
     # Explicit CPTAC cis/correlation requests should use CPTAC cis-correlations,
     # even if broad text like "cis ... across" also matches TCGA cis scan wording.
     if _has_cptac_cis_correlation_intent(normalized):
         return "correlation"
     # Check TCGA cis association before generic correlation and TCGA survival routing.
-    if any(re.search(keyword, normalized) for keyword in _TCGA_CIS_KEYWORDS):
+    if _has_tcga_cis_association_intent(normalized):
+        return "tcga_cis"
+    if "cptac" not in normalized and any(re.search(keyword, normalized) for keyword in _TCGA_CIS_KEYWORDS):
         return "tcga_cis"
     # TCGA + explicit cross-omics correlation phrasing → cis association (not survival).
     _OMICS_LAYER_WORDS = ("methylation", "scna", "copy number", "rppa", "mirna", "mirnaseq")
@@ -1919,6 +2082,428 @@ def _ensure_webgestalt_enrichment_summary(text: str, raw_results: Dict[str, Any]
     return f"{stripped}\n\n{addition}" if stripped else addition
 
 
+def _cptac_survival_payloads(raw_results: Dict[str, Any]) -> List[tuple[str, Dict[str, Any]]]:
+    """Return wrapped CPTAC overall-survival payloads as (gene, payload)."""
+    payloads: List[tuple[str, Dict[str, Any]]] = []
+    for key, wrapped in (raw_results or {}).items():
+        if _bare_tool_name(key) != "overall_survival_per_cancer" or not isinstance(wrapped, dict):
+            continue
+        payload = wrapped.get("_result", wrapped)
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                continue
+        if not isinstance(payload, dict) or payload.get("error"):
+            continue
+        gene = str(wrapped.get("_gene") or (wrapped.get("_args") or {}).get("protein") or "").upper()
+        payloads.append((gene, payload))
+    return payloads
+
+
+def _classify_cptac_survival_value(value: Any) -> tuple[str, Optional[str]]:
+    """Convert a CPTAC survival cell into a summary label and optional p-value."""
+    text = str(value or "").strip()
+    normalized = text.lower()
+    p_match = re.search(r"p\s*=\s*([0-9.eE+-]+)", text)
+    p_text = _format_pvalue(p_match.group(1)) if p_match else None
+    if not text or "data unavailable" in normalized or normalized in {"n/a", "na", "-"}:
+        return "unavailable", None
+    if "no significant" in normalized or "not significant" in normalized:
+        return "no significant association", p_text
+    if "higher expression associated with poor survival" in normalized:
+        return "higher expression associated with poor survival", p_text
+    if "lower expression associated with poor survival" in normalized:
+        return "lower expression associated with poor survival", p_text
+    return text, p_text
+
+
+def _format_cptac_layer_status(layer: str, value: Any) -> str:
+    label, p_text = _classify_cptac_survival_value(value)
+    if label == "unavailable":
+        return f"{layer} **unavailable**"
+    if label == "no significant association":
+        return f"{layer} **no significant association**" + (f" (p={p_text})" if p_text else "")
+    return f"{layer} **{label}**" + (f" (p={p_text})" if p_text else "")
+
+
+def _build_cptac_survival_sentence(raw_results: Dict[str, Any], query: str) -> str:
+    """Build a deterministic CPTAC survival note when LLM summary omits it."""
+    payloads = _cptac_survival_payloads(raw_results)
+    if not payloads:
+        return ""
+
+    requested_cohorts = [code for code in _extract_cancer_codes(query) if code in _CPTAC_SURVIVAL_COHORTS]
+    gene, payload = payloads[0]
+    gene_label = f"**{gene}**" if gene else "the queried gene"
+
+    def _layer_value(layer_key: str, cohort: str) -> Any:
+        layer = payload.get(layer_key) if isinstance(payload.get(layer_key), dict) else {}
+        data = layer.get("data") if isinstance(layer.get("data"), dict) else {}
+        return data.get(cohort)
+
+    if requested_cohorts:
+        cohort_bits: List[str] = []
+        for cohort in requested_cohorts[:3]:
+            rna_text = _format_cptac_layer_status("RNA", _layer_value("RNA_level", cohort))
+            protein_text = _format_cptac_layer_status("protein", _layer_value("protein_level", cohort))
+            cohort_bits.append(f"in **{cohort}**, {rna_text} and {protein_text}")
+        return (
+            f"CPTAC survival was also queried for {gene_label}: "
+            + "; ".join(cohort_bits)
+            + "."
+        )
+
+    notable: List[str] = []
+    for cohort in sorted(_CPTAC_SURVIVAL_COHORTS):
+        for layer_label, layer_key in (("RNA", "RNA_level"), ("protein", "protein_level")):
+            value = _layer_value(layer_key, cohort)
+            label, p_text = _classify_cptac_survival_value(value)
+            if label not in {"unavailable", "no significant association"}:
+                notable.append(
+                    f"{layer_label} in **{cohort}**: **{label}**"
+                    + (f" (p={p_text})" if p_text else "")
+                )
+    if notable:
+        return (
+            f"CPTAC survival was also queried for {gene_label}; notable CPTAC signals were "
+            + ", ".join(notable[:3])
+            + "."
+        )
+    return (
+        f"CPTAC survival was also queried for {gene_label} across available cohorts, "
+        "but no significant RNA/protein survival association was returned."
+    )
+
+
+def _build_cptac_batch_sentence(payload: Any, *, analysis: str) -> str:
+    """Build a compact note for batch CPTAC expression/survival tools."""
+    if not isinstance(payload, dict):
+        return ""
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    if not data:
+        return f"CPTAC {analysis} was also queried in batch mode, but no per-gene results were returned."
+    genes = [str(g).upper() for g in data.keys() if str(g).strip()]
+    significant = 0
+    unavailable_only = 0
+    for gene_payload in data.values():
+        if not isinstance(gene_payload, dict):
+            continue
+        values: List[str] = []
+        for layer_key in ("RNA_level", "protein_level"):
+            layer = gene_payload.get(layer_key) if isinstance(gene_payload.get(layer_key), dict) else {}
+            layer_data = layer.get("data") if isinstance(layer.get("data"), dict) else {}
+            values.extend(str(v or "") for v in layer_data.values())
+        normalized_values = [value.lower() for value in values if value.strip()]
+        if any("significantly" in value and "no significant" not in value for value in normalized_values):
+            significant += 1
+        elif normalized_values and all("data unavailable" in value for value in normalized_values):
+            unavailable_only += 1
+    gene_text = ", ".join(f"**{gene}**" for gene in genes[:4])
+    if len(genes) > 4:
+        gene_text += f", and **{len(genes) - 4}** more"
+    if significant:
+        return f"CPTAC {analysis} was also queried for {gene_text}; **{significant}** gene(s) had at least one significant RNA/protein result."
+    if unavailable_only == len(data):
+        return f"CPTAC {analysis} was also queried for {gene_text}, but all returned entries were unavailable."
+    return f"CPTAC {analysis} was also queried for {gene_text}, with no significant RNA/protein result returned in the compact summary."
+
+
+def _unwrap_tool_payload(wrapped: Any) -> tuple[str, Dict[str, Any], Any]:
+    """Return (gene, args, payload) for a wrapped tool result."""
+    if not isinstance(wrapped, dict):
+        return "", {}, wrapped
+    gene = str(wrapped.get("_gene") or "").strip().upper()
+    args = wrapped.get("_args") if isinstance(wrapped.get("_args"), dict) else {}
+    payload = wrapped.get("_result") if "_result" in wrapped else wrapped
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            pass
+    if not gene:
+        gene = str(args.get("protein") or args.get("gene") or args.get("gene_symbol") or "").strip().upper()
+    return gene, args, payload
+
+
+def _text_mentions_tool_category(text: str, category: str) -> bool:
+    """Return True when the prose already appears to cover a tool category."""
+    normalized = (text or "").lower()
+    if category == "cptac_expression":
+        return "cptac" in normalized and any(
+            marker in normalized for marker in ("expression", "tumor vs normal", "tumor-vs-normal", "tumor-normal")
+        )
+    if category == "cptac_survival":
+        return "cptac" in normalized and any(
+            marker in normalized for marker in ("survival", "overall survival", "prognos")
+        )
+    if category == "tcga_survival":
+        return "tcga" in normalized and any(
+            marker in normalized for marker in ("survival", "overall survival", "kaplan", "hazard ratio", " hr ")
+        )
+    if category == "cptac_cis":
+        return "cptac" in normalized and any(
+            marker in normalized for marker in ("cis", "correl", "association")
+        )
+    if category == "tcga_cis":
+        return "tcga" in normalized and any(
+            marker in normalized for marker in ("cis", "correl", "association", "rnaseq", "rppa", "methylation", "scna")
+        )
+    marker_sets: Dict[str, tuple[str, ...]] = {
+        "webgestalt": ("webgestalt", "pathway enrichment", "go enrichment"),
+        "funmap": ("funmap", "functional neighborhood", "co-functional", "cofunctional"),
+        "targets": ("drug target", "target status", "linkedOmics targets".lower(), "target index"),
+        "trials": ("clinical trial", "clinical trials", "treatment response", "drug response"),
+        "literature": ("pubmed", "literature", "papers", "publications"),
+        "cptac": ("cptac",),
+        "tcga": ("tcga",),
+    }
+    return any(marker in normalized for marker in marker_sets.get(category, (category,)))
+
+
+def _first_payload_for_tool(raw_results: Dict[str, Any], bare_tool: str) -> tuple[str, Dict[str, Any], Any] | None:
+    """Return the first wrapped payload matching a bare tool name."""
+    for key, wrapped in (raw_results or {}).items():
+        if _bare_tool_name(key) == bare_tool:
+            return _unwrap_tool_payload(wrapped)
+    return None
+
+
+def _build_cptac_expression_sentence(raw_results: Dict[str, Any], query: str) -> str:
+    """Build a deterministic CPTAC expression note when that tool is omitted."""
+    first = _first_payload_for_tool(raw_results, "cancer_gene_expression")
+    if not first:
+        return ""
+    gene, _, payload = first
+    if not isinstance(payload, dict) or payload.get("error"):
+        return ""
+
+    requested_cohorts = [code for code in _extract_cancer_codes(query) if code in _CPTAC_SURVIVAL_COHORTS]
+    gene_label = f"**{gene}**" if gene else "the queried gene"
+
+    def _layer_value(layer_key: str, cohort: str) -> Any:
+        layer = payload.get(layer_key) if isinstance(payload.get(layer_key), dict) else {}
+        data = layer.get("data") if isinstance(layer.get("data"), dict) else {}
+        return data.get(cohort)
+
+    def _format_expression_layer(layer: str, value: Any) -> str:
+        text = str(value or "").strip()
+        normalized = text.lower()
+        p_match = re.search(r"p\s*=\s*([0-9.eE+-]+)", text)
+        p_text = _format_pvalue(p_match.group(1)) if p_match else None
+        if not text or "data unavailable" in normalized:
+            return f"{layer} **unavailable**"
+        if "no significant" in normalized:
+            return f"{layer} **no significant tumor-normal difference**" + (f" (p={p_text})" if p_text else "")
+        if "higher expressed" in normalized or "higher expression" in normalized:
+            return f"{layer} **higher in tumor**" + (f" (p={p_text})" if p_text else "")
+        if "lower expressed" in normalized or "lower expression" in normalized:
+            return f"{layer} **lower in tumor**" + (f" (p={p_text})" if p_text else "")
+        return f"{layer} **{text}**"
+
+    if requested_cohorts:
+        cohort_bits = []
+        for cohort in requested_cohorts[:3]:
+            rna_text = _format_expression_layer("RNA", _layer_value("RNA_level", cohort))
+            protein_text = _format_expression_layer("protein", _layer_value("protein_level", cohort))
+            cohort_bits.append(f"in **{cohort}**, {rna_text} and {protein_text}")
+        return (
+            f"CPTAC tumor-normal expression was also queried for {gene_label}: "
+            + "; ".join(cohort_bits)
+            + "."
+        )
+
+    notable: List[str] = []
+    for cohort in sorted(_CPTAC_SURVIVAL_COHORTS):
+        for layer_label, layer_key in (("RNA", "RNA_level"), ("protein", "protein_level")):
+            text = str(_layer_value(layer_key, cohort) or "")
+            normalized = text.lower()
+            if "significantly" in normalized and "no significant" not in normalized:
+                notable.append(f"{layer_label} in **{cohort}**: **{text}**")
+    if notable:
+        return (
+            f"CPTAC tumor-normal expression was also queried for {gene_label}; notable signals were "
+            + ", ".join(notable[:3])
+            + "."
+        )
+    return (
+        f"CPTAC tumor-normal expression was also queried for {gene_label}, "
+        "but no significant RNA/protein tumor-normal differences were returned."
+    )
+
+
+def _build_tcga_survival_coverage_sentence(gene: str, payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
+    results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    gene_label = f"**{(gene or query.get('gene') or '').upper()}**" if (gene or query.get("gene")) else "the queried gene"
+    cohort = str(query.get("cohort") or "").upper()
+    cohort_text = f" in **{cohort}**" if cohort else ""
+    if payload.get("status") == "error":
+        return f"TCGA survival was also queried for {gene_label}{cohort_text}, but the tool returned an error: {payload.get('message') or payload.get('error') or 'unknown error'}."
+    if not results:
+        return f"TCGA survival was also queried for {gene_label}{cohort_text}, but no survival rows were returned."
+    significant = [
+        row for row in results
+        if _safe_float(row.get("fdr") if row.get("fdr") is not None else row.get("pvalue")) is not None
+        and (_safe_float(row.get("fdr") if row.get("fdr") is not None else row.get("pvalue")) or 1.0) < 0.05
+    ]
+    if significant:
+        first = significant[0]
+        omics = first.get("omics") or query.get("omics") or "omics"
+        pval = _format_pvalue(first.get("fdr") if first.get("fdr") is not None else first.get("pvalue"))
+        hr = _safe_float(first.get("hr"))
+        hr_text = f", HR=**{hr:.4f}**" if hr is not None else ""
+        return f"TCGA survival was also queried for {gene_label}{cohort_text}; **{len(significant)} of {len(results)}** result(s) were significant, led by **{omics}** (p={pval}{hr_text})."
+    return f"TCGA survival was also queried for {gene_label}{cohort_text}; **{len(results)}** result(s) were returned, with no significant association at p<**0.05**."
+
+
+def _build_tcga_cis_coverage_sentence(gene: str, payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
+    results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    gene_label = f"**{(gene or query.get('gene') or '').upper()}**" if (gene or query.get("gene")) else "the queried gene"
+    cohort = str(query.get("cohort") or "").upper()
+    pair = " vs. ".join(
+        str(query.get(k) or "").strip()
+        for k in ("source_omics", "target_omics")
+        if query.get(k)
+    )
+    context = f" for {gene_label}" + (f" in **{cohort}**" if cohort else "") + (f" ({pair})" if pair else "")
+    if payload.get("status") == "error":
+        return f"TCGA cis-association was also queried{context}, but the tool returned an error: {payload.get('message') or payload.get('error') or 'unknown error'}."
+    if not results:
+        return f"TCGA cis-association was also queried{context}, but no association rows were returned."
+    first = results[0]
+    corr = _safe_float(first.get("correlation") or first.get("corr") or first.get("cor"))
+    pval = _format_pvalue(first.get("fdr") if first.get("fdr") is not None else first.get("pvalue"))
+    corr_text = f" with correlation **{corr:.3f}**" if corr is not None else ""
+    return f"TCGA cis-association was also queried{context} and returned **{len(results)}** result(s){corr_text} (p={pval})."
+
+
+def _count_nested_records(value: Any) -> int:
+    """Best-effort count of list-like records inside a payload."""
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        count = 0
+        for nested in value.values():
+            count += _count_nested_records(nested)
+        return count
+    return 0
+
+
+def _build_generic_tool_coverage_note(key: str, wrapped: Any, query: str, raw_results: Dict[str, Any]) -> tuple[str, str] | None:
+    """Return (category, markdown bullet) for a tool result, or None for utility tools."""
+    bare = _bare_tool_name(key)
+    gene, args, payload = _unwrap_tool_payload(wrapped)
+    status = (
+        wrapped.get("_data_status") if isinstance(wrapped, dict) else None
+    ) or _classify_tool_result_payload(key, payload)
+
+    if bare == "resolve_gene_identifier":
+        return None
+
+    if bare == "overall_survival_per_cancer":
+        sentence = _build_cptac_survival_sentence(raw_results, query)
+        return ("cptac_survival", sentence) if sentence else None
+    if bare == "batch_overall_survival_per_cancer":
+        sentence = _build_cptac_batch_sentence(payload, analysis="survival")
+        return ("cptac_survival", sentence) if sentence else None
+    if bare == "cancer_gene_expression":
+        sentence = _build_cptac_expression_sentence(raw_results, query)
+        return ("cptac_expression", sentence) if sentence else None
+    if bare == "batch_cancer_gene_expression":
+        sentence = _build_cptac_batch_sentence(payload, analysis="tumor-normal expression")
+        return ("cptac_expression", sentence) if sentence else None
+    if bare == "tcga_survival_analysis":
+        sentence = _build_tcga_survival_coverage_sentence(gene, payload)
+        return ("tcga_survival", sentence) if sentence else None
+    if bare == "tcga_cis_association_analysis":
+        sentence = _build_tcga_cis_coverage_sentence(gene, payload)
+        return ("tcga_cis", sentence) if sentence else None
+    if bare in {"get_cis_correlations", "batch_get_cis_correlations"}:
+        record_count = _count_nested_records(payload.get("data") if isinstance(payload, dict) else payload)
+        gene_label = f" for **{gene}**" if gene else ""
+        if status == "error" and isinstance(payload, dict):
+            return ("cptac_cis", f"CPTAC cis-correlations were also queried{gene_label}, but the tool returned an error: {payload.get('message') or payload.get('error') or 'unknown error'}.")
+        if record_count:
+            return ("cptac_cis", f"CPTAC cis-correlations were also queried{gene_label} and returned **{record_count}** correlation row(s).")
+        return ("cptac_cis", f"CPTAC cis-correlations were also queried{gene_label}, but no correlation rows were returned.")
+    if bare == "webgestalt":
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(rows, list) and rows:
+            sentence = _build_webgestalt_enrichment_sentence({key: wrapped})
+            return ("webgestalt", sentence) if sentence else None
+        return ("webgestalt", "WebGestalt enrichment was also run, but no enriched terms were returned.")
+    if bare == "funmap_neighborhood":
+        if isinstance(payload, dict):
+            count = len(payload.get("neighborhood") or payload.get("nodes") or [])
+            gene_label = f" for **{gene}**" if gene else ""
+            if count:
+                return ("funmap", f"FunMap was also queried{gene_label} and returned **{count}** functional neighbor(s).")
+        return ("funmap", f"FunMap was also queried{f' for **{gene}**' if gene else ''}, but no functional neighbors were returned.")
+    if bare in {"get_target", "batch_get_target", "search_targets", "rank_targets"}:
+        gene_label = f" for **{gene}**" if gene else ""
+        if status == "ok":
+            return ("targets", f"LinkedOmics Targets was also queried{gene_label} and returned target-index data.")
+        return ("targets", f"LinkedOmics Targets was also queried{gene_label}, but no target-index data was returned.")
+    if bare in {
+        "clinical_trial_information", "batch_clinical_trial_information", "gene_set_trial_information",
+        "get_study_info", "filter_clinical_trials", "meta_analysis_predictive_genes",
+        "meta_analysis_predictive_gene_sets", "get_study_predictive_genes",
+        "get_study_predictive_gene_sets",
+    }:
+        record_count = _count_nested_records(payload)
+        if status == "ok" and record_count:
+            return ("trials", f"LinkedOmics Trials was also queried and returned **{record_count}** treatment-response record(s).")
+        return ("trials", "LinkedOmics Trials was also queried, but no matching treatment-response records were returned.")
+    if bare in {"search_pubmed", "pubmed_search", "search_literature"}:
+        record_count = _count_nested_records(payload)
+        if record_count:
+            return ("literature", f"PubMed literature search was also run and returned **{record_count}** record(s).")
+        return ("literature", "PubMed literature search was also run, but no publication records were returned.")
+
+    return None
+
+
+def _ensure_tool_result_coverage_summary(
+    text: str,
+    raw_results: Dict[str, Any],
+    query: str,
+    *,
+    section: bool = False,
+) -> str:
+    """Append compact notes for called analysis tools omitted from the summary."""
+    if not raw_results:
+        return text
+
+    notes_by_category: Dict[str, str] = {}
+    for key, wrapped in raw_results.items():
+        built = _build_generic_tool_coverage_note(key, wrapped, query, raw_results)
+        if not built:
+            continue
+        category, sentence = built
+        if not sentence or category in notes_by_category:
+            continue
+        if _text_mentions_tool_category(text, category):
+            continue
+        notes_by_category[category] = sentence
+
+    if not notes_by_category:
+        return text
+
+    notes = list(notes_by_category.values())
+    if section:
+        addition = "### Additional Tool Results\n" + "\n".join(f"- {note}" for note in notes)
+    else:
+        addition = "**Additional tool results:**\n" + "\n".join(f"- {note}" for note in notes)
+    stripped = (text or "").strip()
+    return f"{stripped}\n\n{addition}" if stripped else addition
+
+
 _VAGUE_ANALYSIS_RE = re.compile(
     r"\b(analyz|study|investigat|explor|summar|overview|tell me about|what can you tell|show me everything)",
     re.IGNORECASE,
@@ -1988,6 +2573,20 @@ def _is_ambiguous_correlation_query(
         return False
 
     return not any(marker in normalized for marker in _CORRELATION_DISAMBIGUATORS)
+
+
+def _is_ambiguous_cis_dataset_query(
+    query: str,
+    requested_genes: List[str],
+    requested_identifiers: List[str],
+    active_gene: Optional[str] = None,
+) -> bool:
+    """Return True when a cross-omics cis query should query both CPTAC and TCGA."""
+    normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
+    has_gene_context = bool(requested_genes or requested_identifiers)
+    if not has_gene_context and not (active_gene and active_gene != "unknown" and _query_uses_active_gene_reference(query)):
+        return False
+    return _has_dual_cis_association_intent(normalized)
 
 
 def _should_use_planner_for_query(
@@ -2183,7 +2782,7 @@ _AVAILABLE_ANALYSES = (
 
 _VALID_TOOL_SCOPES = (
     "none", "expression", "survival", "tcga_survival", "targets", "trials",
-    "literature", "funmap", "tcga_cis", "correlation", "pathway", "full",
+    "literature", "funmap", "tcga_cis", "cis_dual", "correlation", "pathway", "full",
 )
 
 _PLANNER_PROMPT = """\
@@ -2224,6 +2823,7 @@ conversational questions, platform/capability questions, queries that mention a 
    "trials"      → clinical trials
    "funmap"      → protein interaction network (FunMap)
    "tcga_cis"    → TCGA cis-association analysis
+   "cis_dual"    → both CPTAC cis-correlations and TCGA cis-association
    "full"        → multiple analysis types or unclear — give the agent all tools
 
 Be conservative — most queries should proceed directly (needs_clarification=false).
@@ -2461,11 +3061,13 @@ If neither dataset is likely to have data (e.g. unsupported omics + unsupported 
 
 `tcga_survival_analysis` requires at least TWO of (cohort, gene, omics). Always specify `omics` when doing a pan-cancer query (no cohort): infer from the query ("expression" or unspecified → "RNAseq", "protein" → "RPPA", "methylation" → "Methylation", "miRNA" → "miRNASeq", "copy number" → "SCNA").
 
-CIS ASSOCIATION ROUTING (TCGA):
+CIS ASSOCIATION ROUTING:
+- Treat RNA, mRNA, RNAseq, and RNA-seq as equivalent RNA-layer wording.
+- If the user asks a generic within-gene cross-omics association/correlation question without saying TCGA or CPTAC (e.g. "Is EGFR RNAseq associated with protein in LUAD?"), call BOTH `get_cis_correlations` and `tcga_cis_association_analysis`. Do not ask the user to choose a dataset.
+- Use `get_cis_correlations` when the user explicitly asks for CPTAC cis-correlations. That tool is CPTAC-only.
 - Use `tcga_cis_association_analysis` when the user asks about within-gene cross-omics correlations in TCGA data — e.g. "Is ESR1 methylation associated with its RNA expression?", "Which genes show SCNA-to-RNAseq cis associations in BRCA?", "How does TP53 copy number correlate with protein across TCGA cohorts?"
-- Parameter inference: map "methylation" → source_omics="Methylation", "RNA/expression" → "RNAseq", "protein/RPPA" → "RPPA", "copy number/SCNA" → "SCNA", "miRNA" → "miRNASeq".
+- Parameter inference for TCGA: map "methylation" → source_omics="Methylation", "RNA/expression/RNAseq" → "RNAseq", "protein/RPPA" → "RPPA", "copy number/SCNA" → "SCNA".
 - Mode is inferred automatically from the parameters provided — omit parameters not mentioned by the user.
-- Do NOT use `get_cis_correlations` for TCGA queries; that tool is CPTAC-only.
 
 SPECIAL MODES:
 - If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.
@@ -2693,6 +3295,13 @@ DIRECT RESPONSE RULES:
             "tcga_cis_association": (
                 "WORKFLOW ROUTING: This query maps to TCGA cis-association. Use `tcga_cis_association_analysis`, "
                 "not `get_cis_correlations`.\n"
+            ),
+            "cis_dual_dataset": (
+                "WORKFLOW ROUTING: This generic cross-omics cis query can be answered from both CPTAC and TCGA. "
+                "Use BOTH `get_cis_correlations` (or `batch_get_cis_correlations` for multiple genes) and "
+                "`tcga_cis_association_analysis`; do not ask the user to choose a dataset. Treat RNA, mRNA, "
+                "RNAseq, and RNA-seq as the same RNA layer. For TCGA, map generic protein to `RPPA`; for CPTAC, "
+                "map generic protein to `Protein`.\n"
             ),
             "pathway_enrichment": (
                 "WORKFLOW ROUTING: This is a pathway/enrichment query. Use `webgestalt` only when the user explicitly "
@@ -3122,6 +3731,15 @@ DIRECT RESPONSE RULES:
         )
         keyword_scope = route_decision.tool_scope
         query_plan: Optional[QueryPlan] = None
+        if _is_ambiguous_cis_dataset_query(
+            effective_query,
+            requested_genes,
+            requested_identifiers,
+            effective_active_gene if effective_active_gene != "unknown" else None,
+        ):
+            route_decision = RouteDecision(tool_scope="cis_dual", workflow="cis_dual_dataset")
+            keyword_scope = route_decision.tool_scope
+
         should_use_planner = (
             settings.USE_PLANNER
             and self.llm is not None
@@ -3379,6 +3997,119 @@ DIRECT RESPONSE RULES:
             )
         return updated_results, updated_trace
 
+    async def _ensure_dual_cis_results(
+        self,
+        *,
+        raw_results: Dict[str, Any],
+        execution_trace: List[Dict[str, Any]],
+        final_state: AgentState,
+        query: str,
+        log_prefix: str,
+    ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Backfill CPTAC or TCGA cis results when deterministic routing chose both."""
+        if final_state.get("workflow") != "cis_dual_dataset":
+            return raw_results, execution_trace
+
+        available_tools = self.mcp_aggregator.list_tools()
+        requested_genes = [
+            _normalize_identifier_token(gene)
+            for gene in (final_state.get("requested_genes") or [])
+            if _normalize_identifier_token(gene)
+        ]
+        if not requested_genes:
+            requested_genes = list(_resolved_identifier_map(raw_results).values())
+        gene = next((g for g in requested_genes if g), "")
+        if not gene:
+            return raw_results, execution_trace
+
+        present_tools = {key.rsplit("#", 1)[0] for key in raw_results}
+        cptac_args, tcga_args = _infer_dual_cis_tool_args(query, gene)
+        missing_calls: list[tuple[str, Dict[str, Any]]] = []
+        has_cptac_cis = bool(
+            {
+                "linkedomics::get_cis_correlations",
+                "linkedomics::batch_get_cis_correlations",
+            }
+            & present_tools
+        )
+
+        if (
+            not has_cptac_cis
+            and "linkedomics::get_cis_correlations" in available_tools
+        ):
+            missing_calls.append(("linkedomics::get_cis_correlations", cptac_args))
+
+        if (
+            "linkedomics::tcga_cis_association_analysis" not in present_tools
+            and "linkedomics::tcga_cis_association_analysis" in available_tools
+        ):
+            missing_calls.append(("linkedomics::tcga_cis_association_analysis", tcga_args))
+
+        if not missing_calls:
+            return raw_results, execution_trace
+
+        updated_results = dict(raw_results)
+        call_counts: Dict[str, int] = {}
+        for existing_key in updated_results:
+            base_key, sep, suffix = existing_key.rpartition("#")
+            normalized_key = base_key if sep and suffix.isdigit() else existing_key
+            next_count = int(suffix) + 1 if sep and suffix.isdigit() else 1
+            call_counts[normalized_key] = max(call_counts.get(normalized_key, 0), next_count)
+
+        trace_metrics: List[Dict[str, Any]] = []
+        started = time.perf_counter()
+        for tool_id, args in missing_calls:
+            tool_started = time.perf_counter()
+            try:
+                raw = await self.mcp_aggregator.call_tool(tool_id, args)
+                latency_ms = int((time.perf_counter() - tool_started) * 1000)
+            except Exception as exc:
+                latency_ms = int((time.perf_counter() - tool_started) * 1000)
+                logger.warning("%s Failed to backfill %s: %s", log_prefix, tool_id, exc)
+                raw = {"error": str(exc)}
+
+            if isinstance(raw, dict):
+                result_dict = raw
+            elif isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    result_dict = parsed if isinstance(parsed, dict) else {"raw": parsed}
+                except Exception:
+                    result_dict = {"raw": raw}
+            else:
+                result_dict = {"raw": raw}
+
+            data_status = _classify_tool_result_payload(tool_id.replace("::", "__"), result_dict)
+            count = call_counts.get(tool_id, 0)
+            unique_key = f"{tool_id}#{count}"
+            call_counts[tool_id] = count + 1
+            updated_results[unique_key] = {
+                "_gene": gene,
+                "_args": args,
+                "_result": result_dict,
+                "_data_status": data_status,
+            }
+            trace_metrics.append(
+                {
+                    "tool": tool_id,
+                    "latency_ms": latency_ms,
+                    "status": data_status,
+                }
+            )
+
+        updated_trace = list(execution_trace)
+        if trace_metrics:
+            updated_trace.append(
+                {
+                    "node": "tools",
+                    "step": final_state.get("steps", 0),
+                    "latency_ms": int((time.perf_counter() - started) * 1000),
+                    "tool_calls": trace_metrics,
+                    "backfilled": True,
+                }
+            )
+        return updated_results, updated_trace
+
     async def _build_response_from_final_state(
         self,
         *,
@@ -3406,6 +4137,13 @@ DIRECT RESPONSE RULES:
             original_query=query,
         )
         raw_results, execution_trace = await self._ensure_dual_survival_results(
+            raw_results=raw_results,
+            execution_trace=execution_trace,
+            final_state=final_state,
+            query=effective_query,
+            log_prefix=log_prefix,
+        )
+        raw_results, execution_trace = await self._ensure_dual_cis_results(
             raw_results=raw_results,
             execution_trace=execution_trace,
             final_state=final_state,
@@ -3477,6 +4215,7 @@ DIRECT RESPONSE RULES:
         display_summary = _normalize_duplicate_markdown_headings(display_summary)
         rich_message = _ensure_webgestalt_enrichment_summary(rich_message, raw_results_final, section=True)
         display_summary = _ensure_webgestalt_enrichment_summary(display_summary, raw_results_final)
+        display_summary = _ensure_tool_result_coverage_summary(display_summary, raw_results_final, effective_query)
         if include_stream_metadata:
             clarification_options = clarification_options_from_llm
             rich_message = _inlineize_source_blockquotes(rich_message)

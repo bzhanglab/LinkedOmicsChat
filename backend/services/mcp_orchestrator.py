@@ -3011,6 +3011,8 @@ Classify this query. Return JSON only."""
 
         for tool_id, raw in (results or {}).items():
             bare_tool_id = tool_id.split('#')[0] if '#' in tool_id else tool_id
+            if bare_tool_id.endswith("resolve_gene_identifier"):
+                continue
             if bare_tool_id.endswith("tcga_survival_analysis"):
                 wrapped_gene, payload = _parsed_payload(raw)
                 if isinstance(payload, dict):
@@ -3143,6 +3145,7 @@ Rules:
   - Do NOT offer unsupported workflows such as ranked co-expressed genes within a specific cohort unless the tool outputs explicitly support that exact capability.
 - Never add a next-step offer when the findings are weak, absent, mixed without a clear direction, or already fully answer the user's request.
 - Use ONLY the provided tool results.
+- TOOL COVERAGE: Every non-utility analysis tool present in the tool results must be represented in the summary. If a tool returned no significant results, N/A, unavailable data, or an error, mention that briefly instead of silently omitting it.
 - If the results include explicit guidance such as `ranking_basis`, `display_basis`, `top_hits_by_abs_correlation_fdr_lt_0_5`, `top_genes_by_fdr_lt_0_05`, `top_studies_by_abs_fdr`, or `reported_top_items`, treat those as authoritative instead of inferring order from raw list position.
 - Be precise with biological terminology.
 - DO NOT state your identity or use phrases like 'As a Senior Analyst'.
@@ -3206,6 +3209,7 @@ Hard requirements:
 - Do not leave any markdown, parenthesis, or statistic unfinished.
 - Use **bold** for every gene name, cancer type/cohort, and key statistic.
 - If the query compares multiple genes, mention each compared gene explicitly.
+- Represent every non-utility analysis tool result, including not-significant, N/A, unavailable, or error outcomes.
 - Output markdown only. No headings, no JSON, no code fences.
 """
             retry_summary = await _generate_summary(retry_prompt)
