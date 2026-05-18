@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useRef, useMemo } from "react"
+import { useState, useRef, useMemo, useEffect } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { chatAPI, type ChatResponse, type AnyVisualization } from "@/lib/api"
+import { chatAPI, INLINE_SOURCE_MAP, type ChatResponse, type AnyVisualization, type GoldenQueryCase } from "@/lib/api"
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
@@ -12,254 +12,10 @@ import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
 import { TCGACisResultsTable } from "@/components/TCGACisResultsTable"
 
 // ---------------------------------------------------------------------------
-// Golden query test cases (mirrored from backend/examples/langgraph_golden_queries.json)
+// Golden query test cases are loaded from backend/examples/langgraph_golden_queries.json.
 // ---------------------------------------------------------------------------
-interface GoldenCase {
-    id: string
-    session_key?: string
-    query: string
-    expected_tools_all?: string[]
-    forbidden_tools?: string[]
-    expect_no_tools?: boolean
-    expect_general_knowledge?: boolean
-    notes?: string
-}
 
-const CASES: GoldenCase[] = [
-    { id: "greeting_no_tools", query: "hello", expect_no_tools: true, notes: "Basic greeting should be answered directly." },
-    { id: "platform_scope_no_tools", query: "What can you analyze?", expect_no_tools: true, notes: "Should answer from the available-data prompt section without forcing tool calls." },
-    { id: "expression_luad", query: "How is EGFR expressed tumor vs normal in LUAD?", expected_tools_all: ["linkedomics::cancer_gene_expression"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::tcga_survival_analysis"] },
-    { id: "survival_dual_dataset", query: "Show TP53 overall survival in BRCA.", expected_tools_all: ["linkedomics::overall_survival_per_cancer", "linkedomics::tcga_survival_analysis"], forbidden_tools: ["linkedomics::clinical_trial_information"] },
-    { id: "survival_tcga_only_methylation", query: "Show TP53 methylation survival in BRCA from TCGA.", expected_tools_all: ["linkedomics::tcga_survival_analysis"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"] },
-    { id: "identifier_resolution_survival", query: "Show overall survival for ENSG00000141510 in BRCA.", expected_tools_all: ["gene_utils::resolve_gene_identifier"], notes: "Identifier should be resolved before downstream analysis." },
-    { id: "literature_search", query: "Find recent papers on ESR1 and breast cancer survival.", expected_tools_all: ["literature::search_pubmed"], forbidden_tools: ["linkedomics::clinical_trial_information"] },
-    { id: "out_of_scope_structure", query: "What is the 3D structure of TP53?", expect_no_tools: true, notes: "Should stay within scope handling rather than fabricating a relevant data tool." },
-    { id: "general_knowledge_shortcut", query: "Answer using general knowledge: what is the 3D structure of TP53?", expect_no_tools: true, expect_general_knowledge: true, notes: "Shortcut mode should bypass tools and mark the response as general knowledge." },
-    { id: "drug_target_single_gene", query: "Is EGFR a validated oncology target?", expected_tools_all: ["linkedomics::get_target"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"] },
-    { id: "drug_target_keyword_not_trials", query: "Is BRCA1 a drug target?", expected_tools_all: ["linkedomics::get_target"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::meta_analysis_predictive_genes", "linkedomics::overall_survival_per_cancer"], notes: '"drug target" should route to targets scope, not trials scope despite containing "drug".' },
-    { id: "targets_druggable_keyword", query: "Is TP53 druggable?", expected_tools_all: ["linkedomics::get_target"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer"] },
-    { id: "targets_rank_attractive", query: "What are the most attractive therapeutic targets for cancer?", expected_tools_all: ["linkedomics::rank_targets"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer", "linkedomics::cancer_gene_expression"] },
-    { id: "targets_search_tier_family", query: "Which kinases are FDA-approved oncology targets?", expected_tools_all: ["linkedomics::search_targets"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer"], notes: '"oncology target" keyword should route to targets scope; search_targets handles tier+family filtering.' },
-    { id: "targets_search_antigen", query: "Which genes are tumor-associated antigens in T1 tier?", expected_tools_all: ["linkedomics::search_targets"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::cancer_gene_expression"], notes: '"tumor antigen" keyword should route to targets scope.' },
-    { id: "clinical_trial_single_gene", query: "Which drugs are patients likely to be resistant to if they have high EGFR expression?", expected_tools_all: ["linkedomics::clinical_trial_information"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::cancer_gene_expression"] },
-    { id: "trials_batch_multi_gene", query: "Which drugs do ESR1 and ERBB2 predict resistance to?", expected_tools_all: ["linkedomics::batch_clinical_trial_information"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::cancer_gene_expression"], notes: "Multiple genes should trigger the batch variant." },
-    { id: "trials_gene_set", query: "Does the HALLMARK_ESTROGEN_RESPONSE pathway predict tamoxifen sensitivity?", expected_tools_all: ["linkedomics::gene_set_trial_information"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer"], notes: "Pathway/gene-set trial query should use gene_set_trial_information, not the per-gene tool." },
-    { id: "trials_filter_drug_cancer", query: "Which studies tested nivolumab in melanoma?", expected_tools_all: ["linkedomics::filter_clinical_trials"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer"], notes: "Study discovery by drug + cancer should use filter_clinical_trials." },
-    { id: "trials_meta_analysis_genes", query: "Which genes best predict paclitaxel response in breast cancer?", expected_tools_all: ["linkedomics::meta_analysis_predictive_genes"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::cancer_gene_expression", "linkedomics::overall_survival_per_cancer"], notes: "Cross-study biomarker discovery should use meta_analysis_predictive_genes." },
-    { id: "trials_meta_analysis_gene_sets", query: "What pathways predict platinum resistance in ovarian cancer?", expected_tools_all: ["linkedomics::meta_analysis_predictive_gene_sets"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::webgestalt", "linkedomics::overall_survival_per_cancer"], notes: "Pathway-level cross-study biomarker discovery should use meta_analysis_predictive_gene_sets." },
-    { id: "trials_meta_analysis_genes_ici_only", query: "What genes best predict immune checkpoint inhibitor response?", expected_tools_all: ["linkedomics::meta_analysis_predictive_genes"], forbidden_tools: ["linkedomics::meta_analysis_predictive_gene_sets", "linkedomics::webgestalt", "linkedomics::clinical_trial_information"], notes: "ICI biomarker queries that ask for genes should stay gene-level only and must not add pathway analysis." },
-    { id: "trials_meta_analysis_genes_antibody_category", query: "What genes best predict antibody treatment response?", expected_tools_all: ["linkedomics::meta_analysis_predictive_genes"], forbidden_tools: ["linkedomics::meta_analysis_predictive_gene_sets", "linkedomics::clinical_trial_information", "linkedomics::webgestalt"], notes: "Nested treatment classes such as antibody should still route to gene-level trial meta-analysis when the user asks for genes." },
-    { id: "trials_study_info_followup_anchor", session_key: "trials_study_info", query: "Which drugs are patients likely to be resistant to if they have high ESR1 expression?", expected_tools_all: ["linkedomics::clinical_trial_information"] },
-    { id: "trials_study_info_followup", session_key: "trials_study_info", query: "Tell me more about the first study in those results.", expected_tools_all: ["linkedomics::get_study_info"], forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer"], notes: "Follow-up asking for study details should call get_study_info with the series ID from the prior turn." },
-    { id: "funmap_single_gene", query: "Find functional neighbors of TP53 in the FunMap network.", expected_tools_all: ["linkedomics::funmap_neighborhood"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information", "linkedomics::cancer_gene_expression"] },
-    { id: "funmap_network_keyword", query: "What genes are functionally connected to BRCA1?", expected_tools_all: ["linkedomics::funmap_neighborhood"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"] },
-    { id: "correlation_cis_methylation", query: "Show cis-correlations for BRCA1 across CPTAC cohorts.", expected_tools_all: ["linkedomics::get_cis_correlations"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"], notes: "Cis-regulatory question: methylation → expression, should use get_cis_correlations." },
-    { id: "correlation_cis_explicit", query: "Show cis-correlations for MYC.", expected_tools_all: ["linkedomics::get_cis_correlations"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::cancer_gene_expression"] },
-    { id: "pathway_enrichment_genelist", query: "Run pathway enrichment analysis on TP53, MDM2, CDKN1A, ATM, and BRCA1.", expected_tools_all: ["linkedomics::webgestalt"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"] },
-    { id: "pathway_enrichment_explicit", query: "What pathways are enriched in this gene set: EGFR, MET, ERBB2, ALK, RET?", expected_tools_all: ["linkedomics::webgestalt"], forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::cancer_gene_expression"] },
-    { id: "followup_anchor_survival", session_key: "tp53_followup", query: "Show TP53 overall survival in BRCA.", expected_tools_all: ["linkedomics::overall_survival_per_cancer", "linkedomics::tcga_survival_analysis"] },
-    { id: "followup_pronoun_tcga", session_key: "tp53_followup", query: "What about methylation in TCGA?", expected_tools_all: ["linkedomics::tcga_survival_analysis"], forbidden_tools: ["linkedomics::overall_survival_per_cancer"], notes: "Should reuse active-gene context from the previous turn." },
-
-    // ── 2-tool cases ────────────────────────────────────────────────────────
-
-    {
-        id: "expression_and_target",
-        query: "Is EGFR overexpressed in lung cancer and is it a validated drug target?",
-        expected_tools_all: ["linkedomics::cancer_gene_expression", "linkedomics::get_target"],
-        forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::overall_survival_per_cancer"],
-        notes: "Expression + druggability check — two independent lookups for one gene.",
-    },
-    {
-        id: "expression_and_funmap",
-        query: "Show BRCA1 expression in breast cancer and find its functional network neighbors in FunMap.",
-        expected_tools_all: ["linkedomics::cancer_gene_expression", "linkedomics::funmap_neighborhood"],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Expression + network neighborhood — common two-part gene profile.",
-    },
-    {
-        id: "cis_and_enrichment",
-        query: "Find the top cis-correlated genes for MYC and run pathway enrichment on them.",
-        expected_tools_all: ["linkedomics::get_cis_correlations", "linkedomics::webgestalt"],
-        forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"],
-        notes: "Correlation discovery followed by enrichment — natural two-step workflow.",
-    },
-    {
-        id: "survival_and_literature",
-        query: "What is the survival impact of KRAS in pancreatic cancer and what does recent literature say about it?",
-        expected_tools_all: ["linkedomics::overall_survival_per_cancer", "literature::search_pubmed"],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Survival data + PubMed literature — data-backed then literature context.",
-    },
-
-    // ── 3-tool cases ────────────────────────────────────────────────────────
-
-    {
-        id: "expression_survival_target_erbb2",
-        query: "Analyze ERBB2 in breast cancer: show tumor vs normal expression, overall survival impact, and whether it is a drug target.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::get_target",
-        ],
-        forbidden_tools: ["linkedomics::clinical_trial_information", "linkedomics::tcga_survival_analysis"],
-        notes: "Classic three-part gene profile: expression + prognosis + druggability.",
-    },
-    {
-        id: "expression_tcga_survival_literature",
-        query: "For PIK3CA in breast cancer: show tumor vs normal expression, TCGA methylation survival, and find recent papers on PIK3CA and breast cancer.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::tcga_survival_analysis",
-            "literature::search_pubmed",
-        ],
-        forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"],
-        notes: "Expression + epigenetic survival + literature — three independent knowledge sources.",
-    },
-    {
-        id: "funmap_enrichment_target",
-        query: "Find functional neighbors of PTEN in FunMap, run pathway enrichment on those neighbors, and tell me if PTEN is a druggable target.",
-        expected_tools_all: [
-            "linkedomics::funmap_neighborhood",
-            "linkedomics::webgestalt",
-            "linkedomics::get_target",
-        ],
-        forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"],
-        notes: "Network → enrichment → druggability: a three-step analytical chain.",
-    },
-    {
-        id: "expression_cis_survival",
-        query: "Profile BRCA1: show tumor vs normal expression in breast cancer, cis-correlations across CPTAC cohorts, and overall survival.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::get_cis_correlations",
-            "linkedomics::overall_survival_per_cancer",
-        ],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Expression + regulatory landscape + prognosis — three complementary omics views.",
-    },
-
-    // ── 4-tool cases ────────────────────────────────────────────────────────
-
-    {
-        id: "egfr_expression_dual_survival_target",
-        query: "Give me a complete EGFR profile in LUAD: tumor vs normal expression, overall survival, TCGA methylation survival, and drug target information.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::tcga_survival_analysis",
-            "linkedomics::get_target",
-        ],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Four-part profile: expression + two survival datasets + druggability.",
-    },
-    {
-        id: "kras_expression_funmap_enrichment_target",
-        query: "Analyze KRAS in colorectal cancer: tumor vs normal expression, its functional neighbors in FunMap, pathway enrichment of those neighbors, and whether KRAS is druggable.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::funmap_neighborhood",
-            "linkedomics::webgestalt",
-            "linkedomics::get_target",
-        ],
-        forbidden_tools: ["linkedomics::overall_survival_per_cancer", "linkedomics::clinical_trial_information"],
-        notes: "Expression → network → enrichment → druggability: four-step chain for an oncogene.",
-    },
-    {
-        id: "expression_survival_cis_literature",
-        query: "Profile MYC: show tumor vs normal expression, overall survival in LUAD, cis-correlations, and find recent literature on MYC in lung cancer.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::get_cis_correlations",
-            "literature::search_pubmed",
-        ],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Four data sources covering omics, prognosis, regulation, and literature.",
-    },
-    {
-        id: "vhl_expression_survival_trials_target",
-        query: "For VHL in kidney cancer: show expression, overall survival, drug resistance associations from clinical trials, and whether VHL is a drug target.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::clinical_trial_information",
-            "linkedomics::get_target",
-        ],
-        forbidden_tools: ["linkedomics::tcga_survival_analysis"],
-        notes: "Tumor suppressor four-part profile combining expression, survival, trials, and target status.",
-    },
-
-    // ── 5-tool cases ────────────────────────────────────────────────────────
-
-    {
-        id: "tp53_five_tool_comprehensive",
-        query: "Give me a comprehensive TP53 analysis: tumor vs normal expression, overall survival in BRCA, TCGA methylation survival, drug target status, and functional network neighbors in FunMap.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::tcga_survival_analysis",
-            "linkedomics::get_target",
-            "linkedomics::funmap_neighborhood",
-        ],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Five independent analysis dimensions for TP53 — expression, dual survival, target, network.",
-    },
-    {
-        id: "egfr_five_tool_oncology_report",
-        query: "Full EGFR oncology report for LUAD: tumor vs normal expression, overall survival, drug resistance associations from clinical trials, drug target info, and recent PubMed literature.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::clinical_trial_information",
-            "linkedomics::get_target",
-            "literature::search_pubmed",
-        ],
-        forbidden_tools: ["linkedomics::tcga_survival_analysis"],
-        notes: "Five-tool clinical actionability report: omics, prognosis, trials, targets, literature.",
-    },
-    {
-        id: "identifier_then_five_tools",
-        query: "Analyze ENSG00000141510 comprehensively: resolve the identifier, show tumor vs normal expression, overall survival in BRCA, TCGA methylation survival, and drug target status.",
-        expected_tools_all: [
-            "gene_utils::resolve_gene_identifier",
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::tcga_survival_analysis",
-            "linkedomics::get_target",
-        ],
-        notes: "Identifier resolution as first step, then four-part TP53 profile.",
-    },
-
-    // ── 6-tool cases ────────────────────────────────────────────────────────
-
-    {
-        id: "brca1_six_tool_full_profile",
-        query: "Complete BRCA1 profile: tumor vs normal expression in breast cancer, overall survival, cis-correlations across CPTAC, pathway enrichment of top cis-correlated genes, drug target status, and recent literature.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::get_cis_correlations",
-            "linkedomics::webgestalt",
-            "linkedomics::get_target",
-            "literature::search_pubmed",
-        ],
-        forbidden_tools: ["linkedomics::clinical_trial_information"],
-        notes: "Six-tool deep dive: expression, survival, regulatory correlations, enrichment, druggability, literature.",
-    },
-    {
-        id: "erbb2_six_tool_clinical_deep_dive",
-        query: "Deep clinical analysis of ERBB2: tumor vs normal expression, overall survival in BRCA, TCGA methylation survival, drug resistance from clinical trials, drug target details, and recent PubMed papers.",
-        expected_tools_all: [
-            "linkedomics::cancer_gene_expression",
-            "linkedomics::overall_survival_per_cancer",
-            "linkedomics::tcga_survival_analysis",
-            "linkedomics::clinical_trial_information",
-            "linkedomics::get_target",
-            "literature::search_pubmed",
-        ],
-        notes: "Six-tool clinical deep dive covering the full translational pipeline for ERBB2/HER2.",
-    },
-]
+type GoldenCase = GoldenQueryCase
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -353,20 +109,20 @@ function ResponseRenderer({ text, vizs }: { text: string; vizs: AnyVisualization
                 if (part.type === "plot") {
                     const viz = vizMap[part.value]
                     if (!viz) return null
-                    if (viz.type === "static_plot") return <StaticPlot key={i} visualization={viz} />
-                    if (viz.type === "drug_target_grid") return <DrugTargetGrid key={i} visualization={viz} />
-                    if (viz.type === "target_search_table") return <TargetSearchTable key={i} visualization={viz} />
+                    if (viz.type === "static_plot") return <StaticPlot key={viz.id} visualization={viz} />
+                    if (viz.type === "drug_target_grid") return <DrugTargetGrid key={viz.id} visualization={viz} />
+                    if (viz.type === "target_search_table") return <TargetSearchTable key={viz.id} visualization={viz} />
                     return null
                 }
                 if (part.type === "network") {
                     const viz = vizMap[part.value]
-                    return viz?.type === "network_plot" ? <NetworkPlot key={i} visualization={viz} /> : null
+                    return viz?.type === "network_plot" ? <NetworkPlot key={viz.id} visualization={viz} /> : null
                 }
                 if (part.type === "table") {
                     const viz = vizMap[part.value]
                     if (!viz) return null
-                    if (viz.type === "predictive_results_table") return <PredictiveResultsTable key={i} visualization={viz} />
-                    if (viz.type === "tcga_cis_results_table") return <TCGACisResultsTable key={i} visualization={viz} />
+                    if (viz.type === "predictive_results_table") return <PredictiveResultsTable key={viz.id} visualization={viz} />
+                    if (viz.type === "tcga_cis_results_table") return <TCGACisResultsTable key={viz.id} visualization={viz} />
                     return null
                 }
                 return (
@@ -381,7 +137,12 @@ function ResponseRenderer({ text, vizs }: { text: string; vizs: AnyVisualization
                             h3: ({ children }) => <h3 className="text-sm font-semibold mt-2 mb-1">{children}</h3>,
                             strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
                             code: ({ children }) => <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
-                            a: ({ href, children }) => <a href={href} className="text-blue-600 underline" target="_blank" rel="noreferrer">{children}</a>,
+                            a: ({ href, children }) => {
+                                const sourceKey = href?.startsWith("#source:") ? href.replace("#source:", "") : null
+                                const source = sourceKey ? INLINE_SOURCE_MAP[sourceKey] : undefined
+                                const label = source?.label ?? children
+                                return <a href={source?.url ?? href} className="text-blue-600 underline" target="_blank" rel="noreferrer">{label}</a>
+                            },
                         }}
                     >
                         {part.value}
@@ -390,24 +151,24 @@ function ResponseRenderer({ text, vizs }: { text: string; vizs: AnyVisualization
             })}
 
             {/* Render any visualizations that were NOT inlined via markers */}
-            {vizs
-                .filter((v) => {
-                    const inlined = new Set([
-                        ...(text.match(/\[PLOT:([^\]]+)\]/g)?.map((m) => m.slice(6, -1)) ?? []),
-                        ...(text.match(/\[NETWORK:([^\]]+)\]/g)?.map((m) => m.slice(9, -1)) ?? []),
-                        ...(text.match(/\[TABLE:([^\]]+)\]/g)?.map((m) => m.slice(7, -1)) ?? []),
-                    ])
-                    return !inlined.has(v.id)
-                })
-                .map((v, i) => {
-                    if (v.type === "static_plot") return <StaticPlot key={i} visualization={v} />
-                    if (v.type === "network_plot") return <NetworkPlot key={i} visualization={v} />
-                    if (v.type === "drug_target_grid") return <DrugTargetGrid key={i} visualization={v} />
-                    if (v.type === "target_search_table") return <TargetSearchTable key={i} visualization={v} />
-                    if (v.type === "predictive_results_table") return <PredictiveResultsTable key={i} visualization={v} />
-                    if (v.type === "tcga_cis_results_table") return <TCGACisResultsTable key={i} visualization={v} />
+            {(() => {
+                const inlined = new Set([
+                    ...(text.match(/\[PLOT:([^\]]+)\]/g)?.map((m) => m.slice(6, -1)) ?? []),
+                    ...(text.match(/\[NETWORK:([^\]]+)\]/g)?.map((m) => m.slice(9, -1)) ?? []),
+                    ...(text.match(/\[TABLE:([^\]]+)\]/g)?.map((m) => m.slice(7, -1)) ?? []),
+                ])
+                const remaining = vizs.filter((v) => !inlined.has(v.id))
+                return remaining.map((v) => {
+                    // Use stable viz.id as key so StaticPlot is not remounted on re-render
+                    if (v.type === "static_plot") return <StaticPlot key={v.id} visualization={v} />
+                    if (v.type === "network_plot") return <NetworkPlot key={v.id} visualization={v} />
+                    if (v.type === "drug_target_grid") return <DrugTargetGrid key={v.id} visualization={v} />
+                    if (v.type === "target_search_table") return <TargetSearchTable key={v.id} visualization={v} />
+                    if (v.type === "predictive_results_table") return <PredictiveResultsTable key={v.id} visualization={v} />
+                    if (v.type === "tcga_cis_results_table") return <TCGACisResultsTable key={v.id} visualization={v} />
                     return null
-                })}
+                })
+            })()}
         </div>
     )
 }
@@ -432,9 +193,31 @@ interface RunResult {
 // ---------------------------------------------------------------------------
 
 export default function GoldenQueriesPage() {
+    const [cases, setCases] = useState<GoldenCase[]>([])
+    const [casesStatus, setCasesStatus] = useState<"loading" | "ready" | "error">("loading")
+    const [casesError, setCasesError] = useState<string | null>(null)
     const [results, setResults] = useState<Record<string, RunResult>>({})
     const [selected, setSelected] = useState<string | null>(null)
     const sessionIds = useRef<Record<string, string>>({})
+
+    useEffect(() => {
+        let cancelled = false
+        setCasesStatus("loading")
+        chatAPI.getGoldenQueries()
+            .then((payload) => {
+                if (cancelled) return
+                setCases(payload.cases ?? [])
+                setCasesError(null)
+                setCasesStatus("ready")
+            })
+            .catch((err: unknown) => {
+                if (cancelled) return
+                setCases([])
+                setCasesError(err instanceof Error ? err.message : String(err))
+                setCasesStatus("error")
+            })
+        return () => { cancelled = true }
+    }, [])
 
     function updateResult(id: string, patch: Partial<RunResult>) {
         setResults((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }))
@@ -461,12 +244,12 @@ export default function GoldenQueriesPage() {
         }
     }
 
-    const selectedCase = CASES.find((c) => c.id === selected)
+    const selectedCase = cases.find((c) => c.id === selected)
     const selectedResult = selected ? results[selected] : undefined
 
     function sessionLabel(gc: GoldenCase): string | null {
         if (!gc.session_key) return null
-        const siblings = CASES.filter((c) => c.session_key === gc.session_key)
+        const siblings = cases.filter((c) => c.session_key === gc.session_key)
         return `Turn ${siblings.findIndex((c) => c.id === gc.id) + 1}/${siblings.length}`
     }
 
@@ -479,11 +262,18 @@ export default function GoldenQueriesPage() {
             <div className="w-[360px] flex-shrink-0 border-r border-gray-200 flex flex-col">
                 <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
                     <h1 className="text-sm font-semibold text-gray-800">Golden Query Tester</h1>
-                    <p className="text-xs text-gray-500 mt-0.5">{CASES.length} cases · click to run</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                        {casesStatus === "loading" ? "Loading cases…" : `${cases.length} cases · loaded from JSON`}
+                    </p>
                 </div>
 
                 <div className="overflow-y-auto flex-1">
-                    {CASES.map((gc) => {
+                    {casesStatus === "error" && (
+                        <div className="px-4 py-3 text-xs text-red-600">
+                            Could not load golden queries: {casesError}
+                        </div>
+                    )}
+                    {cases.map((gc) => {
                         const r = results[gc.id]
                         const isSelected = selected === gc.id
                         const lbl = sessionLabel(gc)
@@ -526,7 +316,15 @@ export default function GoldenQueriesPage() {
 
             {/* ── Right panel ── */}
             <div className="flex-1 overflow-y-auto p-6 bg-white">
-                {!selectedCase ? (
+                {casesStatus === "loading" ? (
+                    <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                        Loading golden queries…
+                    </div>
+                ) : casesStatus === "error" ? (
+                    <div className="flex items-center justify-center h-full text-red-500 text-sm">
+                        Could not load golden queries: {casesError}
+                    </div>
+                ) : !selectedCase ? (
                     <div className="flex items-center justify-center h-full text-gray-400 text-sm">
                         Select a case on the left to run it.
                     </div>
@@ -610,7 +408,7 @@ export default function GoldenQueriesPage() {
 
                         {/* Response */}
                         {responseText && (
-                            <Section title="Response">
+                            <Section title={`Response${vizs.length > 0 ? ` · ${vizs.length} visualization${vizs.length > 1 ? "s" : ""}` : ""}`}>
                                 <div className="w-full">
                                     <ResponseRenderer text={responseText} vizs={vizs} />
                                 </div>

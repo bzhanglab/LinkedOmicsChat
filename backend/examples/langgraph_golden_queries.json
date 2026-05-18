@@ -356,6 +356,240 @@
         "linkedomics::overall_survival_per_cancer"
       ],
       "notes": "Should reuse active-gene context from the previous turn."
+    },
+    {
+      "id": "expression_and_target",
+      "query": "Is EGFR overexpressed in lung cancer and is it a validated drug target?",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "notes": "Expression + druggability check — two independent lookups for one gene."
+    },
+    {
+      "id": "expression_and_funmap",
+      "query": "Show BRCA1 expression in breast cancer and find its functional network neighbors in FunMap.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::funmap_neighborhood"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Expression + network neighborhood — common two-part gene profile."
+    },
+    {
+      "id": "cis_and_enrichment",
+      "query": "Find the top cis-correlated genes for MYC and run pathway enrichment on them.",
+      "expected_tools_all": [
+        "linkedomics::get_cis_correlations",
+        "linkedomics::webgestalt"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Correlation discovery followed by enrichment — natural two-step workflow."
+    },
+    {
+      "id": "survival_and_literature",
+      "query": "What is the survival impact of KRAS in pancreatic cancer and what does recent literature say about it?",
+      "expected_tools_all": [
+        "linkedomics::overall_survival_per_cancer",
+        "literature::search_pubmed"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Survival data + PubMed literature — data-backed then literature context."
+    },
+    {
+      "id": "expression_survival_target_erbb2",
+      "query": "Analyze ERBB2 in breast cancer: show tumor vs normal expression, overall survival impact, and whether it is a drug target.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information",
+        "linkedomics::tcga_survival_analysis"
+      ],
+      "notes": "Classic three-part gene profile: expression + prognosis + druggability."
+    },
+    {
+      "id": "expression_tcga_survival_literature",
+      "query": "For PIK3CA in breast cancer: show tumor vs normal expression, TCGA methylation survival, and find recent papers on PIK3CA and breast cancer.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::tcga_survival_analysis",
+        "literature::search_pubmed"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Expression + epigenetic survival + literature — three independent knowledge sources."
+    },
+    {
+      "id": "funmap_enrichment_target",
+      "query": "Find functional neighbors of PTEN in FunMap, run pathway enrichment on those neighbors, and tell me if PTEN is a druggable target.",
+      "expected_tools_all": [
+        "linkedomics::funmap_neighborhood",
+        "linkedomics::webgestalt",
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Network → enrichment → druggability: a three-step analytical chain."
+    },
+    {
+      "id": "expression_cis_survival",
+      "query": "Profile BRCA1: show tumor vs normal expression in breast cancer, cis-correlations across CPTAC cohorts, and overall survival.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::get_cis_correlations",
+        "linkedomics::overall_survival_per_cancer"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Expression + regulatory landscape + prognosis — three complementary omics views."
+    },
+    {
+      "id": "egfr_expression_dual_survival_target",
+      "query": "Give me a complete EGFR profile in LUAD: tumor vs normal expression, overall survival, TCGA methylation survival, and drug target information.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis",
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Four-part profile: expression + two survival datasets + druggability."
+    },
+    {
+      "id": "kras_expression_funmap_enrichment_target",
+      "query": "Analyze KRAS in colorectal cancer: tumor vs normal expression, its functional neighbors in FunMap, pathway enrichment of those neighbors, and whether KRAS is druggable.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::funmap_neighborhood",
+        "linkedomics::webgestalt",
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Expression → network → enrichment → druggability: four-step chain for an oncogene."
+    },
+    {
+      "id": "expression_survival_cis_literature",
+      "query": "Profile MYC: show tumor vs normal expression, overall survival in LUAD, cis-correlations, and find recent literature on MYC in lung cancer.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::get_cis_correlations",
+        "literature::search_pubmed"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Four data sources covering omics, prognosis, regulation, and literature."
+    },
+    {
+      "id": "vhl_expression_survival_trials_target",
+      "query": "For VHL in kidney cancer: show expression, overall survival, drug resistance associations from clinical trials, and whether VHL is a drug target.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information",
+        "linkedomics::get_target"
+      ],
+      "forbidden_tools": [
+        "linkedomics::tcga_survival_analysis"
+      ],
+      "notes": "Tumor suppressor four-part profile combining expression, survival, trials, and target status."
+    },
+    {
+      "id": "tp53_five_tool_comprehensive",
+      "query": "Give me a comprehensive TP53 analysis: tumor vs normal expression, overall survival in BRCA, TCGA methylation survival, drug target status, and functional network neighbors in FunMap.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis",
+        "linkedomics::get_target",
+        "linkedomics::funmap_neighborhood"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Five independent analysis dimensions for TP53 — expression, dual survival, target, network."
+    },
+    {
+      "id": "egfr_five_tool_oncology_report",
+      "query": "Full EGFR oncology report for LUAD: tumor vs normal expression, overall survival, drug resistance associations from clinical trials, drug target info, and recent PubMed literature.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::clinical_trial_information",
+        "linkedomics::get_target",
+        "literature::search_pubmed"
+      ],
+      "forbidden_tools": [
+        "linkedomics::tcga_survival_analysis"
+      ],
+      "notes": "Five-tool clinical actionability report: omics, prognosis, trials, targets, literature."
+    },
+    {
+      "id": "identifier_then_five_tools",
+      "query": "Analyze ENSG00000141510 comprehensively: resolve the identifier, show tumor vs normal expression, overall survival in BRCA, TCGA methylation survival, and drug target status.",
+      "expected_tools_all": [
+        "gene_utils::resolve_gene_identifier",
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis",
+        "linkedomics::get_target"
+      ],
+      "notes": "Identifier resolution as first step, then four-part TP53 profile."
+    },
+    {
+      "id": "brca1_seven_tool_full_profile",
+      "query": "Complete BRCA1 profile: tumor vs normal expression in breast cancer, overall survival, CPTAC cis multi-omics correlations, FunMap functional neighbors, pathway enrichment of those neighbors, drug target status, and recent literature.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::get_cis_correlations",
+        "linkedomics::funmap_neighborhood",
+        "linkedomics::webgestalt",
+        "linkedomics::get_target",
+        "literature::search_pubmed"
+      ],
+      "forbidden_tools": [
+        "linkedomics::clinical_trial_information"
+      ],
+      "notes": "Seven-tool deep dive: expression, survival, cis multi-omics, functional neighborhood, enrichment, druggability, literature."
+    },
+    {
+      "id": "erbb2_six_tool_clinical_deep_dive",
+      "query": "Deep clinical analysis of ERBB2: tumor vs normal expression, overall survival in BRCA, TCGA methylation survival, drug resistance from clinical trials, drug target details, and recent PubMed papers.",
+      "expected_tools_all": [
+        "linkedomics::cancer_gene_expression",
+        "linkedomics::overall_survival_per_cancer",
+        "linkedomics::tcga_survival_analysis",
+        "linkedomics::clinical_trial_information",
+        "linkedomics::get_target",
+        "literature::search_pubmed"
+      ],
+      "notes": "Six-tool clinical deep dive covering the full translational pipeline for ERBB2/HER2."
     }
   ]
 }

@@ -423,6 +423,22 @@ export interface ChatRequest {
     context?: Record<string, unknown>
 }
 
+export interface GoldenQueryCase {
+    id: string
+    session_key?: string
+    query: string
+    expected_tools_all?: string[]
+    forbidden_tools?: string[]
+    expect_no_tools?: boolean
+    expect_general_knowledge?: boolean
+    notes?: string
+}
+
+export interface GoldenQueriesResponse {
+    description?: string
+    cases: GoldenQueryCase[]
+}
+
 export interface ChatResponse {
     message: string
     summary?: string
@@ -719,6 +735,11 @@ export const chatAPI = {
 
     async getVisualization(vizId: string): Promise<Record<string, unknown>> {
         const response = await api.get(`/api/v1/chat/visualizations/${vizId}`)
+        return response.data
+    },
+
+    async getGoldenQueries(): Promise<GoldenQueriesResponse> {
+        const response = await api.get<GoldenQueriesResponse>("/api/v1/chat/golden-queries")
         return response.data
     },
 

@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional, Any, Dict
 from collections import defaultdict, deque
+import json
 import logging
+from pathlib import Path
 import time
 import uuid
 from sqlalchemy.orm import Session
@@ -96,6 +98,19 @@ def _check_user_rate_limit(user_id: str) -> None:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/golden-queries")
+async def get_golden_queries():
+    """Return the checked-in golden query set used by the dev tester and CLI eval."""
+    dataset_path = Path(__file__).resolve().parent.parent / "examples" / "langgraph_golden_queries.json"
+    try:
+        return json.loads(dataset_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Golden query dataset not found")
+    except Exception as e:
+        logger.error(f"Error loading golden query dataset: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load golden query dataset")
 
 
 def _sanitize_response_for_history(resp: Any) -> Any:
