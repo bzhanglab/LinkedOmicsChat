@@ -61,6 +61,9 @@ data/*
 backend/data/*
 !backend/data/.gitkeep
 
+# Generated exports/artifacts
+outputs/
+
 # Logs
 logs/
 *.log
