@@ -125,6 +125,14 @@ def _parse_cis_pair_filters(pairs: Optional[list[str]]) -> tuple[set[str] | None
     for raw_pair in requested_pairs:
         parts = [part.strip() for part in _CIS_PAIR_SPLIT_RE.split(raw_pair) if part.strip()]
         if len(parts) != 2:
+            compact = re.sub(r"[^a-z0-9]+", "", raw_pair.lower())
+            for split_idx in range(1, len(compact)):
+                left_layer = _CIS_LAYER_LOOKUP.get(compact[:split_idx])
+                right_layer = _CIS_LAYER_LOOKUP.get(compact[split_idx:])
+                if left_layer and right_layer:
+                    parts = [left_layer, right_layer]
+                    break
+        if len(parts) != 2:
             ignored_pairs.append(raw_pair)
             continue
         canonical_pair = _canonicalize_cis_pair(parts[0], parts[1])

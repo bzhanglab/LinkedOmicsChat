@@ -957,6 +957,60 @@ const TCGA_COHORT_NAMES: Record<string, string> = {
     UCS: "Uterine Carcinosarcoma", UVM: "Uveal Melanoma",
 }
 
+const CIS_PAIR_OPTIONS = [
+    "RNA vs Protein",
+    "RNA vs SCNV",
+    "RNA vs Methylation",
+    "Protein vs SCNV",
+    "Protein vs Methylation",
+    "SCNV vs Methylation",
+]
+
+const CPTAC_COHORT_OPTIONS = [
+    "BRCA",
+    "COAD",
+    "CCRCC",
+    "GBM",
+    "HNSCC",
+    "LSCC",
+    "LUAD",
+    "OV",
+    "PDAC",
+    "UCEC",
+]
+
+const CPTAC_COHORT_NAMES: Record<string, string> = {
+    BRCA: "Breast cancer",
+    COAD: "Colon adenocarcinoma",
+    CCRCC: "Clear cell renal cell carcinoma",
+    GBM: "Glioblastoma",
+    HNSCC: "Head and neck squamous cell carcinoma",
+    LSCC: "Lung squamous cell carcinoma",
+    LUAD: "Lung adenocarcinoma",
+    OV: "Ovarian serous carcinoma",
+    PDAC: "Pancreatic ductal adenocarcinoma",
+    UCEC: "Uterine corpus endometrial carcinoma",
+}
+
+function getCisCorrelationMultiSelectConfig(toolId: string | null, name: string) {
+    const toolName = toolId?.split("::").pop()
+    if (toolName !== "get_cis_correlations" && toolName !== "batch_get_cis_correlations") return null
+    if (name === "pairs") {
+        return {
+            options: CIS_PAIR_OPTIONS,
+            placeholder: "All molecular pairs",
+        }
+    }
+    if (name === "cancers") {
+        return {
+            options: CPTAC_COHORT_OPTIONS,
+            placeholder: "All CPTAC cohorts",
+            getLabel: (opt: string) => CPTAC_COHORT_NAMES[opt],
+        }
+    }
+    return null
+}
+
 function getToolSpecificEnumOptions(toolId: string | null, name: string, options: string[]): string[] {
     if (
         toolId?.endsWith("tcga_cis_association_analysis") &&
@@ -1104,6 +1158,157 @@ function EnumSelect({ name, description, required, options, value, onChange, get
     )
 }
 
+// ── Searchable multi-select for optional list parameters ─────────────────────
+function MultiSelect({ name, description, required, options, value, onChange, placeholder, getLabel }: {
+    name: string
+    description?: string
+    required: boolean
+    options: string[]
+    value: string[]
+    onChange: (v: string[]) => void
+    placeholder: string
+    getLabel?: (opt: string) => string | undefined
+}) {
+    const [open, setOpen] = useState(false)
+    const [query, setQuery] = useState("")
+    const [dropUp, setDropUp] = useState(false)
+    const ref = useState(() => ({ current: null as HTMLDivElement | null }))[0]
+
+    const selected = new Set(value)
+    const label = (opt: string) => getLabel?.(opt) || opt
+    const displayValue = value.length ? value.join(", ") : placeholder
+    const filtered = query
+        ? options.filter(o =>
+            o.toLowerCase().includes(query.toLowerCase()) ||
+            label(o).toLowerCase().includes(query.toLowerCase())
+          )
+        : options
+
+    const toggle = (opt: string) => {
+        if (selected.has(opt)) onChange(value.filter(v => v !== opt))
+        else onChange([...value, opt])
+    }
+
+    const clear = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        onChange([])
+        setQuery("")
+    }
+
+    useEffect(() => {
+        if (!open) return
+        if (ref.current) {
+            const rect = ref.current.getBoundingClientRect()
+            const spaceBelow = window.innerHeight - rect.bottom
+            setDropUp(spaceBelow < 280)
+        }
+        const handler = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) {
+                setOpen(false)
+                setQuery("")
+            }
+        }
+        document.addEventListener("mousedown", handler)
+        return () => document.removeEventListener("mousedown", handler)
+    }, [open, ref])
+
+    return (
+        <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {name} {required && <span className="text-red-500">*</span>}
+                <span className="ml-1.5 text-xs font-normal text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/30 px-1.5 py-0.5 rounded">
+                    optional multi-select
+                </span>
+            </label>
+            {description && (
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">{description}</div>
+            )}
+            <div className="relative" ref={(el) => { ref.current = el }}>
+                <button
+                    type="button"
+                    onClick={() => { setOpen(o => !o); setQuery("") }}
+                    className={`w-full flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors
+                        ${value.length
+                            ? "border-teal-400 dark:border-teal-600 bg-teal-50/50 dark:bg-teal-900/20 text-gray-900 dark:text-gray-100"
+                            : "border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400"}
+                        hover:border-teal-400 dark:hover:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/40`}
+                >
+                    <span className="truncate">{displayValue}</span>
+                    <span className="flex items-center gap-1 ml-2 flex-shrink-0">
+                        {value.length > 0 && (
+                            <span
+                                onClick={clear}
+                                className="w-4 h-4 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer text-xs leading-none"
+                                title="Clear"
+                            >✕</span>
+                        )}
+                        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+                    </span>
+                </button>
+
+                {open && (
+                    <div className={`absolute z-50 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg overflow-hidden ${dropUp ? "bottom-full mb-1" : "mt-1"}`}>
+                        <div className="p-2 border-b border-gray-100 dark:border-gray-700 space-y-2">
+                            {options.length > 6 && (
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    placeholder="Search…"
+                                    value={query}
+                                    onChange={e => setQuery(e.target.value)}
+                                    className="w-full text-sm px-2 py-1 rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                                />
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => { onChange([]); setQuery("") }}
+                                className={`w-full text-left px-2 py-1.5 rounded text-sm transition-colors ${
+                                    value.length === 0
+                                        ? "bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 font-medium"
+                                        : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                                }`}
+                            >
+                                {placeholder}
+                            </button>
+                        </div>
+                        <ul className="max-h-56 overflow-y-auto py-1">
+                            {filtered.length === 0 ? (
+                                <li className="px-3 py-2 text-xs text-gray-400">No matches</li>
+                            ) : filtered.map(opt => {
+                                const isSelected = selected.has(opt)
+                                return (
+                                    <li
+                                        key={opt}
+                                        onClick={() => toggle(opt)}
+                                        className={`px-3 py-1.5 text-sm cursor-pointer flex items-center justify-between gap-2
+                                            ${isSelected
+                                                ? "bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 font-medium"
+                                                : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"}`}
+                                    >
+                                        <span className="flex items-center gap-2 min-w-0">
+                                            <span className={`h-4 w-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                                                isSelected
+                                                    ? "border-teal-500 bg-teal-500 text-white"
+                                                    : "border-gray-300 dark:border-gray-600"
+                                            }`}>
+                                                {isSelected && <Check className="h-3 w-3" />}
+                                            </span>
+                                            <span className="font-medium flex-shrink-0">{opt}</span>
+                                            {getLabel?.(opt) && (
+                                                <span className="text-xs text-gray-400 dark:text-gray-500 truncate">{getLabel(opt)}</span>
+                                            )}
+                                        </span>
+                                    </li>
+                                )
+                            })}
+                        </ul>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
 // Module-level cache — survives re-mounts so Tools tab is instant after first load
 let _toolsCache: Record<string, ToolSchema> | null = null
 
@@ -1163,7 +1368,9 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
             setError(null)
             // Strip empty strings so Optional params are sent as absent (None) not ""
             const cleanArgs = Object.fromEntries(
-                Object.entries(args).filter(([, v]) => v !== "" && v !== null && v !== undefined)
+                Object.entries(args).filter(([, v]) =>
+                    v !== "" && v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0)
+                )
             )
             const res = await toolsAPI.execute(selectedToolId, cleanArgs)
 
@@ -1234,6 +1441,23 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     }
 
     const renderFormInput = (name: string, param: ToolParameter, required: boolean) => {
+        const cisMultiSelectConfig = getCisCorrelationMultiSelectConfig(selectedToolId, name)
+        if (cisMultiSelectConfig) {
+            return (
+                <MultiSelect
+                    key={name}
+                    name={name}
+                    description={param.description}
+                    required={required}
+                    options={cisMultiSelectConfig.options}
+                    value={Array.isArray(args[name]) ? args[name] : []}
+                    onChange={(v) => setArgs({ ...args, [name]: v })}
+                    placeholder={cisMultiSelectConfig.placeholder}
+                    getLabel={cisMultiSelectConfig.getLabel}
+                />
+            )
+        }
+
         // FastMCP wraps Optional[Literal[...]] as anyOf: [{enum:[...]}, {type:"null"}]
         // so we extract enum from either location
         const rawEnumValues = param.enum ?? param.anyOf?.find(s => Array.isArray(s.enum))?.enum

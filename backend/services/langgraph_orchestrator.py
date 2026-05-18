@@ -840,6 +840,18 @@ _CORRELATION_KEYWORDS = (
     "regulated by copy number", "methylation effect",
 )
 
+def _has_cptac_cis_correlation_intent(normalized_query: str) -> bool:
+    """Return True when the user explicitly asks for CPTAC cis/correlation data."""
+    if "cptac" not in normalized_query:
+        return False
+    if any(keyword in normalized_query for keyword in _CORRELATION_KEYWORDS):
+        return True
+    return "cis" in normalized_query and any(
+        marker in normalized_query
+        for marker in ("correlat", "association", "associat", "across")
+    )
+
+
 _PATHWAY_KEYWORDS = (
     "pathway", "enrichment", "gsea", "gene ontology", "go term",
     "kegg", "webgestalt", "ora ", "wikipathway",
@@ -1103,6 +1115,10 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "pathway"
     if any(keyword in normalized for keyword in _FUNMAP_KEYWORDS):
         return "funmap"
+    # Explicit CPTAC cis/correlation requests should use CPTAC cis-correlations,
+    # even if broad text like "cis ... across" also matches TCGA cis scan wording.
+    if _has_cptac_cis_correlation_intent(normalized):
+        return "correlation"
     # Check TCGA cis association before generic correlation and TCGA survival routing.
     if any(re.search(keyword, normalized) for keyword in _TCGA_CIS_KEYWORDS):
         return "tcga_cis"
