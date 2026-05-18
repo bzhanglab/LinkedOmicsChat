@@ -276,7 +276,7 @@ export default function WelcomePage() {
                 <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.1]">
                     Cancer multi-omics research,
                     <br />
-                    <span className="text-teal-600">powered by conversation.</span>
+                    <span className="text-teal-600">powered by agentic AI.</span>
                 </h1>
 
                 <p className="mt-4 text-base sm:text-lg text-slate-500 font-normal max-w-xl mx-auto leading-relaxed">
