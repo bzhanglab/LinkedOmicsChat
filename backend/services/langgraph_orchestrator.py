@@ -1043,6 +1043,26 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         return "none"
     if _looks_conversational(normalized) or _looks_platform_question(normalized):
         return "none"
+
+    # If the query spans multiple distinct analysis scopes, give the agent all tools
+    # rather than locking into the first matching keyword (e.g. "papers" → literature only).
+    _MULTI_SCOPE_SIGNALS = [
+        _LITERATURE_KEYWORDS,
+        _TARGET_KEYWORDS,
+        _TRIAL_KEYWORDS,
+        _PATHWAY_KEYWORDS,
+        _FUNMAP_KEYWORDS,
+        _SURVIVAL_KEYWORDS,
+        _EXPRESSION_KEYWORDS,
+        _CORRELATION_KEYWORDS,
+    ]
+    scopes_hit = sum(
+        1 for kw_list in _MULTI_SCOPE_SIGNALS
+        if any(kw in normalized for kw in kw_list)
+    )
+    if scopes_hit >= 2:
+        return "full"
+
     if any(keyword in normalized for keyword in _LITERATURE_KEYWORDS):
         return "literature"
     if any(keyword in normalized for keyword in _TARGET_KEYWORDS):
