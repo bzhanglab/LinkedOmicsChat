@@ -3186,9 +3186,9 @@ export const ChatInterface = memo(function ChatInterface({
                 ) : (
                     <>
                         <div className="flex-1 min-w-0">
-                            <h2 className="text-lg md:text-2xl font-semibold">Research Assistant</h2>
+                            <h2 className="text-lg md:text-2xl font-semibold">Cancer Multi-Omics AI</h2>
                             <p className="hidden sm:block text-sm text-muted-foreground mt-1">
-                                Query cancer multi-omics data across CPTAC, LinkedOmics, and PubMed
+                                Expression · Survival · Trials · Targets
                             </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0 pr-10 md:pr-12">
