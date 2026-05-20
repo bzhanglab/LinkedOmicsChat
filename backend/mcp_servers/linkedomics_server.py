@@ -886,18 +886,19 @@ def transform_tn(
     for cancer in CANCER_TYPES:
         if cancer in data:
             pval = float(data[cancer]["pval"])
-            if abs(pval) < sig_threshold:
+            display_pval = abs(pval)
+            if display_pval < sig_threshold:
                 if pval < 0:
                     ret_val[cancer] = (
-                        f"Significantly lower expressed in tumor (p={pval:.3e})"
+                        f"Significantly lower expressed in tumor (p={display_pval:.3e})"
                     )
                 else:
                     ret_val[cancer] = (
-                        f"Significantly higher expressed in tumor (p={pval:.3e})"
+                        f"Significantly higher expressed in tumor (p={display_pval:.3e})"
                     )
             else:
                 ret_val[cancer] = (
-                    f"No significant difference between tumor and normal (p={pval:.3e})"
+                    f"No significant difference between tumor and normal (p={display_pval:.3e})"
                 )
         else:
             ret_val[cancer] = "Data unavailable"
@@ -926,18 +927,19 @@ def transform_os(
     for cancer in CANCER_TYPES:
         if cancer in data:
             pval = float(data[cancer]["pval"])
-            if abs(pval) < sig_threshold:
+            display_pval = abs(pval)
+            if display_pval < sig_threshold:
                 if pval < 0:
                     ret_val[cancer] = (
-                        f"Lower expression associated with poor survival (p={pval:.3e})"
+                        f"Lower expression associated with poor survival (p={display_pval:.3e})"
                     )
                 else:
                     ret_val[cancer] = (
-                        f"Higher expression associated with poor survival (p={pval:.3e})"
+                        f"Higher expression associated with poor survival (p={display_pval:.3e})"
                     )
             else:
                 ret_val[cancer] = (
-                    f"No significant difference between tumor and normal (p={pval:.3e})"
+                    f"No significant difference between tumor and normal (p={display_pval:.3e})"
                 )
         else:
             ret_val[cancer] = "Data unavailable"

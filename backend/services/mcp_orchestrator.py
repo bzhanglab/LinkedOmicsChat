@@ -696,7 +696,7 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
             if not msg or msg in ("Data unavailable", "-", ""):
                 return 0, None, False
             m = re.search(r'p=([\d.e+\-]+)', msg, re.IGNORECASE)
-            pval = float(m.group(1)) if m else None
+            pval = abs(float(m.group(1))) if m else None
             msg_l = msg.lower()
             if is_survival:
                 if "higher expression associated with poor" in msg_l:
