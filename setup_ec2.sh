@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# AWS Deployment Script for LinkedOmicsChat
-# This script helps set up the application on an AWS EC2 instance
+# EC2 setup script for LinkedOmicsChat
+# This script bootstraps the application on a fresh AWS EC2 instance.
 
 set -e
 
-echo "🚀 LinkedOmicsChat AWS Deployment Script"
+echo "🚀 LinkedOmicsChat EC2 Setup Script"
 echo "=================================="
 echo ""
 
@@ -19,18 +19,23 @@ if [ ! -f "/sys/class/dmi/id/product-uuid" ]; then
     fi
 fi
 
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+else
+    OS=$(uname -s)
+fi
+
+install_compose_plugin() {
+    sudo mkdir -p /usr/local/lib/docker/cli-plugins
+    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
+    sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+}
+
 # Check for Docker
 if ! command -v docker &> /dev/null; then
     echo "❌ Docker is not installed. Installing Docker..."
-    
-    # Detect OS
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-    else
-        OS=$(uname -s)
-    fi
-    
+
     if [ "$OS" = "amzn" ] || [ "$OS" = "amazon" ]; then
         # Amazon Linux installation
         echo "📦 Detected Amazon Linux - installing Docker..."
@@ -54,12 +59,23 @@ if ! command -v docker &> /dev/null; then
     exit 0
 fi
 
-# Check for Docker Compose
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ Docker Compose is not installed. Installing..."
-    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    sudo chmod +x /usr/local/bin/docker-compose
-    echo "✅ Docker Compose installed"
+# Check for Docker Compose v2
+if ! docker compose version &> /dev/null; then
+    echo "❌ Docker Compose v2 is not installed. Installing..."
+    if [ "$OS" = "amzn" ] || [ "$OS" = "amazon" ]; then
+        sudo yum install -y docker-compose-plugin || install_compose_plugin
+    elif [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
+        sudo apt-get update
+        sudo apt-get install -y docker-compose-plugin || install_compose_plugin
+    else
+        install_compose_plugin
+    fi
+
+    if ! docker compose version &> /dev/null; then
+        echo "❌ Docker Compose v2 installation failed. Please install the Docker Compose plugin and rerun this script."
+        exit 1
+    fi
+    echo "✅ Docker Compose v2 installed"
 fi
 
 # Check if .env exists
@@ -237,7 +253,7 @@ fi
 # Build and start services
 echo ""
 echo "🔨 Building and starting services..."
-docker-compose up -d --build
+docker compose up -d --build
 
 echo ""
 echo "⏳ Waiting for services to be healthy..."
@@ -248,23 +264,23 @@ if [ "$USE_OLLAMA" = "true" ]; then
     echo ""
     echo "📥 Downloading Ollama model: $OLLAMA_MODEL"
     echo "   This may take several minutes depending on model size..."
-    docker-compose exec -T ollama ollama pull $OLLAMA_MODEL || {
+    docker compose exec -T ollama ollama pull $OLLAMA_MODEL || {
         echo "⚠️  Warning: Could not pull model automatically"
         echo "   You can manually pull it later with:"
-        echo "   docker-compose exec ollama ollama pull $OLLAMA_MODEL"
+        echo "   docker compose exec ollama ollama pull $OLLAMA_MODEL"
     }
 fi
 
 # Check service status
 echo ""
 echo "📊 Service Status:"
-docker-compose ps
+docker compose ps
 
 echo ""
 echo "✅ Deployment complete!"
 echo ""
 echo "📝 Next steps:"
-echo "1. Check logs: docker-compose logs -f"
+echo "1. Check logs: docker compose logs -f"
 echo "2. Access frontend: http://$DOMAIN:3000 (or configure nginx)"
 echo "3. Access backend API: http://$DOMAIN:8000"
 echo "4. API docs: http://$DOMAIN:8000/docs"

@@ -48,7 +48,7 @@ services:
         networks:
             - linkedomicsai-network
         # Note: First run will download the model, which can take time
-        # Run: docker-compose exec ollama ollama pull llama3
+        # Run: docker compose exec ollama ollama pull llama3
 
     # FastAPI Backend
     backend:

@@ -205,7 +205,7 @@ htmlcov/
 notes/
 
 # Deployment scripts (optional - uncomment if you don't want to sync these)
-# deploy_aws.sh
+# setup_ec2.sh
 # deploy_rsync.sh
 # deploy_config.sh
 

@@ -143,9 +143,11 @@ docker compose logs -f
 ### AWS EC2
 
 ```bash
-./deploy_aws.sh          # Initial setup
-./deploy_rsync.sh        # Fast incremental updates (rsync, no git commit needed)
+./setup_ec2.sh           # One-time setup on a fresh EC2 instance
+./deploy_rsync.sh        # Fast incremental updates from your local machine
 ```
+
+For normal updates to an already configured server, use `deploy_rsync.sh`.
 
 Set connection details before deploying:
 
