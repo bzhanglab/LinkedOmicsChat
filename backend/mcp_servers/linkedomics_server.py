@@ -939,7 +939,7 @@ def transform_os(
                     )
             else:
                 ret_val[cancer] = (
-                    f"No significant difference between tumor and normal (p={display_pval:.3e})"
+                    f"No significant association with survival (p={display_pval:.3e})"
                 )
         else:
             ret_val[cancer] = "Data unavailable"
