@@ -1737,7 +1737,7 @@ def _tcga_cis_mode4_top_hits(
 
 
 def _generate_tcga_cis_association_static(result: dict) -> Optional[list[dict[str, Any]]]:
-    """Generate mode-appropriate visualizations for tcga_cis_association_analysis.
+    """Generate mode-appropriate visualizations for analyze_tcga_cis_associations.
 
     API always uses `correlation` (not `cor`). Modes 1 and 2 include `samples`.
 
@@ -2993,15 +2993,15 @@ Classify this query. Return JSON only."""
             return _rewrap_payload(v, compact_payload)
 
         def _apply_tool_specific_compaction(bare_tool_id: str, value: Any) -> Any:
-            if bare_tool_id.endswith("tcga_cis_association_analysis"):
+            if bare_tool_id.endswith("analyze_tcga_cis_associations"):
                 return _compact_tcga_cis_mode4_payload(value)
-            if bare_tool_id.endswith("clinical_trial_information") or bare_tool_id.endswith("gene_set_trial_information"):
+            if bare_tool_id.endswith("search_gene_response_trials") or bare_tool_id.endswith("search_gene_set_response_trials"):
                 return _compact_trial_tool_payload(value)
-            if bare_tool_id.endswith("meta_analysis_predictive_genes"):
+            if bare_tool_id.endswith("meta_analyze_response_genes"):
                 return _compact_meta_analysis_tool_payload(value, item_key="top_genes", label_key="gene")
-            if bare_tool_id.endswith("meta_analysis_predictive_gene_sets"):
+            if bare_tool_id.endswith("meta_analyze_response_gene_sets"):
                 return _compact_meta_analysis_tool_payload(value, item_key="top_gene_sets", label_key="gene_set")
-            if bare_tool_id.endswith("funmap_neighborhood"):
+            if bare_tool_id.endswith("get_funmap_functional_neighborhood"):
                 return _compact_funmap_payload(value)
             return value
 
@@ -3013,7 +3013,7 @@ Classify this query. Return JSON only."""
             bare_tool_id = tool_id.split('#')[0] if '#' in tool_id else tool_id
             if bare_tool_id.endswith("resolve_gene_identifier"):
                 continue
-            if bare_tool_id.endswith("tcga_survival_analysis"):
+            if bare_tool_id.endswith("analyze_tcga_survival_associations"):
                 wrapped_gene, payload = _parsed_payload(raw)
                 if isinstance(payload, dict):
                     query = payload.get("query", {}) or {}
@@ -3050,7 +3050,7 @@ Classify this query. Return JSON only."""
         for gene_key, cohort_key in tcga_survival_group_order:
             parsed_list = tcga_survival_groups.get((gene_key, cohort_key), [])
             compact_key = (
-                f"linkedomics::tcga_survival_analysis"
+                f"linkedomics::analyze_tcga_survival_associations"
                 f"[group:{gene_key or 'ALL_GENES'}:{cohort_key or 'all_cohorts'}]"
             )
             compact[compact_key] = _sanitize_value(
@@ -3909,7 +3909,7 @@ Please provide a clear, informative response about this gene. Include the key de
 
         import uuid as _uuid
 
-        # Pre-collect tcga_survival_analysis results grouped by (gene, cohort).
+        # Pre-collect analyze_tcga_survival_associations results grouped by (gene, cohort).
         # Rendered inline in the main loop to preserve section ordering.
         _tcga_groups: Dict[tuple, List[Any]] = {}
         _OMICS_LABEL_PRE = {
@@ -3919,7 +3919,7 @@ Please provide a clear, informative response about this gene. Include the key de
         }
         for unique_key, wrapped_result in results.items():
             tid = unique_key.split('#')[0] if '#' in unique_key else unique_key
-            if not tid.endswith("tcga_survival_analysis"):
+            if not tid.endswith("analyze_tcga_survival_associations"):
                 continue
             raw = wrapped_result["_result"] if isinstance(wrapped_result, dict) and "_result" in wrapped_result else wrapped_result
             parsed = _maybe_json(raw)
@@ -3936,21 +3936,21 @@ Please provide a clear, informative response about this gene. Include the key de
 
         def _placeholder_title_for_tool(tool_id: str) -> Optional[str]:
             normalized = _normalize_tool_id(tool_id)
-            if normalized in {"cancer_gene_expression", "batch_cancer_gene_expression"}:
+            if normalized in {"compare_cptac_tumor_normal_expression", "batch_compare_cptac_tumor_normal_expression"}:
                 return "Cancer expression (Tumor vs Normal)"
-            if normalized in {"overall_survival_per_cancer", "batch_overall_survival_per_cancer"}:
+            if normalized in {"analyze_cptac_gene_survival_associations", "batch_analyze_cptac_gene_survival_associations"}:
                 return "Overall survival associations"
-            if normalized == "tcga_survival_analysis":
+            if normalized == "analyze_tcga_survival_associations":
                 return "TCGA survival analysis"
             if normalized == "get_survival_plot":
                 return "Survival plot"
-            if normalized in {"get_target", "batch_get_target"}:
+            if normalized in {"get_drug_target_profile", "batch_get_drug_target_profiles"}:
                 return "Drug target profile"
-            if normalized == "clinical_trial_information":
+            if normalized == "search_gene_response_trials":
                 return "Clinical trial associations"
-            if normalized in {"get_cis_correlations", "batch_get_cis_correlations"}:
+            if normalized in {"analyze_cptac_cis_associations", "batch_analyze_cptac_cis_associations"}:
                 return "Cis-Correlations"
-            if normalized == "tcga_cis_association_analysis":
+            if normalized == "analyze_tcga_cis_associations":
                 return "TCGA Cis Association"
             return None
 
@@ -3970,21 +3970,21 @@ Please provide a clear, informative response about this gene. Include the key de
 
             normalized = _normalize_tool_id(tool_id)
             batch_gene_map = None
-            if normalized in {"batch_cancer_gene_expression", "batch_overall_survival_per_cancer"}:
+            if normalized in {"batch_compare_cptac_tumor_normal_expression", "batch_analyze_cptac_gene_survival_associations"}:
                 batch_gene_map = parsed_result.get("data")
-            elif normalized == "batch_get_target":
+            elif normalized == "batch_get_drug_target_profiles":
                 batch_gene_map = parsed_result.get("results")
-            elif normalized == "batch_get_cis_correlations":
+            elif normalized == "batch_analyze_cptac_cis_associations":
                 batch_gene_map = parsed_result.get("data")
 
             if isinstance(batch_gene_map, dict):
                 for batch_gene, batch_payload in batch_gene_map.items():
                     if not isinstance(batch_gene, str) or not batch_gene.strip():
                         continue
-                    if normalized == "batch_get_target":
+                    if normalized == "batch_get_drug_target_profiles":
                         if not (isinstance(batch_payload, dict) and isinstance(batch_payload.get("result"), dict)):
                             continue
-                    elif normalized == "batch_get_cis_correlations":
+                    elif normalized == "batch_analyze_cptac_cis_associations":
                         if not (isinstance(batch_payload, dict) and isinstance(batch_payload.get("data"), dict)):
                             continue
                     covered.add(batch_gene.upper())
@@ -4151,7 +4151,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 continue
 
             # Tool-specific formatting for dict outputs
-            if tool_id.endswith("funmap_neighborhood"):
+            if tool_id.endswith("get_funmap_functional_neighborhood"):
                 neigh = []
                 api_nodes = []
                 api_edges = []
@@ -4205,7 +4205,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("cancer_gene_expression") or tool_id.endswith("overall_survival_per_cancer"):
+            if tool_id.endswith("compare_cptac_tumor_normal_expression") or tool_id.endswith("analyze_cptac_gene_survival_associations"):
                 # parsed: {"protein_level": {"status":..., "data": {...}}, "RNA_level": {...}}
                 # OR batch: {"status": "available", "data": {"GENE1": {"protein_level":..., "RNA_level":...}, ...}}
                 if not isinstance(parsed, dict):
@@ -4213,7 +4213,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                     continue
 
-                if tool_id.endswith("cancer_gene_expression"):
+                if tool_id.endswith("compare_cptac_tumor_normal_expression"):
                     base_title = "Cancer expression (Tumor vs Normal)"
                     subtitle = " · CPTAC"
                     source_desc = "CPTAC cohorts"
@@ -4229,7 +4229,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 # Detect batch result: {"status": ..., "data": {"GENE": {...}, ...}}
                 batch_data = parsed.get("data") if ("data" in parsed and isinstance(parsed.get("data"), dict) and not parsed.get("protein_level") and not parsed.get("RNA_level")) else None
 
-                is_surv = tool_id.endswith("overall_survival_per_cancer")
+                is_surv = tool_id.endswith("analyze_cptac_gene_survival_associations")
 
                 def _render_single_gene_section(g_name, g_parsed, b_title, sub, s_desc, c_rna, c_prot):
                     p = (g_parsed.get("protein_level") or {})
@@ -4279,13 +4279,13 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("get_target") or tool_id.endswith("batch_get_target"):
+            if tool_id.endswith("get_drug_target_profile") or tool_id.endswith("batch_get_drug_target_profiles"):
                 if not isinstance(parsed, dict):
                     continue
                 # batch returns {"results": {"GENE": {"result": {...}}, ...}}
                 # single returns {"result": {...}}
                 entries: list[tuple[str, dict]] = []
-                if tool_id.endswith("batch_get_target"):
+                if tool_id.endswith("batch_get_drug_target_profiles"):
                     for g_sym, g_data in (parsed.get("results") or {}).items():
                         r = g_data.get("result") if isinstance(g_data, dict) else None
                         if isinstance(r, dict):
@@ -4356,7 +4356,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("rank_targets"):
+            if tool_id.endswith("rank_drug_targets"):
                 if not isinstance(parsed, dict):
                     continue
                 genes = parsed.get("genes", [])
@@ -4392,7 +4392,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("search_targets"):
+            if tool_id.endswith("search_drug_target_index"):
                 if not isinstance(parsed, dict):
                     continue
                 genes = parsed.get("genes", [])
@@ -4417,7 +4417,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("clinical_trial_information"):
+            if tool_id.endswith("search_gene_response_trials"):
                 if not isinstance(parsed, dict):
                     continue  # skip unrenderable result silently
                 status = parsed.get("status", "unavailable")
@@ -4425,7 +4425,7 @@ Please provide a clear, informative response about this gene. Include the key de
 
                 # Detect batch vs single: batch data is a dict of {protein: result}
                 is_batch = (
-                    tool_id.endswith("batch_clinical_trial_information")
+                    tool_id.endswith("batch_search_gene_response_trials")
                     or (isinstance(raw_data, dict) and all(
                         isinstance(v, dict) and "status" in v
                         for v in raw_data.values()
@@ -4547,7 +4547,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("get_study_info"):
+            if tool_id.endswith("get_trial_study_details"):
                 if not isinstance(parsed, dict):
                     continue
                 status = parsed.get("status", "unavailable")
@@ -4596,7 +4596,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("gene_set_trial_information"):
+            if tool_id.endswith("search_gene_set_response_trials"):
                 if not isinstance(parsed, dict):
                     continue
                 status = parsed.get("status", "unavailable")
@@ -4678,7 +4678,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("filter_clinical_trials"):
+            if tool_id.endswith("search_trial_studies"):
                 if not isinstance(parsed, dict):
                     continue
                 status = parsed.get("status", "unavailable")
@@ -4715,7 +4715,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("meta_analysis_predictive_genes"):
+            if tool_id.endswith("meta_analyze_response_genes"):
                 if not isinstance(parsed, dict):
                     continue
                 status = parsed.get("status", "unavailable")
@@ -4779,7 +4779,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("meta_analysis_predictive_gene_sets"):
+            if tool_id.endswith("meta_analyze_response_gene_sets"):
                 if not isinstance(parsed, dict):
                     continue
                 status = parsed.get("status", "unavailable")
@@ -4843,13 +4843,13 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("get_study_predictive_genes") or tool_id.endswith("get_study_predictive_gene_sets"):
+            if tool_id.endswith("rank_study_response_genes") or tool_id.endswith("rank_study_response_gene_sets"):
                 if not isinstance(parsed, dict):
                     continue
                 status = parsed.get("status", "unavailable")
                 d = parsed.get("data") or {}
                 sid = d.get("study_id", parsed.get("study_id", ""))
-                is_gene_sets = tool_id.endswith("get_study_predictive_gene_sets")
+                is_gene_sets = tool_id.endswith("rank_study_response_gene_sets")
                 analyte_label = "Gene Set" if is_gene_sets else "Gene"
                 analyte_key = "top_gene_sets" if is_gene_sets else "top_genes"
                 total_key = "total_gene_sets" if is_gene_sets else "total_genes"
@@ -4876,7 +4876,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("get_cis_correlations"):
+            if tool_id.endswith("analyze_cptac_cis_associations"):
                 if not isinstance(parsed, dict):
                     continue  # skip unrenderable result silently
 
@@ -4946,7 +4946,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     md.append("\n> **Source:** [LinkedOmics](#source:linkedomics)")
                     return "\n".join(md) + "\n"
 
-                if tool_id.endswith("batch_get_cis_correlations"):
+                if tool_id.endswith("batch_analyze_cptac_cis_associations"):
                     batch_data = parsed.get("data") or {}
                     fallback_applied_pairs = parsed.get("applied_pairs") or []
                     fallback_applied_cancers = parsed.get("applied_cancers") or []
@@ -4978,7 +4978,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("tcga_cis_association_analysis"):
+            if tool_id.endswith("analyze_tcga_cis_associations"):
                 if not isinstance(parsed, dict):
                     continue
 
@@ -5099,7 +5099,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("webgestalt"):
+            if tool_id.endswith("run_webgestalt_go_enrichment"):
                 rows = []
                 if isinstance(parsed, dict):
                     rows = parsed.get("data") or []
@@ -5144,7 +5144,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     _rendered_tool_ids.add(tool_id)
                 continue
 
-            if tool_id.endswith("tcga_survival_analysis"):
+            if tool_id.endswith("analyze_tcga_survival_associations"):
                 # Render the merged group section on first encounter; skip duplicates.
                 gene_name_k = wrapped_result.get("_gene", "") if isinstance(wrapped_result, dict) else ""
                 raw_k = wrapped_result["_result"] if isinstance(wrapped_result, dict) and "_result" in wrapped_result else wrapped_result

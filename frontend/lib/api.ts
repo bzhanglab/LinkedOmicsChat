@@ -8,24 +8,24 @@ export const API_URL = resolveApiUrl()
 // Handles both "Running <tool>..." patterns and fixed phrases.
 const TOOL_STATUS_LABELS: Record<string, string> = {
     // LinkedOmics / expression tools
-    "cancer_gene_expression":         "Querying expression data...",
-    "get_cis_correlations":           "Fetching cis-correlations...",
+    "compare_cptac_tumor_normal_expression":         "Querying expression data...",
+    "analyze_cptac_cis_associations":           "Fetching cis-correlations...",
     "get_trans_correlations":         "Fetching trans-correlations...",
-    "overall_survival_per_cancer":    "Running survival analysis...",
-    "clinical_trial_information":           "Looking up clinical trials...",
-    "batch_clinical_trial_information":     "Looking up clinical trials...",
-    "get_study_info":                       "Fetching study details...",
-    "gene_set_trial_information":           "Looking up pathway trial associations...",
-    "filter_clinical_trials":              "Filtering clinical studies...",
-    "meta_analysis_predictive_genes":       "Running gene meta-analysis...",
-    "meta_analysis_predictive_gene_sets":   "Running pathway meta-analysis...",
-    "get_study_predictive_genes":           "Fetching study gene rankings...",
-    "get_study_predictive_gene_sets":       "Fetching study pathway rankings...",
+    "analyze_cptac_gene_survival_associations":    "Running survival analysis...",
+    "search_gene_response_trials":           "Looking up clinical trials...",
+    "batch_search_gene_response_trials":     "Looking up clinical trials...",
+    "get_trial_study_details":                       "Fetching study details...",
+    "search_gene_set_response_trials":           "Looking up pathway trial associations...",
+    "search_trial_studies":              "Filtering clinical studies...",
+    "meta_analyze_response_genes":       "Running gene meta-analysis...",
+    "meta_analyze_response_gene_sets":   "Running pathway meta-analysis...",
+    "rank_study_response_genes":           "Fetching study gene rankings...",
+    "rank_study_response_gene_sets":       "Fetching study pathway rankings...",
     // FunMap / network
-    "funmap_neighborhood":            "Exploring functional network...",
-    "get_target":                     "Checking drug targets...",
+    "get_funmap_functional_neighborhood":            "Exploring functional network...",
+    "get_drug_target_profile":                     "Checking drug targets...",
     // Enrichment / pathways
-    "webgestalt":                     "Running pathway enrichment...",
+    "run_webgestalt_go_enrichment":                     "Running pathway enrichment...",
     // Literature
     "search_literature":              "Searching literature...",
     "pubmed_search":                  "Searching PubMed...",
@@ -363,15 +363,15 @@ export interface DataSource {
 }
 
 export const TOOL_DATA_SOURCES: Record<string, DataSource> = {
-    cancer_gene_expression:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    get_cis_correlations:          { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    compare_cptac_tumor_normal_expression:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    analyze_cptac_cis_associations:          { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
     get_trans_correlations:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    overall_survival_per_cancer:   { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    tcga_survival_analysis:        { label: "LinkedOmics TCGA",    url: "http://linkedomics.org/" },
-    clinical_trial_information:    { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
-    funmap_neighborhood:           { label: "FunMap",              url: "https://funmap.linkedomics.org" },
-    get_target:                    { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
-    webgestalt:                    { label: "WebGestalt",          url: "https://www.webgestalt.org" },
+    analyze_cptac_gene_survival_associations:   { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
+    analyze_tcga_survival_associations:        { label: "LinkedOmics TCGA",    url: "http://linkedomics.org/" },
+    search_gene_response_trials:    { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
+    get_funmap_functional_neighborhood:           { label: "FunMap",              url: "https://funmap.linkedomics.org" },
+    get_drug_target_profile:                    { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
+    run_webgestalt_go_enrichment:                    { label: "WebGestalt",          url: "https://www.webgestalt.org" },
     search_literature:             { label: "PubMed",              url: "https://pubmed.ncbi.nlm.nih.gov" },
     pubmed_search:                 { label: "PubMed",              url: "https://pubmed.ncbi.nlm.nih.gov" },
     get_cptac_proteomics:          { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
@@ -398,7 +398,7 @@ export function resolveDataSources(toolsUsed: string[]): DataSource[] {
     const result: DataSource[] = []
     for (const tool of toolsUsed) {
         // Tools may arrive as:
-        //   "linkedomics::cancer_gene_expression"
+        //   "linkedomics::compare_cptac_tumor_normal_expression"
         //   "linkedomics__cancer_gene_expression"
         //   "linkedomics__cancer_gene_expression#0"  ← _generate_response passes raw dict keys
         // Strip the instance suffix (#N), then strip the namespace prefix.

@@ -686,12 +686,12 @@ const ResultRenderer = ({ result }: { result: any }) => {
     const isMultiTableData = !isFunmapData && result && typeof result === 'object' && !Array.isArray(result) &&
         Object.values(result).every(val => Array.isArray(val) && (val.length === 0 || typeof val[0] === 'object'))
 
-    // Detect if flat Key-Value object (e.g. get_target result)
+    // Detect if flat Key-Value object (e.g. get_drug_target_profile result)
     // Must be object, not array, not image parts, and values are primitives
     const isKeyValueData = result && typeof result === 'object' && !Array.isArray(result) && !result.parts &&
         Object.values(result).every(val => typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean')
 
-    // Detect if object with array values (e.g. funmap_neighborhood)
+    // Detect if object with array values (e.g. get_funmap_functional_neighborhood)
     const isListDictData = !isFunmapData && result && typeof result === 'object' && !Array.isArray(result) && !result.parts &&
         Object.values(result).every(val => Array.isArray(val) && (val.length === 0 || typeof val[0] === 'string' || typeof val[0] === 'number'))
 
@@ -872,42 +872,42 @@ const CATEGORIES: CategoryDef[] = [
         icon: BarChart2,
         color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
         borderColor: "border-teal-400 dark:border-teal-500",
-        tools: ["cancer_gene_expression", "batch_cancer_gene_expression", "get_cis_correlations", "batch_get_cis_correlations", "tcga_cis_association_analysis"],
+        tools: ["compare_cptac_tumor_normal_expression", "batch_compare_cptac_tumor_normal_expression", "analyze_cptac_cis_associations", "batch_analyze_cptac_cis_associations", "analyze_tcga_cis_associations"],
     },
     {
         label: "Survival Analysis",
         icon: HeartPulse,
         color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
         borderColor: "border-rose-400 dark:border-rose-500",
-        tools: ["overall_survival_per_cancer", "batch_overall_survival_per_cancer", "tcga_survival_analysis"],
+        tools: ["analyze_cptac_gene_survival_associations", "batch_analyze_cptac_gene_survival_associations", "analyze_tcga_survival_associations"],
     },
     {
         label: "Drug Targets",
         icon: Pill,
         color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
         borderColor: "border-amber-400 dark:border-amber-500",
-        tools: ["get_target", "batch_get_target", "search_targets", "rank_targets"],
+        tools: ["get_drug_target_profile", "batch_get_drug_target_profiles", "search_drug_target_index", "rank_drug_targets"],
     },
     {
         label: "Clinical Trials",
         icon: ClipboardList,
         color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
         borderColor: "border-rose-400 dark:border-rose-500",
-        tools: ["clinical_trial_information", "batch_clinical_trial_information", "get_study_info", "gene_set_trial_information", "filter_clinical_trials", "meta_analysis_predictive_genes", "meta_analysis_predictive_gene_sets", "get_study_predictive_genes", "get_study_predictive_gene_sets"],
+        tools: ["search_gene_response_trials", "batch_search_gene_response_trials", "get_trial_study_details", "search_gene_set_response_trials", "search_trial_studies", "meta_analyze_response_genes", "meta_analyze_response_gene_sets", "rank_study_response_genes", "rank_study_response_gene_sets"],
     },
     {
         label: "Functional Networks",
         icon: Network,
         color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
         borderColor: "border-blue-400 dark:border-blue-500",
-        tools: ["funmap_neighborhood"],
+        tools: ["get_funmap_functional_neighborhood"],
     },
     {
         label: "Pathway Enrichment",
         icon: FlaskConical,
         color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
         borderColor: "border-emerald-400 dark:border-emerald-500",
-        tools: ["webgestalt"],
+        tools: ["run_webgestalt_go_enrichment"],
     },
     {
         label: "Literature",
@@ -994,7 +994,7 @@ const CPTAC_COHORT_NAMES: Record<string, string> = {
 
 function getCisCorrelationMultiSelectConfig(toolId: string | null, name: string) {
     const toolName = toolId?.split("::").pop()
-    if (toolName !== "get_cis_correlations" && toolName !== "batch_get_cis_correlations") return null
+    if (toolName !== "analyze_cptac_cis_associations" && toolName !== "batch_analyze_cptac_cis_associations") return null
     if (name === "pairs") {
         return {
             options: CIS_PAIR_OPTIONS,
@@ -1013,7 +1013,7 @@ function getCisCorrelationMultiSelectConfig(toolId: string | null, name: string)
 
 function getToolSpecificEnumOptions(toolId: string | null, name: string, options: string[]): string[] {
     if (
-        toolId?.endsWith("tcga_cis_association_analysis") &&
+        toolId?.endsWith("analyze_tcga_cis_associations") &&
         (name === "source_omics" || name === "target_omics")
     ) {
         return options.filter(option => option !== "miRNASeq")
@@ -1392,7 +1392,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                     cleanResult = cleanResult.data
                 } else {
                     // Check for nested wrappers (e.g. { protein: {status:..., data:...}, rna: {status:..., data:...} })
-                    // This happens in tools like overall_survival_per_cancer
+                    // This happens in tools like analyze_cptac_gene_survival_associations
                     const newResult: any = {}
                     let modified = false
 

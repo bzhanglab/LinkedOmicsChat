@@ -5,7 +5,7 @@ LangGraph agent that supports chained, parallel, and conditional tool execution.
 
 The LLM autonomously decides which tools to call, sees each tool's output, and
 decides if further tool calls are needed — enabling natural multi-step workflows
-like funmap_neighborhood → webgestalt without any hardcoded chains.
+like get_funmap_functional_neighborhood → run_webgestalt_go_enrichment without any hardcoded chains.
 """
 from __future__ import annotations
 
@@ -319,27 +319,27 @@ def _classify_tool_result_payload(tool_name: str, payload: Any) -> str:
     if isinstance(payload, dict) and payload.get("error"):
         return "error"
 
-    if bare in {"cancer_gene_expression", "batch_cancer_gene_expression", "overall_survival_per_cancer", "batch_overall_survival_per_cancer"}:
+    if bare in {"compare_cptac_tumor_normal_expression", "batch_compare_cptac_tumor_normal_expression", "analyze_cptac_gene_survival_associations", "batch_analyze_cptac_gene_survival_associations"}:
         return "ok" if _expression_payload_has_data(payload) else "empty"
-    if bare in {"clinical_trial_information", "batch_clinical_trial_information"}:
+    if bare in {"search_gene_response_trials", "batch_search_gene_response_trials"}:
         return "ok" if _trial_payload_has_data(payload) else "empty"
-    if bare in {"get_cis_correlations", "batch_get_cis_correlations"}:
+    if bare in {"analyze_cptac_cis_associations", "batch_analyze_cptac_cis_associations"}:
         return "ok" if _correlation_payload_has_data(payload) else "empty"
-    if bare in {"get_target", "batch_get_target"}:
+    if bare in {"get_drug_target_profile", "batch_get_drug_target_profiles"}:
         return "ok" if _target_payload_has_data(payload) else "empty"
-    if bare == "funmap_neighborhood":
+    if bare == "get_funmap_functional_neighborhood":
         if isinstance(payload, dict) and (payload.get("neighborhood") or payload.get("nodes") or payload.get("edges")):
             return "ok"
         return "empty"
-    if bare == "webgestalt":
+    if bare == "run_webgestalt_go_enrichment":
         if isinstance(payload, dict) and isinstance(payload.get("data"), list) and payload["data"]:
             return "ok"
         return "empty"
-    if bare == "tcga_survival_analysis":
+    if bare == "analyze_tcga_survival_associations":
         if isinstance(payload, dict) and isinstance(payload.get("results"), list) and payload["results"]:
             return "ok"
         return "empty"
-    if bare == "tcga_cis_association_analysis":
+    if bare == "analyze_tcga_cis_associations":
         if isinstance(payload, dict) and isinstance(payload.get("results"), list) and payload["results"]:
             return "ok"
         return "empty"
@@ -375,13 +375,13 @@ _NO_DATA_SUGGESTIONS: Dict[str, str] = {
     ),
     "targets": (
         "- The gene may not be in the LinkedOmics drug target index.\n"
-        "- Try `search_targets` with a broader filter (e.g. omit tier or drug name).\n"
+        "- Try `search_drug_target_index` with a broader filter (e.g. omit tier or drug name).\n"
         "- Consider looking up a related gene or a pathway instead."
     ),
     "trials": (
         "- This gene may not have predictive data in the current clinical trial studies.\n"
         "- Try a broader search: remove specific drug or cancer-type filters.\n"
-        "- Use `filter_clinical_trials` to see which studies are available first."
+        "- Use `search_trial_studies` to see which studies are available first."
     ),
     "funmap": (
         "- The gene may not be present in the FunMap co-functional network.\n"
@@ -503,7 +503,7 @@ def _derived_webgestalt_gene_values(tool_results: Dict[str, Any]) -> set[str]:
     """Return gene symbols from prior same-turn results that may feed WebGestalt."""
     derived: set[str] = set()
     for key, value in tool_results.items():
-        if _bare_tool_name(key) != "funmap_neighborhood":
+        if _bare_tool_name(key) != "get_funmap_functional_neighborhood":
             continue
         if not isinstance(value, dict):
             continue
@@ -571,7 +571,7 @@ def _validate_tool_identifier_integrity(
     allowed_nonresolver_values = set(explicit_gene_symbols)
     allowed_nonresolver_values.update(resolved_map.values())
     allowed_nonresolver_values.update(context_values)
-    if bare == "webgestalt":
+    if bare == "run_webgestalt_go_enrichment":
         allowed_nonresolver_values.update(_derived_webgestalt_gene_values(tool_results))
 
     if bare == "resolve_gene_identifier":
@@ -635,70 +635,70 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
     "none": (),
     "expression": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::cancer_gene_expression",
-        "linkedomics::batch_cancer_gene_expression",
+        "linkedomics::compare_cptac_tumor_normal_expression",
+        "linkedomics::batch_compare_cptac_tumor_normal_expression",
     ),
     "survival": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::overall_survival_per_cancer",
-        "linkedomics::batch_overall_survival_per_cancer",
-        "linkedomics::tcga_survival_analysis",
+        "linkedomics::analyze_cptac_gene_survival_associations",
+        "linkedomics::batch_analyze_cptac_gene_survival_associations",
+        "linkedomics::analyze_tcga_survival_associations",
     ),
     "tcga_survival": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::tcga_survival_analysis",
+        "linkedomics::analyze_tcga_survival_associations",
     ),
     "targets": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::get_target",
-        "linkedomics::batch_get_target",
-        "linkedomics::search_targets",
-        "linkedomics::rank_targets",
+        "linkedomics::get_drug_target_profile",
+        "linkedomics::batch_get_drug_target_profiles",
+        "linkedomics::search_drug_target_index",
+        "linkedomics::rank_drug_targets",
     ),
     "trials": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::clinical_trial_information",
-        "linkedomics::batch_clinical_trial_information",
-        "linkedomics::gene_set_trial_information",
-        "linkedomics::get_study_info",
-        "linkedomics::filter_clinical_trials",
-        "linkedomics::meta_analysis_predictive_genes",
-        "linkedomics::meta_analysis_predictive_gene_sets",
-        "linkedomics::get_study_predictive_genes",
-        "linkedomics::get_study_predictive_gene_sets",
+        "linkedomics::search_gene_response_trials",
+        "linkedomics::batch_search_gene_response_trials",
+        "linkedomics::search_gene_set_response_trials",
+        "linkedomics::get_trial_study_details",
+        "linkedomics::search_trial_studies",
+        "linkedomics::meta_analyze_response_genes",
+        "linkedomics::meta_analyze_response_gene_sets",
+        "linkedomics::rank_study_response_genes",
+        "linkedomics::rank_study_response_gene_sets",
     ),
     "trials_genes": (
-        "linkedomics::meta_analysis_predictive_genes",
+        "linkedomics::meta_analyze_response_genes",
     ),
     "trials_pathways": (
-        "linkedomics::meta_analysis_predictive_gene_sets",
+        "linkedomics::meta_analyze_response_gene_sets",
     ),
     "literature": (
-        "literature::search_pubmed",
-        "literature::get_pubmed_abstract",
+        "literature::search_pubmed_articles",
+        "literature::get_pubmed_article_details",
     ),
     "funmap": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::funmap_neighborhood",
+        "linkedomics::get_funmap_functional_neighborhood",
     ),
     "tcga_cis": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::tcga_cis_association_analysis",
+        "linkedomics::analyze_tcga_cis_associations",
     ),
     "cis_dual": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::get_cis_correlations",
-        "linkedomics::batch_get_cis_correlations",
-        "linkedomics::tcga_cis_association_analysis",
+        "linkedomics::analyze_cptac_cis_associations",
+        "linkedomics::batch_analyze_cptac_cis_associations",
+        "linkedomics::analyze_tcga_cis_associations",
     ),
     "correlation": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::get_cis_correlations",
-        "linkedomics::batch_get_cis_correlations",
+        "linkedomics::analyze_cptac_cis_associations",
+        "linkedomics::batch_analyze_cptac_cis_associations",
     ),
     "pathway": (
         "gene_utils::resolve_gene_identifier",
-        "linkedomics::webgestalt",
+        "linkedomics::run_webgestalt_go_enrichment",
     ),
 }
 
@@ -757,7 +757,7 @@ _DEFAULT_WORKFLOW_BY_SCOPE: Dict[str, str] = {
     "trials_genes": "clinical_trials_gene_biomarkers",
     "trials_pathways": "clinical_trials_pathway_biomarkers",
     "literature": "literature_search",
-    "funmap": "funmap_neighborhood",
+    "funmap": "get_funmap_functional_neighborhood",
     "tcga_cis": "tcga_cis_association",
     "cis_dual": "cis_dual_dataset",
     "correlation": "cptac_cis_correlation",
@@ -1295,7 +1295,7 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
     if any(keyword in normalized for keyword in _EXPRESSION_KEYWORDS) and not has_survival:
         return "expression"
     if has_survival:
-        # If the query explicitly mentions TCGA, restrict to tcga_survival_analysis only.
+        # If the query explicitly mentions TCGA, restrict to analyze_tcga_survival_associations only.
         if "tcga" in normalized:
             return "tcga_survival"
         return "survival"
@@ -1453,7 +1453,7 @@ def _compact_literature(content: str) -> str:
 
     articles = data.get("articles") if isinstance(data, dict) else None
     if articles is None:
-        # Single-article response from get_pubmed_abstract
+        # Single-article response from get_pubmed_article_details
         if isinstance(data, dict) and "abstract" in data:
             ab = data["abstract"] or ""
             data["abstract"] = ab[:300] + ("…" if len(ab) > 300 else "")
@@ -1782,33 +1782,33 @@ def _make_tool_node(tools: List[BaseTool]):
 
 # Maps bare tool names → inline source key (used in #source:X hrefs)
 _TOOL_SOURCE_KEY: dict = {
-    "cancer_gene_expression":      "linkedomics",
-    "batch_cancer_gene_expression": "linkedomics",
-    "get_cis_correlations":        "linkedomics",
-    "batch_get_cis_correlations":  "linkedomics",
+    "compare_cptac_tumor_normal_expression":      "linkedomics",
+    "batch_compare_cptac_tumor_normal_expression": "linkedomics",
+    "analyze_cptac_cis_associations":        "linkedomics",
+    "batch_analyze_cptac_cis_associations":  "linkedomics",
     "get_trans_correlations":      "linkedomics",
-    "overall_survival_per_cancer": "linkedomics",
-    "batch_overall_survival_per_cancer": "linkedomics",
-    "tcga_survival_analysis":      "linkedomics",
-    "tcga_cis_association_analysis": "linkedomics",
-    "clinical_trial_information":       "trials",
-    "batch_clinical_trial_information": "trials",
-    "get_study_info":                   "trials",
-    "gene_set_trial_information":       "trials",
-    "filter_clinical_trials":           "trials",
-    "meta_analysis_predictive_genes":   "trials",
-    "get_study_predictive_genes":           "trials",
-    "get_study_predictive_gene_sets":       "trials",
-    "meta_analysis_predictive_gene_sets":   "trials",
-    "funmap_neighborhood":              "funmap",
-    "get_target":                  "targets",
-    "batch_get_target":            "targets",
-    "search_targets":              "targets",
-    "rank_targets":                "targets",
-    "webgestalt":                  "webgestalt",
+    "analyze_cptac_gene_survival_associations": "linkedomics",
+    "batch_analyze_cptac_gene_survival_associations": "linkedomics",
+    "analyze_tcga_survival_associations":      "linkedomics",
+    "analyze_tcga_cis_associations": "linkedomics",
+    "search_gene_response_trials":       "trials",
+    "batch_search_gene_response_trials": "trials",
+    "get_trial_study_details":                   "trials",
+    "search_gene_set_response_trials":       "trials",
+    "search_trial_studies":           "trials",
+    "meta_analyze_response_genes":   "trials",
+    "rank_study_response_genes":           "trials",
+    "rank_study_response_gene_sets":       "trials",
+    "meta_analyze_response_gene_sets":   "trials",
+    "get_funmap_functional_neighborhood":              "funmap",
+    "get_drug_target_profile":                  "targets",
+    "batch_get_drug_target_profiles":            "targets",
+    "search_drug_target_index":              "targets",
+    "rank_drug_targets":                "targets",
+    "run_webgestalt_go_enrichment":                  "webgestalt",
     "search_literature":           "pubmed",
     "pubmed_search":               "pubmed",
-    "search_pubmed":               "pubmed",
+    "search_pubmed_articles":               "pubmed",
     "get_cptac_proteomics":        "cptac",
     "get_cptac_transcriptomics":   "cptac",
     "get_cptac_phosphoproteomics": "cptac",
@@ -1830,35 +1830,35 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
     targets_home = "https://targets.linkedomics.org"
     trials_home = "https://trials.linkedomics.org"
     _TEMPLATES: Dict[str, Any] = {
-        "cancer_gene_expression":      lambda _: linkedomics_home,
-        "batch_cancer_gene_expression": lambda _: linkedomics_home,
-        "get_cis_correlations":        lambda _: linkedomics_home,
-        "batch_get_cis_correlations":  lambda _: linkedomics_home,
+        "compare_cptac_tumor_normal_expression":      lambda _: linkedomics_home,
+        "batch_compare_cptac_tumor_normal_expression": lambda _: linkedomics_home,
+        "analyze_cptac_cis_associations":        lambda _: linkedomics_home,
+        "batch_analyze_cptac_cis_associations":  lambda _: linkedomics_home,
         "get_trans_correlations":      lambda _: linkedomics_home,
-        "overall_survival_per_cancer": lambda _: linkedomics_home,
-        "batch_overall_survival_per_cancer": lambda _: linkedomics_home,
-        "tcga_survival_analysis":      lambda _: linkedomics_home,
-        "tcga_cis_association_analysis": lambda _: linkedomics_home,
-        "funmap_neighborhood":         lambda _: "https://funmap.linkedomics.org",
-        "get_target":                  lambda g: f"{targets_home}/{g}/" if g else targets_home,
-        "batch_get_target":            lambda _: targets_home,
-        "search_targets":              lambda _: targets_home,
-        "rank_targets":                lambda _: targets_home,
-        "clinical_trial_information":       lambda _: trials_home,
-        "batch_clinical_trial_information": lambda _: trials_home,
-        "filter_clinical_trials":               lambda _: f"{trials_home}/treatment_gene/",
-        "meta_analysis_predictive_genes":       lambda _: f"{trials_home}/treatment_gene/",
-        "meta_analysis_predictive_gene_sets":   lambda _: f"{trials_home}/treatment_gene_set/",
+        "analyze_cptac_gene_survival_associations": lambda _: linkedomics_home,
+        "batch_analyze_cptac_gene_survival_associations": lambda _: linkedomics_home,
+        "analyze_tcga_survival_associations":      lambda _: linkedomics_home,
+        "analyze_tcga_cis_associations": lambda _: linkedomics_home,
+        "get_funmap_functional_neighborhood":         lambda _: "https://funmap.linkedomics.org",
+        "get_drug_target_profile":                  lambda g: f"{targets_home}/{g}/" if g else targets_home,
+        "batch_get_drug_target_profiles":            lambda _: targets_home,
+        "search_drug_target_index":              lambda _: targets_home,
+        "rank_drug_targets":                lambda _: targets_home,
+        "search_gene_response_trials":       lambda _: trials_home,
+        "batch_search_gene_response_trials": lambda _: trials_home,
+        "search_trial_studies":               lambda _: f"{trials_home}/treatment_gene/",
+        "meta_analyze_response_genes":       lambda _: f"{trials_home}/treatment_gene/",
+        "meta_analyze_response_gene_sets":   lambda _: f"{trials_home}/treatment_gene_set/",
         "webgestalt":                       lambda _: "https://www.webgestalt.org",
         "search_literature":                lambda _: "https://pubmed.ncbi.nlm.nih.gov",
-        "search_pubmed":                    lambda _: "https://pubmed.ncbi.nlm.nih.gov",
+        "search_pubmed_articles":                    lambda _: "https://pubmed.ncbi.nlm.nih.gov",
     }
     # Tools that need the full args dict rather than the extracted gene string
     _ARGS_TEMPLATES: Dict[str, Any] = {
-        "get_study_info":                   lambda a: trials_home,
-        "gene_set_trial_information":       lambda a: f"{trials_home}/treatment_gene_set/",
-        "get_study_predictive_genes":       lambda a: f"{trials_home}/treatment_gene/",
-        "get_study_predictive_gene_sets":   lambda a: f"{trials_home}/treatment_gene_set/",
+        "get_trial_study_details":                   lambda a: trials_home,
+        "search_gene_set_response_trials":       lambda a: f"{trials_home}/treatment_gene_set/",
+        "rank_study_response_genes":       lambda a: f"{trials_home}/treatment_gene/",
+        "rank_study_response_gene_sets":   lambda a: f"{trials_home}/treatment_gene_set/",
     }
     if bare_tool_name in _ARGS_TEMPLATES:
         try:
@@ -1896,7 +1896,7 @@ def _strip_invalid_source_citations(text: str, tools_used: list) -> str:
     import re
     valid_keys: set = set()
     for tool in tools_used:
-        # Normalise "linkedomics::cancer_gene_expression#0" → "cancer_gene_expression"
+        # Normalise "linkedomics::compare_cptac_tumor_normal_expression#0" → "compare_cptac_tumor_normal_expression"
         bare = tool.replace("::", "__").split("__")[-1].rsplit("#", 1)[0]
         key = _TOOL_SOURCE_KEY.get(tool) or _TOOL_SOURCE_KEY.get(bare)
         if key:
@@ -1999,7 +1999,7 @@ def _webgestalt_top_terms(raw_results: Dict[str, Any], limit: int = 4) -> List[D
     """Extract top WebGestalt enrichment rows from raw tool results."""
     terms: List[Dict[str, Any]] = []
     for key, wrapped in (raw_results or {}).items():
-        if _bare_tool_name(key) != "webgestalt" or not isinstance(wrapped, dict):
+        if _bare_tool_name(key) != "run_webgestalt_go_enrichment" or not isinstance(wrapped, dict):
             continue
         payload = wrapped.get("_result", wrapped)
         if isinstance(payload, str):
@@ -2086,7 +2086,7 @@ def _cptac_survival_payloads(raw_results: Dict[str, Any]) -> List[tuple[str, Dic
     """Return wrapped CPTAC overall-survival payloads as (gene, payload)."""
     payloads: List[tuple[str, Dict[str, Any]]] = []
     for key, wrapped in (raw_results or {}).items():
-        if _bare_tool_name(key) != "overall_survival_per_cancer" or not isinstance(wrapped, dict):
+        if _bare_tool_name(key) != "analyze_cptac_gene_survival_associations" or not isinstance(wrapped, dict):
             continue
         payload = wrapped.get("_result", wrapped)
         if isinstance(payload, str):
@@ -2271,7 +2271,7 @@ def _first_payload_for_tool(raw_results: Dict[str, Any], bare_tool: str) -> tupl
 
 def _build_cptac_expression_sentence(raw_results: Dict[str, Any], query: str) -> str:
     """Build a deterministic CPTAC expression note when that tool is omitted."""
-    first = _first_payload_for_tool(raw_results, "cancer_gene_expression")
+    first = _first_payload_for_tool(raw_results, "compare_cptac_tumor_normal_expression")
     if not first:
         return ""
     gene, _, payload = first
@@ -2406,25 +2406,25 @@ def _build_generic_tool_coverage_note(key: str, wrapped: Any, query: str, raw_re
     if bare == "resolve_gene_identifier":
         return None
 
-    if bare == "overall_survival_per_cancer":
+    if bare == "analyze_cptac_gene_survival_associations":
         sentence = _build_cptac_survival_sentence(raw_results, query)
         return ("cptac_survival", sentence) if sentence else None
-    if bare == "batch_overall_survival_per_cancer":
+    if bare == "batch_analyze_cptac_gene_survival_associations":
         sentence = _build_cptac_batch_sentence(payload, analysis="survival")
         return ("cptac_survival", sentence) if sentence else None
-    if bare == "cancer_gene_expression":
+    if bare == "compare_cptac_tumor_normal_expression":
         sentence = _build_cptac_expression_sentence(raw_results, query)
         return ("cptac_expression", sentence) if sentence else None
-    if bare == "batch_cancer_gene_expression":
+    if bare == "batch_compare_cptac_tumor_normal_expression":
         sentence = _build_cptac_batch_sentence(payload, analysis="tumor-normal expression")
         return ("cptac_expression", sentence) if sentence else None
-    if bare == "tcga_survival_analysis":
+    if bare == "analyze_tcga_survival_associations":
         sentence = _build_tcga_survival_coverage_sentence(gene, payload)
         return ("tcga_survival", sentence) if sentence else None
-    if bare == "tcga_cis_association_analysis":
+    if bare == "analyze_tcga_cis_associations":
         sentence = _build_tcga_cis_coverage_sentence(gene, payload)
         return ("tcga_cis", sentence) if sentence else None
-    if bare in {"get_cis_correlations", "batch_get_cis_correlations"}:
+    if bare in {"analyze_cptac_cis_associations", "batch_analyze_cptac_cis_associations"}:
         record_count = _count_nested_records(payload.get("data") if isinstance(payload, dict) else payload)
         gene_label = f" for **{gene}**" if gene else ""
         if status == "error" and isinstance(payload, dict):
@@ -2432,35 +2432,35 @@ def _build_generic_tool_coverage_note(key: str, wrapped: Any, query: str, raw_re
         if record_count:
             return ("cptac_cis", f"CPTAC cis-correlations were also queried{gene_label} and returned **{record_count}** correlation row(s).")
         return ("cptac_cis", f"CPTAC cis-correlations were also queried{gene_label}, but no correlation rows were returned.")
-    if bare == "webgestalt":
+    if bare == "run_webgestalt_go_enrichment":
         rows = payload.get("data") if isinstance(payload, dict) else None
         if isinstance(rows, list) and rows:
             sentence = _build_webgestalt_enrichment_sentence({key: wrapped})
             return ("webgestalt", sentence) if sentence else None
         return ("webgestalt", "WebGestalt enrichment was also run, but no enriched terms were returned.")
-    if bare == "funmap_neighborhood":
+    if bare == "get_funmap_functional_neighborhood":
         if isinstance(payload, dict):
             count = len(payload.get("neighborhood") or payload.get("nodes") or [])
             gene_label = f" for **{gene}**" if gene else ""
             if count:
                 return ("funmap", f"FunMap was also queried{gene_label} and returned **{count}** functional neighbor(s).")
         return ("funmap", f"FunMap was also queried{f' for **{gene}**' if gene else ''}, but no functional neighbors were returned.")
-    if bare in {"get_target", "batch_get_target", "search_targets", "rank_targets"}:
+    if bare in {"get_drug_target_profile", "batch_get_drug_target_profiles", "search_drug_target_index", "rank_drug_targets"}:
         gene_label = f" for **{gene}**" if gene else ""
         if status == "ok":
             return ("targets", f"LinkedOmics Targets was also queried{gene_label} and returned target-index data.")
         return ("targets", f"LinkedOmics Targets was also queried{gene_label}, but no target-index data was returned.")
     if bare in {
-        "clinical_trial_information", "batch_clinical_trial_information", "gene_set_trial_information",
-        "get_study_info", "filter_clinical_trials", "meta_analysis_predictive_genes",
-        "meta_analysis_predictive_gene_sets", "get_study_predictive_genes",
-        "get_study_predictive_gene_sets",
+        "search_gene_response_trials", "batch_search_gene_response_trials", "search_gene_set_response_trials",
+        "get_trial_study_details", "search_trial_studies", "meta_analyze_response_genes",
+        "meta_analyze_response_gene_sets", "rank_study_response_genes",
+        "rank_study_response_gene_sets",
     }:
         record_count = _count_nested_records(payload)
         if status == "ok" and record_count:
             return ("trials", f"LinkedOmics Trials was also queried and returned **{record_count}** treatment-response record(s).")
         return ("trials", "LinkedOmics Trials was also queried, but no matching treatment-response records were returned.")
-    if bare in {"search_pubmed", "pubmed_search", "search_literature"}:
+    if bare in {"search_pubmed_articles", "pubmed_search", "search_literature"}:
         record_count = _count_nested_records(payload)
         if record_count:
             return ("literature", f"PubMed literature search was also run and returned **{record_count}** record(s).")
@@ -3001,31 +3001,31 @@ PLANNING RULES:
   * Explicit comparison -> parallel calls of the same analysis across the requested genes.
   * Broad profile / overview explicitly requested -> up to 4 distinct tools.
 - Do not proactively chain extra analyses. Only call additional tools when the user explicitly asks.
-- For survival questions: call only survival tools (`overall_survival_per_cancer`, `tcga_survival_analysis`). Do NOT call `cancer_gene_expression` or `clinical_trial_information` unless the user explicitly asks about expression levels or drugs/treatments.
-- For expression questions: call only expression tools (`cancer_gene_expression`). Do NOT call survival or clinical trial tools unless explicitly asked.
+- For survival questions: call only survival tools (`analyze_cptac_gene_survival_associations`, `analyze_tcga_survival_associations`). Do NOT call `compare_cptac_tumor_normal_expression` or `search_gene_response_trials` unless the user explicitly asks about expression levels or drugs/treatments.
+- For expression questions: call only expression tools (`compare_cptac_tumor_normal_expression`). Do NOT call survival or clinical trial tools unless explicitly asked.
 - Clinical trial tools are only relevant when the user asks about drugs, treatments, or clinical trials — never call them for survival or expression queries. Use the right tool for the question:
-  - Single gene → which drugs/studies predict response: `clinical_trial_information`
-  - Multiple genes → use `batch_clinical_trial_information` instead of calling `clinical_trial_information` repeatedly
-  - Pathway/gene set → drug sensitivity/resistance: `gene_set_trial_information`
-  - Study details/abstract: `get_study_info`
-  - Which studies exist for a drug/cancer: `filter_clinical_trials`
-  - Top gene biomarkers across studies (treatment-centric): `meta_analysis_predictive_genes`
-  - Top pathway biomarkers across studies (treatment-centric): `meta_analysis_predictive_gene_sets`
-  - Gene rankings within one specific study: `get_study_predictive_genes`
-  - Pathway rankings within one specific study: `get_study_predictive_gene_sets`
-  - Workflow — study-specific analysis: call `filter_clinical_trials` first to find matching studies, then `get_study_predictive_genes` or `get_study_predictive_gene_sets` on a specific study ID, then optionally `get_study_info` for context
+  - Single gene → which drugs/studies predict response: `search_gene_response_trials`
+  - Multiple genes → use `batch_search_gene_response_trials` instead of calling `search_gene_response_trials` repeatedly
+  - Pathway/gene set → drug sensitivity/resistance: `search_gene_set_response_trials`
+  - Study details/abstract: `get_trial_study_details`
+  - Which studies exist for a drug/cancer: `search_trial_studies`
+  - Top gene biomarkers across studies (treatment-centric): `meta_analyze_response_genes`
+  - Top pathway biomarkers across studies (treatment-centric): `meta_analyze_response_gene_sets`
+  - Gene rankings within one specific study: `rank_study_response_genes`
+  - Pathway rankings within one specific study: `rank_study_response_gene_sets`
+  - Workflow — study-specific analysis: call `search_trial_studies` first to find matching studies, then `rank_study_response_genes` or `rank_study_response_gene_sets` on a specific study ID, then optionally `get_trial_study_details` for context
 - For cross-study biomarker discovery, match the modality exactly:
-  - If the user asks for genes / biomarkers / markers, call only `meta_analysis_predictive_genes`.
-  - If the user asks for pathways / gene sets / signatures, call only `meta_analysis_predictive_gene_sets`.
+  - If the user asks for genes / biomarkers / markers, call only `meta_analyze_response_genes`.
+  - If the user asks for pathways / gene sets / signatures, call only `meta_analyze_response_gene_sets`.
   - Do NOT call both unless the user explicitly asks for both genes and pathways/signatures.
-- IMPORTANT — drug name resolution: when the user specifies a broad or nested treatment class, use the `treatment_category` parameter (not `drugs`) in `filter_clinical_trials`, `meta_analysis_predictive_genes`, and `meta_analysis_predictive_gene_sets`. The tool accepts convenience aliases and ClinicalOmicsDB treatment-tree labels, then expands them to the correct treatment labels automatically.
+- IMPORTANT — drug name resolution: when the user specifies a broad or nested treatment class, use the `treatment_category` parameter (not `drugs`) in `search_trial_studies`, `meta_analyze_response_genes`, and `meta_analyze_response_gene_sets`. The tool accepts convenience aliases and ClinicalOmicsDB treatment-tree labels, then expands them to the correct treatment labels automatically.
   - "chemotherapy" / "chemo" / "cytotoxic" → treatment_category="Chemotherapy"
   - "targeted therapy" / "targeted" → treatment_category="Targeted Therapy"
   - "immune checkpoint inhibitor" / "checkpoint inhibitor" / "immune checkpoint" / "ICI" / "immunotherapy" / "PD-1" / "PD-L1" / "CTLA-4" → treatment_category="Immune Checkpoint Inhibitor"
   - "combination" / "combo" / "combination therapy" → treatment_category="Combinations"
   - Nested treatment classes should stay specific: "antibody" → `treatment_category="Antibody"`, "small molecule inhibitor" → `treatment_category="Small Molecule Inhibitor"`, "HER2 inhibitor" → `treatment_category="HER2 Inhibitor"`
   - Specific drug name (e.g. "paclitaxel", "nivolumab") → use `drugs=["paclitaxel"]` as before
-- For `rank_targets`, separate tier eligibility from ranking intent:
+- For `rank_drug_targets`, separate tier eligibility from ranking intent:
   - "approved", "validated", "clinically established", "most druggable" → `ranking_mode="established"`
   - "exploratory", "discovery-stage", "frontier", "most novel" → `ranking_mode="exploratory"`
   - "not approved" / "non-approved" usually means restrict eligibility to `tiers=["T3","T4","T5"]`, but if the user does not state a readiness preference then keep `ranking_mode="balanced"`
@@ -3051,27 +3051,27 @@ SURVIVAL ROUTING:
 CPTAC cohorts (RNA + protein only): BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, UCEC.
 
 Decision rules — apply the first matching rule:
-1. User specifies a cohort NOT in the CPTAC list above (e.g. ACC, KIPAN, MESO, SKCM) → call `tcga_survival_analysis` only.
-2. User specifies an omics type not in CPTAC (methylation, miRNA, SCNA, copy number) → call `tcga_survival_analysis` only.
-3. User explicitly restricts to TCGA → call `tcga_survival_analysis` only.
-4. User explicitly restricts to CPTAC → call `overall_survival_per_cancer` only.
-5. No cohort specified, or cohort is in the CPTAC list, and omics is RNA/protein/unspecified → call BOTH `tcga_survival_analysis` AND `overall_survival_per_cancer` (they cover complementary datasets and together give a complete picture).
+1. User specifies a cohort NOT in the CPTAC list above (e.g. ACC, KIPAN, MESO, SKCM) → call `analyze_tcga_survival_associations` only.
+2. User specifies an omics type not in CPTAC (methylation, miRNA, SCNA, copy number) → call `analyze_tcga_survival_associations` only.
+3. User explicitly restricts to TCGA → call `analyze_tcga_survival_associations` only.
+4. User explicitly restricts to CPTAC → call `analyze_cptac_gene_survival_associations` only.
+5. No cohort specified, or cohort is in the CPTAC list, and omics is RNA/protein/unspecified → call BOTH `analyze_tcga_survival_associations` AND `analyze_cptac_gene_survival_associations` (they cover complementary datasets and together give a complete picture).
 
 If neither dataset is likely to have data (e.g. unsupported omics + unsupported cohort), call the closest matching tool and let it return the error naturally.
 
-`tcga_survival_analysis` requires at least TWO of (cohort, gene, omics). Always specify `omics` when doing a pan-cancer query (no cohort): infer from the query ("expression" or unspecified → "RNAseq", "protein" → "RPPA", "methylation" → "Methylation", "miRNA" → "miRNASeq", "copy number" → "SCNA").
+`analyze_tcga_survival_associations` requires at least TWO of (cohort, gene, omics). Always specify `omics` when doing a pan-cancer query (no cohort): infer from the query ("expression" or unspecified → "RNAseq", "protein" → "RPPA", "methylation" → "Methylation", "miRNA" → "miRNASeq", "copy number" → "SCNA").
 
 CIS ASSOCIATION ROUTING:
 - Treat RNA, mRNA, RNAseq, and RNA-seq as equivalent RNA-layer wording.
-- If the user asks a generic within-gene cross-omics association/correlation question without saying TCGA or CPTAC (e.g. "Is EGFR RNAseq associated with protein in LUAD?"), call BOTH `get_cis_correlations` and `tcga_cis_association_analysis`. Do not ask the user to choose a dataset.
-- Use `get_cis_correlations` when the user explicitly asks for CPTAC cis-correlations. That tool is CPTAC-only.
-- Use `tcga_cis_association_analysis` when the user asks about within-gene cross-omics correlations in TCGA data — e.g. "Is ESR1 methylation associated with its RNA expression?", "Which genes show SCNA-to-RNAseq cis associations in BRCA?", "How does TP53 copy number correlate with protein across TCGA cohorts?"
+- If the user asks a generic within-gene cross-omics association/correlation question without saying TCGA or CPTAC (e.g. "Is EGFR RNAseq associated with protein in LUAD?"), call BOTH `analyze_cptac_cis_associations` and `analyze_tcga_cis_associations`. Do not ask the user to choose a dataset.
+- Use `analyze_cptac_cis_associations` when the user explicitly asks for CPTAC cis-correlations. That tool is CPTAC-only.
+- Use `analyze_tcga_cis_associations` when the user asks about within-gene cross-omics correlations in TCGA data — e.g. "Is ESR1 methylation associated with its RNA expression?", "Which genes show SCNA-to-RNAseq cis associations in BRCA?", "How does TP53 copy number correlate with protein across TCGA cohorts?"
 - Parameter inference for TCGA: map "methylation" → source_omics="Methylation", "RNA/expression/RNAseq" → "RNAseq", "protein/RPPA" → "RPPA", "copy number/SCNA" → "SCNA".
 - Mode is inferred automatically from the parameters provided — omit parameters not mentioned by the user.
 
 SPECIAL MODES:
 - If the user's message starts with "Answer using general knowledge", answer from training knowledge and put `[GENERAL_KNOWLEDGE]` on the first line.
-- If the user's message starts with "Show what LinkedOmicsChat can analyze for", call `cancer_gene_expression`, `overall_survival_per_cancer`, `tcga_survival_analysis`, and `clinical_trial_information`.
+- If the user's message starts with "Show what LinkedOmicsChat can analyze for", call `compare_cptac_tumor_normal_expression`, `analyze_cptac_gene_survival_associations`, `analyze_tcga_survival_associations`, and `search_gene_response_trials`.
 - If the question is outside current tool scope, explain that briefly, state the supported scope, and then offer:
   **Options:** `Answer using general knowledge` · `Show what LinkedOmicsChat can analyze for [GENE]`
   Omit the second option if no gene is mentioned.
@@ -3165,23 +3165,23 @@ DIRECT RESPONSE RULES:
                     "- LinkedOmics / CPTAC: tumor-vs-normal expression, cis-correlations, FunMap, targets, trials, and CPTAC survival for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
                 )
                 lines.append(
-                    "- LinkedOmics / TCGA: multi-omics survival analysis across 35+ cohorts via `tcga_survival_analysis`; "
-                    "multi-omics cis associations (Methylation, RNAseq, RPPA, SCNA, miRNA) across 35+ cohorts via `tcga_cis_association_analysis`."
+                    "- LinkedOmics / TCGA: multi-omics survival analysis across 35+ cohorts via `analyze_tcga_survival_associations`; "
+                    "multi-omics cis associations (Methylation, RNAseq, RPPA, SCNA, miRNA) across 35+ cohorts via `analyze_tcga_cis_associations`."
                 )
             else:
                 lines.append(
                     "- LinkedOmics / CPTAC: gene expression (RNA + protein), cis-correlations, FunMap networks, "
-                    "drug targets, clinical trials, and CPTAC survival via `overall_survival_per_cancer` "
+                    "drug targets, clinical trials, and CPTAC survival via `analyze_cptac_gene_survival_associations` "
                     "for BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC."
                 )
                 lines.append(
                     "- LinkedOmics / TCGA: survival associations across 35+ cohorts and multiple omics layers "
-                    "via `tcga_survival_analysis`."
+                    "via `analyze_tcga_survival_associations`."
                 )
                 lines.append(
                     "- LinkedOmics / TCGA cis associations: within-gene cross-omics correlations "
                     "(Methylation ↔ RNAseq, SCNA ↔ RNAseq, SCNA ↔ RPPA, etc.) across 35+ TCGA cohorts "
-                    "via `tcga_cis_association_analysis`. Supports single-gene/cohort/pair lookups, "
+                    "via `analyze_tcga_cis_associations`. Supports single-gene/cohort/pair lookups, "
                     "all-omics-pairs for a gene, pan-cancer comparisons, and genome-wide scans."
                 )
         if "gene_utils" in servers:
@@ -3251,20 +3251,20 @@ DIRECT RESPONSE RULES:
             ),
             "survival_dual_dataset": (
                 "WORKFLOW ROUTING: This is a dual-dataset survival query. Use BOTH "
-                "`overall_survival_per_cancer` and `tcga_survival_analysis` unless one is clearly inapplicable "
+                "`analyze_cptac_gene_survival_associations` and `analyze_tcga_survival_associations` unless one is clearly inapplicable "
                 "or errors.\n"
             ),
             "survival_tcga_only": (
-                "WORKFLOW ROUTING: This is a TCGA-only survival query. Use `tcga_survival_analysis` and do NOT "
-                "call `overall_survival_per_cancer`.\n"
+                "WORKFLOW ROUTING: This is a TCGA-only survival query. Use `analyze_tcga_survival_associations` and do NOT "
+                "call `analyze_cptac_gene_survival_associations`.\n"
             ),
             "survival_cptac_only": (
-                "WORKFLOW ROUTING: This is a CPTAC-only survival query. Use `overall_survival_per_cancer` and do NOT "
-                "call `tcga_survival_analysis`.\n"
+                "WORKFLOW ROUTING: This is a CPTAC-only survival query. Use `analyze_cptac_gene_survival_associations` and do NOT "
+                "call `analyze_tcga_survival_associations`.\n"
             ),
             "target_lookup": (
-                "WORKFLOW ROUTING: This query is about targetability. Prefer `get_target`, `batch_get_target`, "
-                "`search_targets`, or `rank_targets`. Do not drift into PubMed unless the user explicitly asks "
+                "WORKFLOW ROUTING: This query is about targetability. Prefer `get_drug_target_profile`, `batch_get_drug_target_profiles`, "
+                "`search_drug_target_index`, or `rank_drug_targets`. Do not drift into PubMed unless the user explicitly asks "
                 "for literature.\n"
             ),
             "clinical_trials": (
@@ -3273,38 +3273,38 @@ DIRECT RESPONSE RULES:
             ),
             "clinical_trials_gene_biomarkers": (
                 "WORKFLOW ROUTING: This is a cross-study gene-biomarker query. Use "
-                "`meta_analysis_predictive_genes` only; do NOT add pathway/gene-set tools unless the user "
+                "`meta_analyze_response_genes` only; do NOT add pathway/gene-set tools unless the user "
                 "explicitly asks for pathways or signatures too.\n"
             ),
             "clinical_trials_pathway_biomarkers": (
                 "WORKFLOW ROUTING: This is a cross-study pathway/signature biomarker query. Use "
-                "`meta_analysis_predictive_gene_sets` only; do NOT add gene-level biomarker tools unless the user "
+                "`meta_analyze_response_gene_sets` only; do NOT add gene-level biomarker tools unless the user "
                 "explicitly asks for genes too.\n"
             ),
             "literature_search": (
                 "WORKFLOW ROUTING: This is a literature query. Stay within the PubMed tools.\n"
             ),
-            "funmap_neighborhood": (
-                "WORKFLOW ROUTING: This query maps to FunMap. Use `funmap_neighborhood` for a pan-cancer "
+            "get_funmap_functional_neighborhood": (
+                "WORKFLOW ROUTING: This query maps to FunMap. Use `get_funmap_functional_neighborhood` for a pan-cancer "
                 "co-functional neighborhood. Do not describe it as a co-expression network.\n"
             ),
             "cptac_cis_correlation": (
-                "WORKFLOW ROUTING: This query maps to CPTAC cis-correlation. Use `get_cis_correlations` or "
-                "`batch_get_cis_correlations`, not `tcga_cis_association_analysis`.\n"
+                "WORKFLOW ROUTING: This query maps to CPTAC cis-correlation. Use `analyze_cptac_cis_associations` or "
+                "`batch_analyze_cptac_cis_associations`, not `analyze_tcga_cis_associations`.\n"
             ),
             "tcga_cis_association": (
-                "WORKFLOW ROUTING: This query maps to TCGA cis-association. Use `tcga_cis_association_analysis`, "
-                "not `get_cis_correlations`.\n"
+                "WORKFLOW ROUTING: This query maps to TCGA cis-association. Use `analyze_tcga_cis_associations`, "
+                "not `analyze_cptac_cis_associations`.\n"
             ),
             "cis_dual_dataset": (
                 "WORKFLOW ROUTING: This generic cross-omics cis query can be answered from both CPTAC and TCGA. "
-                "Use BOTH `get_cis_correlations` (or `batch_get_cis_correlations` for multiple genes) and "
-                "`tcga_cis_association_analysis`; do not ask the user to choose a dataset. Treat RNA, mRNA, "
+                "Use BOTH `analyze_cptac_cis_associations` (or `batch_analyze_cptac_cis_associations` for multiple genes) and "
+                "`analyze_tcga_cis_associations`; do not ask the user to choose a dataset. Treat RNA, mRNA, "
                 "RNAseq, and RNA-seq as the same RNA layer. For TCGA, map generic protein to `RPPA`; for CPTAC, "
                 "map generic protein to `Protein`.\n"
             ),
             "pathway_enrichment": (
-                "WORKFLOW ROUTING: This is a pathway/enrichment query. Use `webgestalt` only when the user explicitly "
+                "WORKFLOW ROUTING: This is a pathway/enrichment query. Use `run_webgestalt_go_enrichment` only when the user explicitly "
                 "asks for pathway or gene-set analysis.\n"
             ),
         }
@@ -3371,9 +3371,9 @@ DIRECT RESPONSE RULES:
         if multi_gene:
             prompt += (
                 "\nMULTI-GENE QUERY DETECTED: The user is asking about multiple genes. "
-                "Use batch variants of tools (e.g. `batch_cancer_gene_expression`, "
-                "`batch_overall_survival_per_cancer`, `batch_clinical_trial_information`, "
-                "`batch_get_target`, `batch_get_cis_correlations`) instead of calling "
+                "Use batch variants of tools (e.g. `batch_compare_cptac_tumor_normal_expression`, "
+                "`batch_analyze_cptac_gene_survival_associations`, `batch_search_gene_response_trials`, "
+                "`batch_get_drug_target_profiles`, `batch_analyze_cptac_cis_associations`) instead of calling "
                 "single-gene tools repeatedly. A single batch call is preferred over "
                 "multiple sequential single-gene calls.\n"
             )
@@ -3885,9 +3885,9 @@ DIRECT RESPONSE RULES:
 
         def _has_tcga_all_omics_for_gene_cohort() -> bool:
             if not cohort:
-                return "linkedomics::tcga_survival_analysis" in present_tools
+                return "linkedomics::analyze_tcga_survival_associations" in present_tools
             for key, wrapped in raw_results.items():
-                if key.rsplit("#", 1)[0] != "linkedomics::tcga_survival_analysis":
+                if key.rsplit("#", 1)[0] != "linkedomics::analyze_tcga_survival_associations":
                     continue
                 if not isinstance(wrapped, dict):
                     continue
@@ -3913,24 +3913,24 @@ DIRECT RESPONSE RULES:
             return False
 
         if (
-            "linkedomics::overall_survival_per_cancer" not in present_tools
-            and "linkedomics::overall_survival_per_cancer" in available_tools
+            "linkedomics::analyze_cptac_gene_survival_associations" not in present_tools
+            and "linkedomics::analyze_cptac_gene_survival_associations" in available_tools
         ):
-            missing_calls.append(("linkedomics::overall_survival_per_cancer", {"protein": gene}))
+            missing_calls.append(("linkedomics::analyze_cptac_gene_survival_associations", {"protein": gene}))
 
         if (
             (
-                "linkedomics::tcga_survival_analysis" not in present_tools
+                "linkedomics::analyze_tcga_survival_associations" not in present_tools
                 or not _has_tcga_all_omics_for_gene_cohort()
             )
-            and "linkedomics::tcga_survival_analysis" in available_tools
+            and "linkedomics::analyze_tcga_survival_associations" in available_tools
         ):
             tcga_args: Dict[str, Any] = {"gene": gene}
             if cohort:
                 tcga_args["cohort"] = cohort
             else:
                 tcga_args["omics"] = "RNAseq"
-            missing_calls.append(("linkedomics::tcga_survival_analysis", tcga_args))
+            missing_calls.append(("linkedomics::analyze_tcga_survival_associations", tcga_args))
 
         if not missing_calls:
             return raw_results, execution_trace
@@ -4027,23 +4027,23 @@ DIRECT RESPONSE RULES:
         missing_calls: list[tuple[str, Dict[str, Any]]] = []
         has_cptac_cis = bool(
             {
-                "linkedomics::get_cis_correlations",
-                "linkedomics::batch_get_cis_correlations",
+                "linkedomics::analyze_cptac_cis_associations",
+                "linkedomics::batch_analyze_cptac_cis_associations",
             }
             & present_tools
         )
 
         if (
             not has_cptac_cis
-            and "linkedomics::get_cis_correlations" in available_tools
+            and "linkedomics::analyze_cptac_cis_associations" in available_tools
         ):
-            missing_calls.append(("linkedomics::get_cis_correlations", cptac_args))
+            missing_calls.append(("linkedomics::analyze_cptac_cis_associations", cptac_args))
 
         if (
-            "linkedomics::tcga_cis_association_analysis" not in present_tools
-            and "linkedomics::tcga_cis_association_analysis" in available_tools
+            "linkedomics::analyze_tcga_cis_associations" not in present_tools
+            and "linkedomics::analyze_tcga_cis_associations" in available_tools
         ):
-            missing_calls.append(("linkedomics::tcga_cis_association_analysis", tcga_args))
+            missing_calls.append(("linkedomics::analyze_tcga_cis_associations", tcga_args))
 
         if not missing_calls:
             return raw_results, execution_trace

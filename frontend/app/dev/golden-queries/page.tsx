@@ -22,7 +22,7 @@ type GoldenCase = GoldenQueryCase
 // ---------------------------------------------------------------------------
 
 function bareName(tool: string): string {
-    // Strip instance index suffix (e.g. "linkedomics::cancer_gene_expression#0" → "...cancer_gene_expression")
+    // Strip instance index suffix (e.g. "linkedomics::compare_cptac_tumor_normal_expression#0" → "...compare_cptac_tumor_normal_expression")
     const base = tool.replace(/#\d+$/, "")
     if (base.includes("::")) return base.split("::").pop()!
     if (base.includes("__")) return base.split("__").pop()!

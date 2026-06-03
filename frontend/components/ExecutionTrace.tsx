@@ -16,7 +16,7 @@ const STATUS_ICON = {
 }
 
 function formatToolName(tool: string): string {
-    // e.g. "linkedomics::cancer_gene_expression" → "cancer_gene_expression"
+    // e.g. "linkedomics::compare_cptac_tumor_normal_expression" → "compare_cptac_tumor_normal_expression"
     const bare = tool.includes("::") ? tool.split("::").pop()! : tool
     return bare.replace(/_/g, " ")
 }

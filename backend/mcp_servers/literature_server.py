@@ -4,11 +4,11 @@ Provides real-time literature search via NCBI E-utilities (free, no API key requ
 though setting NCBI_EMAIL in .env improves rate limits per NCBI ToS).
 
 Representative Questions & Use Cases:
-1. "Find recent papers on ESR1 and breast cancer survival." (Uses search_pubmed)
-2. "What does the literature say about TP53 mutations in lung cancer?" (Uses search_pubmed)
-3. "Get the abstract for PMID 25892560." (Uses get_pubmed_abstract)
-4. "Find papers about KRAS inhibitors published after 2022." (Uses search_pubmed)
-5. "Search for clinical trials involving EGFR in NSCLC." (Uses search_pubmed)
+1. "Find recent papers on ESR1 and breast cancer survival." (Uses search_pubmed_articles)
+2. "What does the literature say about TP53 mutations in lung cancer?" (Uses search_pubmed_articles)
+3. "Get the abstract for PMID 25892560." (Uses get_pubmed_article_details)
+4. "Find papers about KRAS inhibitors published after 2022." (Uses search_pubmed_articles)
+5. "Search for clinical trials involving EGFR in NSCLC." (Uses search_pubmed_articles)
 """
 
 import os
@@ -110,7 +110,7 @@ def _parse_article(article_node: ET.Element) -> dict[str, Any]:
 
 
 @mcp.tool()
-def search_pubmed(
+def search_pubmed_articles(
     query: str,
     max_results: int = 10,
 ) -> dict[str, Any]:
@@ -167,12 +167,12 @@ def search_pubmed(
 
 
 @mcp.tool()
-def get_pubmed_abstract(pmid: str) -> dict[str, Any]:
+def get_pubmed_article_details(pmid: str) -> dict[str, Any]:
     """Fetch full details and abstract for a specific PubMed article by PMID.
 
     Use this tool when:
     - The user provides a PMID directly
-    - You need the full abstract for an article found via search_pubmed
+    - You need the full abstract for an article found via search_pubmed_articles
 
     Use cases:
     - "Get the abstract for PMID 25892560"

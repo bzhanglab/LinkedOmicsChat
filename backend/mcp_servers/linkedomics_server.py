@@ -5,11 +5,11 @@ the CPTAC (Clinical Proteomic Tumor Analysis Consortium) cohorts. It allows for 
 gene expression, protein levels, clinical associations, drug targeting, and functional networks.
 
 Representative Questions & Use Cases:
-1. "Identify genes functionally related to ESR1 and check if any of them are FDA-approved oncology targets." (Uses funmap_neighborhood and get_target)
-2. "In which cancers is EGFR significantly overexpressed at the protein level, and is this driven by gene copy number (SCNV)?" (Uses cancer_gene_expression and get_cis_correlations)
-3. "Is high expression of BRCA1 associated with poor survival in Breast Cancer (BRCA) or Colon Adenocarcinoma (COAD)?" (Uses overall_survival_per_cancer)
-4. "Find clinical trials where ESR1 expression levels are linked to resistance to specific chemotherapy agents like paclitaxel." (Uses clinical_trial_information)
-5. "Analyze the correlation between RNA and Protein levels for TP53 across all cohorts to assess translation efficiency." (Uses get_cis_correlations)
+1. "Identify genes functionally related to ESR1 and check if any of them are FDA-approved oncology targets." (Uses get_funmap_functional_neighborhood and get_drug_target_profile)
+2. "In which cancers is EGFR significantly overexpressed at the protein level, and is this driven by gene copy number (SCNV)?" (Uses compare_cptac_tumor_normal_expression and analyze_cptac_cis_associations)
+3. "Is high expression of BRCA1 associated with poor survival in Breast Cancer (BRCA) or Colon Adenocarcinoma (COAD)?" (Uses analyze_cptac_gene_survival_associations)
+4. "Find clinical trials where ESR1 expression levels are linked to resistance to specific chemotherapy agents like paclitaxel." (Uses search_gene_response_trials)
+5. "Analyze the correlation between RNA and Protein levels for TP53 across all cohorts to assess translation efficiency." (Uses analyze_cptac_cis_associations)
 
 """
 
@@ -462,7 +462,7 @@ def _build_target_filter_metadata(
 
 
 @mcp.tool()
-def search_targets(
+def search_drug_target_index(
     tier: Optional[Literal["T1", "T2", "T3", "T4", "T5"]] = None,
     family: Optional[Literal["Kinase", "Enzyme", "GPCR", "oGPCR", "Transporter", "Ion Channel", "Transcription Factor", "Epigenetic", "Nuclear Receptor", "TF-Epigenetic", "Other"]] = None,
     antigen: Optional[Literal["TSA", "TAA"]] = None,
@@ -486,7 +486,7 @@ def search_targets(
     - "Which enzyme targets have approved oncology drugs?"
 
     Notes:
-    - For ranking by attractiveness, use rank_targets instead.
+    - For ranking by attractiveness, use rank_drug_targets instead.
     - Results are sorted by tier then gene name alphabetically.
 
     Args:
@@ -617,7 +617,7 @@ def _composite_score(info: dict[str, Any], ranking_mode: str = "balanced") -> in
 
 
 @mcp.tool()
-def rank_targets(
+def rank_drug_targets(
     tiers: Optional[list[Literal["T1", "T2", "T3", "T4", "T5"]]] = None,
     ranking_mode: Literal["balanced", "established", "exploratory"] = "balanced",
     family: Optional[Literal["Kinase", "Enzyme", "GPCR", "oGPCR", "Transporter", "Ion Channel", "Transcription Factor", "Epigenetic", "Nuclear Receptor", "TF-Epigenetic", "Other"]] = None,
@@ -728,7 +728,7 @@ def rank_targets(
 
 
 @mcp.tool()
-def funmap_neighborhood(protein: str) -> dict:
+def get_funmap_functional_neighborhood(protein: str) -> dict:
     """Retrieve the functional neighborhood of a protein in the FunMap network.
 
     FunMap is a functional network where proteins are connected if a connection is predicted by a
@@ -772,7 +772,7 @@ def funmap_neighborhood(protein: str) -> dict:
 
 
 @mcp.tool()
-def get_target(protein: str) -> dict[str, Any]:
+def get_drug_target_profile(protein: str) -> dict[str, Any]:
     """Retrieve clinical targeting data, oncology tiers, and tumor dependency for a gene.
 
     This tool integrates data from multiple sources to provide a comprehensive snapshot of a gene's
@@ -832,7 +832,7 @@ def get_target(protein: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def batch_get_target(proteins: list[str]) -> dict[str, Any]:
+def batch_get_drug_target_profiles(proteins: list[str]) -> dict[str, Any]:
     """Retrieve clinical targeting data, oncology tiers, and tumor dependency for multiple genes.
 
     This tool integrates data from multiple sources to provide a comprehensive snapshot of each gene's
@@ -853,12 +853,12 @@ def batch_get_target(proteins: list[str]) -> dict[str, Any]:
 
     Returns:
         status (str): `"available"` when the batch request completes.
-        data (dict): Per-gene results keyed by gene symbol; each value matches `get_target`, or may contain an error payload if an individual lookup fails.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `get_drug_target_profile`, or may contain an error payload if an individual lookup fails.
     """
     results = {}
     for protein in proteins:
         try:
-            targets = get_target(protein)
+            targets = get_drug_target_profile(protein)
         except Exception as e:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
@@ -948,7 +948,7 @@ def transform_os(
 
 
 @mcp.tool()
-def cancer_gene_expression(protein: str) -> dict[str, Any]:
+def compare_cptac_tumor_normal_expression(protein: str) -> dict[str, Any]:
     """Evaluate tumor–normal differential expression of a gene at RNA and protein levels across 10 CPTAC cancer cohorts.
 
     This tool performs Tumor-Normal (TN) comparison using CPTAC data. It reports direction and statistical significance of expression changes.
@@ -999,7 +999,7 @@ def cancer_gene_expression(protein: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def batch_cancer_gene_expression(proteins: list[str]) -> dict[str, Any]:
+def batch_compare_cptac_tumor_normal_expression(proteins: list[str]) -> dict[str, Any]:
     """Evaluate tumor–normal differential expression of multiple genes at RNA and protein levels across 10 CPTAC cancer cohorts.
 
     This tool performs Tumor-Normal (TN) comparison using CPTAC data. It reports direction and statistical significance of expression changes.
@@ -1021,7 +1021,7 @@ def batch_cancer_gene_expression(proteins: list[str]) -> dict[str, Any]:
 
     Returns:
         status (str): `"available"` when the batch request completes.
-        data (dict): Per-gene results keyed by gene symbol; each value matches `cancer_gene_expression`.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `compare_cptac_tumor_normal_expression`.
 
     Notes:
     - Available cohorts: BRCA (Breast), COAD (Colon), CCRCC (Kidney), GBM (Brain), HNSCC (Head/Neck), LSCC (Lung Squamous), LUAD (Lung Adeno), OV (Ovarian), PDAC (Pancreatic), UCEC (Uterine).
@@ -1030,7 +1030,7 @@ def batch_cancer_gene_expression(proteins: list[str]) -> dict[str, Any]:
     results = {}
     for protein in proteins:
         try:
-            targets = cancer_gene_expression(protein)
+            targets = compare_cptac_tumor_normal_expression(protein)
         except Exception as e:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
@@ -1038,7 +1038,7 @@ def batch_cancer_gene_expression(proteins: list[str]) -> dict[str, Any]:
 
 
 @mcp.tool()
-def overall_survival_per_cancer(protein: str) -> dict[str, Any]:
+def analyze_cptac_gene_survival_associations(protein: str) -> dict[str, Any]:
     """Evaluate the association between gene expression and overall survival across 10 CPTAC cancer cohorts.
 
     Expression levels are stratified (e.g., high vs. low), determines if high or low expression (RNA/Protein) is a significant predictor of overall survival.
@@ -1090,7 +1090,7 @@ def overall_survival_per_cancer(protein: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def batch_overall_survival_per_cancer(proteins: list[str]) -> dict[str, Any]:
+def batch_analyze_cptac_gene_survival_associations(proteins: list[str]) -> dict[str, Any]:
     """Evaluate the association between gene expression and overall survival across 10 CPTAC cancer cohorts for a list of genes.
 
     Expression levels are stratified (e.g., high vs. low), determines if high or low expression (RNA/Protein) is a significant predictor of overall survival.
@@ -1111,7 +1111,7 @@ def batch_overall_survival_per_cancer(proteins: list[str]) -> dict[str, Any]:
 
     Returns:
         status (str): `"available"` when the batch request completes.
-        data (dict): Per-gene results keyed by gene symbol; each value matches `overall_survival_per_cancer`.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `analyze_cptac_gene_survival_associations`.
 
     Notes:
     - Available omic types: RNA, protein.
@@ -1120,7 +1120,7 @@ def batch_overall_survival_per_cancer(proteins: list[str]) -> dict[str, Any]:
     results = {}
     for protein in proteins:
         try:
-            targets = overall_survival_per_cancer(protein)
+            targets = analyze_cptac_gene_survival_associations(protein)
         except Exception as e:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
@@ -1159,7 +1159,7 @@ def get_top_n_trials(
 
 
 @mcp.tool()
-def clinical_trial_information(protein: str) -> dict[str, Any]:
+def search_gene_response_trials(protein: str) -> dict[str, Any]:
     """Identify drugs and trials where gene expression predicts treatment response.
 
     Uses public clinical trial data (GSE series) to find associations between a gene's expression
@@ -1197,7 +1197,7 @@ def clinical_trial_information(protein: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
+def batch_search_gene_response_trials(proteins: list[str]) -> dict[str, Any]:
     """Identify drugs and trials where gene expression predicts treatment response for a list of proteins.
 
     Uses public clinical trial data (GSE series) to find associations between a gene's expression
@@ -1222,12 +1222,12 @@ def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
 
     Returns:
         status (str): `"available"` when the batch request completes.
-        data (dict): Per-gene results keyed by gene symbol; each value matches `clinical_trial_information`.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `search_gene_response_trials`.
     """
     results = {}
     for protein in proteins:
         try:
-            targets = clinical_trial_information(protein)
+            targets = search_gene_response_trials(protein)
         except Exception as e:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
@@ -1235,7 +1235,7 @@ def batch_clinical_trial_information(proteins: list[str]) -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_study_info(study_id: str) -> dict[str, Any]:
+def get_trial_study_details(study_id: str) -> dict[str, Any]:
     """Get full details about a specific clinical trial study by its series ID.
 
     Returns study abstract, sample size, cancer type, treatment, NCT trial ID,
@@ -1244,10 +1244,10 @@ def get_study_info(study_id: str) -> dict[str, Any]:
     Use this tool when:
     - The user asks for details about a specific study (by GSE/study ID)
     - The user wants the abstract, platform, or download link for a study
-    - Following up on a result from clinical_trial_information to learn more
+    - Following up on a result from search_gene_response_trials to learn more
 
     Args:
-        study_id (str): Study series ID as returned by clinical_trial_information
+        study_id (str): Study series ID as returned by search_gene_response_trials
             (e.g., "GSE25066" or "Choueiri_CCR_2016"). The .csv suffix is added automatically.
 
     Returns:
@@ -1264,7 +1264,7 @@ def get_study_info(study_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def gene_set_trial_information(gene_set: str) -> dict[str, Any]:
+def search_gene_set_response_trials(gene_set: str) -> dict[str, Any]:
     """Find clinical trial studies where a gene set or pathway predicts treatment response.
 
     Use this tool when:
@@ -1311,7 +1311,7 @@ def _resolve_treatment_category(
 
 
 @mcp.tool()
-def filter_clinical_trials(
+def search_trial_studies(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
@@ -1363,7 +1363,7 @@ def filter_clinical_trials(
 
 
 @mcp.tool()
-def meta_analysis_predictive_genes(
+def meta_analyze_response_genes(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
@@ -1455,7 +1455,7 @@ def meta_analysis_predictive_genes(
 
 
 @mcp.tool()
-def meta_analysis_predictive_gene_sets(
+def meta_analyze_response_gene_sets(
     drugs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
@@ -1564,12 +1564,12 @@ def _rank_study_analytes(rows: list[dict], top_n: int) -> list[dict]:
 
 
 @mcp.tool()
-def get_study_predictive_genes(study_id: str, top_n: int = 20) -> dict[str, Any]:
+def rank_study_response_genes(study_id: str, top_n: int = 20) -> dict[str, Any]:
     """Get the top genes that predict treatment response in a specific clinical study.
 
     Use this tool when:
     - The user wants to know which genes are most predictive in a specific study
-    - Following up on a study returned by clinical_trial_information or filter_clinical_trials
+    - Following up on a study returned by search_gene_response_trials or search_trial_studies
     - The user asks "which genes predict response in study GSE25066?"
 
     Args:
@@ -1601,7 +1601,7 @@ def get_study_predictive_genes(study_id: str, top_n: int = 20) -> dict[str, Any]
 
 
 @mcp.tool()
-def get_study_predictive_gene_sets(study_id: str, top_n: int = 20) -> dict[str, Any]:
+def rank_study_response_gene_sets(study_id: str, top_n: int = 20) -> dict[str, Any]:
     """Get the top gene sets / pathways that predict treatment response in a specific clinical study.
 
     Use this tool when:
@@ -1638,7 +1638,7 @@ def get_study_predictive_gene_sets(study_id: str, top_n: int = 20) -> dict[str, 
 
 
 @mcp.tool()
-def get_cis_correlations(
+def analyze_cptac_cis_associations(
     protein: str,
     pairs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
@@ -1749,7 +1749,7 @@ def get_cis_correlations(
 
 
 @mcp.tool()
-def batch_get_cis_correlations(
+def batch_analyze_cptac_cis_associations(
     proteins: list[str],
     pairs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
@@ -1778,7 +1778,7 @@ def batch_get_cis_correlations(
 
     Returns:
         status (str): `"available"` when the batch request completes, or `"error"` if the filters were invalid.
-        data (dict): Per-gene cis-correlation results keyed by gene symbol; each value matches `get_cis_correlations`.
+        data (dict): Per-gene cis-correlation results keyed by gene symbol; each value matches `analyze_cptac_cis_associations`.
         requested_pairs (list[str], optional): Raw pair filters supplied by the user.
         applied_pairs (list[str], optional): Recognized molecular pair filters applied to the result.
         ignored_pairs (list[str], optional): Pair filters that were not recognized.
@@ -1818,7 +1818,7 @@ def batch_get_cis_correlations(
     results = {}
     for protein in proteins:
         try:
-            targets = get_cis_correlations(protein, pairs=pairs, cancers=cancers)
+            targets = analyze_cptac_cis_associations(protein, pairs=pairs, cancers=cancers)
         except Exception as e:
             targets = {"status": "error", "message": str(e)}
         results[protein] = targets
@@ -1839,7 +1839,7 @@ def batch_get_cis_correlations(
 
 
 @mcp.tool()
-def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
+def run_webgestalt_go_enrichment(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
     """Perform Gene Ontology (GO) overrepresentation analysis on a list of proteins using WebGestalt. Identifies biological processes significantly enriched in the input gene set compared to a genomic background.
 
     This tool answers questions like:
@@ -1848,7 +1848,7 @@ def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
     - "After identifying FunMap partners of MYC, what functions do they share?"
 
     Best used AFTER:
-    - funmap_neighborhood() — to interpret what a gene's functional network does
+    - get_funmap_functional_neighborhood() — to interpret what a gene's functional network does
     - A custom gene list from hypothesis-driven selection
 
     Args:
@@ -1872,7 +1872,7 @@ def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
     - overlapId can be mapped back to gene symbols using NCBI Entrez.
     - Results reflect GO Biological Process terms only (not Molecular Function or Cellular Component).
     - Input genes not recognized as valid HGNC symbols are silently dropped.
-    - Best used after funmap_neighborhood() to interpret a gene's functional network, or with any custom gene list.
+    - Best used after get_funmap_functional_neighborhood() to interpret a gene's functional network, or with any custom gene list.
     """
     gene_list = "\n".join(proteins)
 
@@ -1942,7 +1942,7 @@ def webgestalt(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
 
 
 @mcp.tool()
-def tcga_survival_analysis(
+def analyze_tcga_survival_associations(
     cohort: Optional[str] = None,
     gene: Optional[str] = None,
     omics: Optional[str] = None
@@ -2087,7 +2087,7 @@ def tcga_survival_analysis(
 
 
 @mcp.tool()
-def tcga_cis_association_analysis(
+def analyze_tcga_cis_associations(
     cohort: Optional[TCGACohort] = None,
     gene: Optional[str] = None,
     source_omics: Optional[TCGACisOmics] = None,
