@@ -16,7 +16,7 @@ mcp = FastMCP("gene_utils_mcp", json_response=True)
 
 @mcp.tool()
 def resolve_gene_identifier(identifier: str) -> dict[str, Any]:
-    """Resolve any gene identifier to an HGNC gene symbol using a live database lookup.
+    """Resolves user-provided HGNC symbols, Ensembl gene identifiers or UniProt accessions to canonical HGNC gene symbols before downstream analyses.
 
     Call this tool FIRST when the user provides an Ensembl Gene ID (ENSG...) or
     UniProt accession (e.g., P04637) before calling any analysis tool. This validates

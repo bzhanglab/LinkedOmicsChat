@@ -114,7 +114,7 @@ def search_pubmed_articles(
     query: str,
     max_results: int = 10,
 ) -> dict[str, Any]:
-    """Search PubMed for peer-reviewed biomedical literature.
+    """Searches PubMed for biomedical literature and returns article metadata including title, authors, journal, year, abstract, PMID and DOI.
 
     Returns titles, authors, journal, year, abstract, PMID, and DOI for each article.
 
@@ -168,7 +168,7 @@ def search_pubmed_articles(
 
 @mcp.tool()
 def get_pubmed_article_details(pmid: str) -> dict[str, Any]:
-    """Fetch full details and abstract for a specific PubMed article by PMID.
+    """Retrieve detailed metadata and abstract for a specific PubMed article by PMID.
 
     Use this tool when:
     - The user provides a PMID directly

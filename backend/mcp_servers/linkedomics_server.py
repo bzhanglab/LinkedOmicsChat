@@ -468,7 +468,7 @@ def search_drug_target_index(
     antigen: Optional[Literal["TSA", "TAA"]] = None,
     drug_name: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Search and filter the full LinkedOmics drug target index across all ~19,700 genes by tier, family, antigen, or drug name.
+    """Search and filter the full LinkedOmics drug target database across all ~19,700 genes by oncology tier, target protein family, tumor antigen type, or drug name.
 
     Use this tool when the query involves:
     - Discovering which genes belong to a specific tier or protein family
@@ -624,7 +624,7 @@ def rank_drug_targets(
     antigen: Optional[Literal["TSA", "TAA"]] = None,
     top_n: int = 50,
 ) -> dict[str, Any]:
-    """Rank cancer targets by therapeutic attractiveness using a composite score.
+    """Rank candidate cancer drug targets using a configurable composite score, with optional filters for target tier, protein family, and antigen class. Supports balanced, established, and exploratory ranking modes.
 
     Use this tool when the query is about:
     - Most attractive, promising, or high-priority therapeutic targets
@@ -729,7 +729,7 @@ def rank_drug_targets(
 
 @mcp.tool()
 def get_funmap_functional_neighborhood(protein: str) -> dict:
-    """Retrieve the functional neighborhood of a protein in the FunMap network.
+    """Retrieve the FunMap functional neighborhood of a query gene or protein, defined as the top 50 network nodes with the highest random-walk probability starting from the query gene.
 
     FunMap is a functional network where proteins are connected if a connection is predicted by a
     machine learning model trained on expression correlation across different cancer types
@@ -773,7 +773,7 @@ def get_funmap_functional_neighborhood(protein: str) -> dict:
 
 @mcp.tool()
 def get_drug_target_profile(protein: str) -> dict[str, Any]:
-    """Retrieve clinical targeting data, oncology tiers, and tumor dependency for a gene.
+    """Retrieve a gene-level drug-target profile from LinkedOmics Targets, including oncology tier, associated drugs, cancer dependency, tumor–normal increase, protein overexpression, phosphosite activation, driver evidence, antigen status, and neoantigen evidence when available.
 
     This tool integrates data from multiple sources to provide a comprehensive snapshot of a gene's
     clinical and therapeutic potential:
@@ -833,7 +833,7 @@ def get_drug_target_profile(protein: str) -> dict[str, Any]:
 
 @mcp.tool()
 def batch_get_drug_target_profiles(proteins: list[str]) -> dict[str, Any]:
-    """Retrieve clinical targeting data, oncology tiers, and tumor dependency for multiple genes.
+    """Retrieve gene-level drug-target profiles for multiple query genes from LinkedOmics Targets, including oncology tiers, associated drugs, cancer dependency, tumor–normal increase, protein overexpression, phosphosite activation, driver evidence, antigen status, and neoantigen evidence when available.
 
     This tool integrates data from multiple sources to provide a comprehensive snapshot of each gene's
     clinical and therapeutic potential, including tier, drugs, cell line dependency, tumor overexpression,
@@ -949,7 +949,7 @@ def transform_os(
 
 @mcp.tool()
 def compare_cptac_tumor_normal_expression(protein: str) -> dict[str, Any]:
-    """Evaluate tumor–normal differential expression of a gene at RNA and protein levels across 10 CPTAC cancer cohorts.
+    """Compare tumor versus adjacent-normal RNA and protein expression of a query gene across CPTAC cancer cohorts. Report the cohort-specific direction of tumor–normal change and statistical significance at each molecular level.
 
     This tool performs Tumor-Normal (TN) comparison using CPTAC data. It reports direction and statistical significance of expression changes.
     Significant results indicate potential oncogenic overexpression or tumor-suppressive downregulation.
@@ -1000,7 +1000,7 @@ def compare_cptac_tumor_normal_expression(protein: str) -> dict[str, Any]:
 
 @mcp.tool()
 def batch_compare_cptac_tumor_normal_expression(proteins: list[str]) -> dict[str, Any]:
-    """Evaluate tumor–normal differential expression of multiple genes at RNA and protein levels across 10 CPTAC cancer cohorts.
+    """Compare tumor versus adjacent-normal RNA and protein expression for multiple query genes across CPTAC cancer cohorts. For each gene, report the cohort-specific direction of tumor–normal change and statistical significance at each molecular level.
 
     This tool performs Tumor-Normal (TN) comparison using CPTAC data. It reports direction and statistical significance of expression changes.
     Significant results indicate potential oncogenic overexpression or tumor-suppressive downregulation.
@@ -1039,7 +1039,7 @@ def batch_compare_cptac_tumor_normal_expression(proteins: list[str]) -> dict[str
 
 @mcp.tool()
 def analyze_cptac_gene_survival_associations(protein: str) -> dict[str, Any]:
-    """Evaluate the association between gene expression and overall survival across 10 CPTAC cancer cohorts.
+    """Analyze cohort-specific associations between a query gene's RNA/protein abundance and overall survival across CPTAC cancer cohorts.
 
     Expression levels are stratified (e.g., high vs. low), determines if high or low expression (RNA/Protein) is a significant predictor of overall survival.
     "Higher expression associated with poor survival" suggests the gene may serve as a negative prognostic biomarker.
@@ -1091,7 +1091,7 @@ def analyze_cptac_gene_survival_associations(protein: str) -> dict[str, Any]:
 
 @mcp.tool()
 def batch_analyze_cptac_gene_survival_associations(proteins: list[str]) -> dict[str, Any]:
-    """Evaluate the association between gene expression and overall survival across 10 CPTAC cancer cohorts for a list of genes.
+    """Analyze associations between RNA and protein abundance and overall survival for multiple query genes across CPTAC cancer cohorts. Results are organized by gene and report cohort-specific survival associations at each molecular level.
 
     Expression levels are stratified (e.g., high vs. low), determines if high or low expression (RNA/Protein) is a significant predictor of overall survival.
     "Higher expression associated with poor survival" suggests the gene may serve as a negative prognostic biomarker.
@@ -1160,7 +1160,7 @@ def get_top_n_trials(
 
 @mcp.tool()
 def search_gene_response_trials(protein: str) -> dict[str, Any]:
-    """Identify drugs and trials where gene expression predicts treatment response.
+    """Search trial-linked public gene-expression studies to identify drugs, treatments, and cancer contexts in which expression of a query gene is associated with treatment response or resistance.
 
     Uses public clinical trial data (GSE series) to find associations between a gene's expression
     and drug sensitivity or resistance.
@@ -1198,7 +1198,7 @@ def search_gene_response_trials(protein: str) -> dict[str, Any]:
 
 @mcp.tool()
 def batch_search_gene_response_trials(proteins: list[str]) -> dict[str, Any]:
-    """Identify drugs and trials where gene expression predicts treatment response for a list of proteins.
+    """Search trial-linked public gene-expression studies for multiple genes and return gene-specific associations with treatment response or resistance across drugs, treatments, and cancer contexts.
 
     Uses public clinical trial data (GSE series) to find associations between a gene's expression
     and drug sensitivity or resistance.
@@ -1236,7 +1236,7 @@ def batch_search_gene_response_trials(proteins: list[str]) -> dict[str, Any]:
 
 @mcp.tool()
 def get_trial_study_details(study_id: str) -> dict[str, Any]:
-    """Get full details about a specific clinical trial study by its series ID.
+    """Retrieve detailed metadata for a specific trial-linked study, including GSE series ID, study abstract, cancer type, treatment, sample size, NCT ID, PubMed link, and data download URL when available.
 
     Returns study abstract, sample size, cancer type, treatment, NCT trial ID,
     PubMed link, and data download URL.
@@ -1265,7 +1265,7 @@ def get_trial_study_details(study_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def search_gene_set_response_trials(gene_set: str) -> dict[str, Any]:
-    """Find clinical trial studies where a gene set or pathway predicts treatment response.
+    """Search trial-linked public gene-expression studies to identify drugs, treatments, and cancer contexts in which a query gene set or pathway is associated with treatment response.
 
     Use this tool when:
     - The query involves a pathway or gene signature (e.g., HALLMARK_HYPOXIA, EMT, cell cycle)
@@ -1316,7 +1316,7 @@ def search_trial_studies(
     cancers: Optional[list[str]] = None,
     treatment_category: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Find clinical trial studies matching a specific drug, treatment category, and/or cancer type.
+    """Find trial-linked gene-expression studies matching a specified drug, treatment class, cancer type, or combination of filters.
 
     Use this tool when:
     - The user wants to know which studies exist for a drug/cancer combination
@@ -1369,7 +1369,7 @@ def meta_analyze_response_genes(
     treatment_category: Optional[str] = None,
     top_n: int = 200,
 ) -> dict[str, Any]:
-    """Run a meta-analysis to find which genes best predict drug response across clinical studies.
+    """Perform a meta-analysis across trial-linked studies to rank genes whose expression is consistently associated with treatment response, with optional filters for drug, treatment class, and cancer type.
 
     Filters studies by drug and/or cancer type, then runs a meta-analysis across all matching
     studies to rank genes by how significantly their expression predicts treatment outcome.
@@ -1461,7 +1461,7 @@ def meta_analyze_response_gene_sets(
     treatment_category: Optional[str] = None,
     top_n: int = 200,
 ) -> dict[str, Any]:
-    """Run a meta-analysis to find which gene sets / pathways best predict drug response across clinical studies.
+    """Perform a meta-analysis across trial-linked studies to rank gene sets or pathways consistently associated with treatment response, with optional filters for drug, treatment class, and cancer type.
 
     Filters studies by drug and/or cancer type, then runs a meta-analysis across all matching
     studies to rank gene sets by how significantly their activity predicts treatment outcome.
@@ -1565,7 +1565,7 @@ def _rank_study_analytes(rows: list[dict], top_n: int) -> list[dict]:
 
 @mcp.tool()
 def rank_study_response_genes(study_id: str, top_n: int = 20) -> dict[str, Any]:
-    """Get the top genes that predict treatment response in a specific clinical study.
+    """Rank genes associated with treatment response within a specified trial-linked study.
 
     Use this tool when:
     - The user wants to know which genes are most predictive in a specific study
@@ -1602,7 +1602,7 @@ def rank_study_response_genes(study_id: str, top_n: int = 20) -> dict[str, Any]:
 
 @mcp.tool()
 def rank_study_response_gene_sets(study_id: str, top_n: int = 20) -> dict[str, Any]:
-    """Get the top gene sets / pathways that predict treatment response in a specific clinical study.
+    """Rank gene sets or pathways associated with treatment response within a specified trial-linked study.
 
     Use this tool when:
     - The user wants to know which pathways are most predictive in a specific study
@@ -1643,7 +1643,7 @@ def analyze_cptac_cis_associations(
     pairs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    """Analyze cis-regulatory relationships between molecular layers (RNA, Protein, Methylation, SCNV) for a gene.
+    """Analyze same-gene cross-layer associations among RNA, protein, methylation, and somatic copy-number measurements using CPTAC data. Optional filters allow selection of specific molecular pairs and cancer cohorts.
 
     Cis-correlations help determine what drives a gene's expression levels across CPTAC cohorts.
 
@@ -1754,7 +1754,7 @@ def batch_analyze_cptac_cis_associations(
     pairs: Optional[list[str]] = None,
     cancers: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    """Analyze cis-regulatory relationships between molecular layers (RNA, Protein, Methylation, SCNV) for a list of genes.
+    """Analyze same-gene cross-layer associations among RNA, protein, methylation, and somatic copy-number measurements for multiple query genes using CPTAC data. Results are returned separately for each gene, with optional filters for molecular pairs and cancer cohorts.
 
     Cis-correlations help determine what drives each gene's expression levels across CPTAC cohorts.
 
@@ -1840,7 +1840,7 @@ def batch_analyze_cptac_cis_associations(
 
 @mcp.tool()
 def run_webgestalt_go_enrichment(proteins: list[str], top_n: int = 5) -> dict[str, Any]:
-    """Perform Gene Ontology (GO) overrepresentation analysis on a list of proteins using WebGestalt. Identifies biological processes significantly enriched in the input gene set compared to a genomic background.
+    """Perform Gene Ontology over-representation analysis for a query gene list using WebGestalt. The tool identifies Gene Ontology biological processes that are significantly enriched in the input list relative to a genomic background.
 
     This tool answers questions like:
     - "What biological processes are shared among these cancer genes?"
@@ -1947,7 +1947,7 @@ def analyze_tcga_survival_associations(
     gene: Optional[str] = None,
     omics: Optional[str] = None
 ) -> dict:
-    """Perform survival analysis using TCGA multi-omics data via the LinkedOmics API.
+    """Analyze associations between TCGA molecular measurements and overall survival. The tool supports methylation, RNAseq, RPPA, somatic copy-number alteration, and miRNASeq data, and can evaluate survival associations for a specific gene in a specific cohort, compare omics layers for one gene, assess one gene across TCGA cohorts, or perform genome-wide survival association scans within a selected cohort and omics layer.
 
     Evaluates whether gene expression (or other molecular measurements) is associated
     with overall survival across TCGA cancer cohorts. Supports flexible query modes
@@ -2094,7 +2094,7 @@ def analyze_tcga_cis_associations(
     target_omics: Optional[TCGACisOmics] = None,
     st_method: Optional[TCGAStMethod] = "spearman",
 ) -> dict[str, Any]:
-    """Perform cis-association analysis using TCGA multi-omics data via the LinkedOmics API.
+    """Analyze same-gene cross-layer associations among TCGA molecular layers. The tool evaluates whether measurements from one omics layer, such as methylation, RNAseq, RPPA, or somatic copy-number alteration, are associated with measurements from another layer for the same gene. It supports single-gene lookups, cross-cohort queries, cohort-specific scans across omics pairs, and genome-wide cis-association scans between two molecular layers.
 
     Evaluates whether measurements from one molecular layer are associated with
     measurements from another layer for the same gene across TCGA cancer cohorts.
