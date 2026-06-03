@@ -1,6 +1,7 @@
 import axios from "axios"
 import { getAuthToken } from "./auth"
 import { resolveApiUrl } from "./runtime-url"
+import { CATEGORY_META, TOOL_CATEGORY, type CategoryKey } from "./toolCategories"
 
 export const API_URL = resolveApiUrl()
 
@@ -362,34 +363,35 @@ export interface DataSource {
     url: string
 }
 
+/** Per-tool data source, derived from the canonical tool taxonomy (by MCP server). */
 export const TOOL_DATA_SOURCES: Record<string, DataSource> = {
-    compare_cptac_tumor_normal_expression:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    analyze_cptac_cis_associations:          { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    get_trans_correlations:        { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    analyze_cptac_gene_survival_associations:   { label: "LinkedOmics",         url: "https://www.linkedomics.org" },
-    analyze_tcga_survival_associations:        { label: "LinkedOmics TCGA",    url: "http://linkedomics.org/" },
-    search_gene_response_trials:    { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
-    get_funmap_functional_neighborhood:           { label: "FunMap",              url: "https://funmap.linkedomics.org" },
-    get_drug_target_profile:                    { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
-    run_webgestalt_go_enrichment:                    { label: "WebGestalt",          url: "https://www.webgestalt.org" },
-    search_literature:             { label: "PubMed",              url: "https://pubmed.ncbi.nlm.nih.gov" },
-    pubmed_search:                 { label: "PubMed",              url: "https://pubmed.ncbi.nlm.nih.gov" },
-    get_cptac_proteomics:          { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
-    get_cptac_transcriptomics:     { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
-    get_cptac_phosphoproteomics:   { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
-    get_cptac_clinical:            { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
-    list_cptac_datasets:           { label: "CPTAC",              url: "https://proteomics.cancer.gov/programs/cptac" },
+    ...Object.fromEntries(
+        Object.entries(TOOL_CATEGORY).map(([tool, cat]) => {
+            const meta = CATEGORY_META[cat as CategoryKey]
+            return [tool, { label: meta.server, url: meta.url }]
+        })
+    ),
+    // Legacy / auxiliary tool names kept for backward compatibility.
+    get_trans_correlations:      { label: CATEGORY_META["LinkedOmics"].server, url: CATEGORY_META["LinkedOmics"].url },
+    search_literature:           { label: CATEGORY_META["PubMed"].server, url: CATEGORY_META["PubMed"].url },
+    pubmed_search:               { label: CATEGORY_META["PubMed"].server, url: CATEGORY_META["PubMed"].url },
+    get_cptac_proteomics:        { label: CATEGORY_META["LinkedOmicsKB"].server, url: CATEGORY_META["LinkedOmicsKB"].url },
+    get_cptac_transcriptomics:   { label: CATEGORY_META["LinkedOmicsKB"].server, url: CATEGORY_META["LinkedOmicsKB"].url },
+    get_cptac_phosphoproteomics: { label: CATEGORY_META["LinkedOmicsKB"].server, url: CATEGORY_META["LinkedOmicsKB"].url },
+    get_cptac_clinical:          { label: CATEGORY_META["LinkedOmicsKB"].server, url: CATEGORY_META["LinkedOmicsKB"].url },
+    list_cptac_datasets:         { label: CATEGORY_META["LinkedOmicsKB"].server, url: CATEGORY_META["LinkedOmicsKB"].url },
 }
 
-/** Short keys used in inline markdown citations → DataSource. */
+/** Short keys used in inline markdown citations → DataSource (derived from the taxonomy). */
 export const INLINE_SOURCE_MAP: Record<string, DataSource> = {
+    ...Object.fromEntries(
+        Object.values(CATEGORY_META).map((meta) => [
+            meta.sourceKey,
+            { label: meta.server, url: meta.url },
+        ])
+    ),
+    // Backward-compat alias for the previously-lumped LinkedOmics source key.
     linkedomics: { label: "LinkedOmics", url: "https://www.linkedomics.org" },
-    pubmed:      { label: "PubMed",      url: "https://pubmed.ncbi.nlm.nih.gov" },
-    funmap:      { label: "FunMap",      url: "https://funmap.linkedomics.org" },
-    webgestalt:  { label: "WebGestalt", url: "https://www.webgestalt.org" },
-    cptac:       { label: "CPTAC",      url: "https://proteomics.cancer.gov/programs/cptac" },
-    targets:     { label: "LinkedOmics Targets", url: "https://targets.linkedomics.org" },
-    trials:      { label: "LinkedOmics Trials",  url: "https://trials.linkedomics.org" },
 }
 
 /** Deduplicate tools_used into a list of unique DataSource entries. */

@@ -239,6 +239,41 @@ export function getToolCategoryGuideKeyFromLabel(label?: string | null): ToolCat
     return null
 }
 
+// Functional guide per tool. The MCP-server categories cross-cut these
+// functional guides (e.g. CPTAC tools span expression + survival), so the
+// selected-tool guide is resolved per tool rather than per category.
+const TOOL_GUIDE_KEY: Record<string, ToolCategoryGuideKey> = {
+    get_drug_target_profile: "drug-targets",
+    batch_get_drug_target_profiles: "drug-targets",
+    rank_drug_targets: "drug-targets",
+    search_drug_target_index: "drug-targets",
+    search_gene_response_trials: "clinical-trials",
+    batch_search_gene_response_trials: "clinical-trials",
+    search_gene_set_response_trials: "clinical-trials",
+    search_trial_studies: "clinical-trials",
+    meta_analyze_response_genes: "clinical-trials",
+    meta_analyze_response_gene_sets: "clinical-trials",
+    get_trial_study_details: "clinical-trials",
+    rank_study_response_genes: "clinical-trials",
+    rank_study_response_gene_sets: "clinical-trials",
+    get_funmap_functional_neighborhood: "functional-networks",
+    run_webgestalt_go_enrichment: "pathway-enrichment",
+    analyze_cptac_gene_survival_associations: "survival-analysis",
+    batch_analyze_cptac_gene_survival_associations: "survival-analysis",
+    analyze_tcga_survival_associations: "survival-analysis",
+    compare_cptac_tumor_normal_expression: "expression-analysis",
+    batch_compare_cptac_tumor_normal_expression: "expression-analysis",
+    analyze_cptac_cis_associations: "expression-analysis",
+    batch_analyze_cptac_cis_associations: "expression-analysis",
+    analyze_tcga_cis_associations: "expression-analysis",
+}
+
+export function getGuideKeyForTool(toolIdOrName?: string | null): ToolCategoryGuideKey | null {
+    if (!toolIdOrName) return null
+    const bare = (toolIdOrName.includes("::") ? toolIdOrName.split("::").pop()! : toolIdOrName).replace(/#\d+$/, "")
+    return TOOL_GUIDE_KEY[bare] ?? null
+}
+
 interface ToolCategoryGuideProps {
     category: ToolCategoryGuideKey
     className?: string

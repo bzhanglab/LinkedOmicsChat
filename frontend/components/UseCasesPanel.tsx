@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { ArrowRight, Activity, Network, Pill, TrendingUp, FlaskConical, Dna, BarChart2, HeartPulse, ClipboardList, Zap, Library } from "lucide-react"
+import { CATEGORY_META, categoryForToolName, type CategoryKey } from "@/lib/toolCategories"
 
 interface UseCase {
     id: string
@@ -9,7 +10,6 @@ interface UseCase {
     description: string
     exampleQuery: string
     tools: string[]
-    category: string
     icon: React.ElementType
 }
 
@@ -21,7 +21,6 @@ const USE_CASES: UseCase[] = [
         description: "Check whether a gene is significantly up- or downregulated in a specific CPTAC cohort.",
         exampleQuery: "How is EGFR expressed tumor vs normal in LUAD?",
         tools: ["compare_cptac_tumor_normal_expression"],
-        category: "Expression Analysis",
         icon: BarChart2,
     },
     {
@@ -30,7 +29,6 @@ const USE_CASES: UseCase[] = [
         description: "Inspect RNA, protein, methylation, and copy-number relationships for one gene across CPTAC cohorts.",
         exampleQuery: "Show cis-correlations for BRCA1 across CPTAC cohorts.",
         tools: ["analyze_cptac_cis_associations"],
-        category: "Expression Analysis",
         icon: Dna,
     },
     {
@@ -39,7 +37,6 @@ const USE_CASES: UseCase[] = [
         description: "Query within-gene cross-omics associations in TCGA for a cohort or across available omics pairs.",
         exampleQuery: "Show cis associations for TP53 in BRCA across available omics pairs.",
         tools: ["analyze_tcga_cis_associations"],
-        category: "Expression Analysis",
         icon: Activity,
     },
     // Survival Analysis
@@ -49,7 +46,6 @@ const USE_CASES: UseCase[] = [
         description: "Ask whether a gene is associated with overall survival and compare evidence across LinkedOmics cohorts.",
         exampleQuery: "Show TP53 overall survival in BRCA.",
         tools: ["analyze_cptac_gene_survival_associations", "analyze_tcga_survival_associations"],
-        category: "Survival Analysis",
         icon: HeartPulse,
     },
     {
@@ -58,7 +54,6 @@ const USE_CASES: UseCase[] = [
         description: "Focus survival analysis on one TCGA omics layer such as methylation, RNAseq, RPPA, or SCNA.",
         exampleQuery: "Show TP53 methylation survival in BRCA from TCGA.",
         tools: ["analyze_tcga_survival_associations"],
-        category: "Survival Analysis",
         icon: HeartPulse,
     },
     {
@@ -67,7 +62,6 @@ const USE_CASES: UseCase[] = [
         description: "Compare whether different TCGA omics layers for the same gene show distinct survival associations.",
         exampleQuery: "Compare survival impact of ESR1 methylation vs RNA in BRCA.",
         tools: ["analyze_tcga_survival_associations"],
-        category: "Survival Analysis",
         icon: Activity,
     },
     // Drug Targets
@@ -77,7 +71,6 @@ const USE_CASES: UseCase[] = [
         description: "Check whether a gene is a validated oncology target and review its evidence tiers.",
         exampleQuery: "Is EGFR a validated oncology target?",
         tools: ["get_drug_target_profile"],
-        category: "Drug Targets",
         icon: Pill,
     },
     {
@@ -86,7 +79,6 @@ const USE_CASES: UseCase[] = [
         description: "List genes in a target tier, protein family, or antigen class from the full target index.",
         exampleQuery: "Which kinases are FDA-approved oncology targets?",
         tools: ["search_drug_target_index"],
-        category: "Drug Targets",
         icon: Pill,
     },
     {
@@ -95,7 +87,6 @@ const USE_CASES: UseCase[] = [
         description: "Find tumor-associated or tumor-specific antigens within a selected target tier.",
         exampleQuery: "Which genes are tumor-associated antigens in T1 tier?",
         tools: ["search_drug_target_index"],
-        category: "Drug Targets",
         icon: Dna,
     },
     {
@@ -104,7 +95,6 @@ const USE_CASES: UseCase[] = [
         description: "Rank therapeutic candidates by LinkedOmics evidence, antigen status, and target tier context.",
         exampleQuery: "What are the most attractive therapeutic targets for cancer?",
         tools: ["rank_drug_targets"],
-        category: "Drug Targets",
         icon: TrendingUp,
     },
     // Clinical Trials
@@ -114,7 +104,6 @@ const USE_CASES: UseCase[] = [
         description: "Find therapies where high expression of one gene predicts sensitivity or resistance.",
         exampleQuery: "Which drugs are patients likely to be resistant to if they have high EGFR expression?",
         tools: ["search_gene_response_trials"],
-        category: "Clinical Trials",
         icon: FlaskConical,
     },
     {
@@ -123,7 +112,6 @@ const USE_CASES: UseCase[] = [
         description: "Test a short gene panel against clinical studies to find shared response or resistance signals.",
         exampleQuery: "Which drugs do ESR1 and ERBB2 predict resistance to?",
         tools: ["batch_search_gene_response_trials"],
-        category: "Clinical Trials",
         icon: FlaskConical,
     },
     {
@@ -132,7 +120,6 @@ const USE_CASES: UseCase[] = [
         description: "Ask whether pathway activity predicts response or resistance to a specific therapy.",
         exampleQuery: "Does the HALLMARK_ESTROGEN_RESPONSE pathway predict tamoxifen sensitivity?",
         tools: ["search_gene_set_response_trials"],
-        category: "Clinical Trials",
         icon: Activity,
     },
     {
@@ -141,7 +128,6 @@ const USE_CASES: UseCase[] = [
         description: "Find which studies in the trials resource tested a given drug in a specific disease setting.",
         exampleQuery: "Which studies tested nivolumab in melanoma?",
         tools: ["search_trial_studies"],
-        category: "Clinical Trials",
         icon: ClipboardList,
     },
     {
@@ -150,7 +136,6 @@ const USE_CASES: UseCase[] = [
         description: "Identify genes that repeatedly predict response across matched treatment studies.",
         exampleQuery: "Which genes best predict paclitaxel response in breast cancer?",
         tools: ["meta_analyze_response_genes"],
-        category: "Clinical Trials",
         icon: TrendingUp,
     },
     {
@@ -159,7 +144,6 @@ const USE_CASES: UseCase[] = [
         description: "Identify pathways whose activity consistently predicts treatment resistance or sensitivity.",
         exampleQuery: "What pathways predict platinum resistance in ovarian cancer?",
         tools: ["meta_analyze_response_gene_sets"],
-        category: "Clinical Trials",
         icon: TrendingUp,
     },
     {
@@ -168,7 +152,6 @@ const USE_CASES: UseCase[] = [
         description: "Inspect the top gene-level predictors of response within a specific study series.",
         exampleQuery: "Which genes predict response in study GSE25066?",
         tools: ["rank_study_response_genes"],
-        category: "Clinical Trials",
         icon: TrendingUp,
     },
     {
@@ -177,7 +160,6 @@ const USE_CASES: UseCase[] = [
         description: "Pull the metadata and study summary for a specific clinical study or series ID.",
         exampleQuery: "What was study GSE25066 about?",
         tools: ["get_trial_study_details"],
-        category: "Clinical Trials",
         icon: ClipboardList,
     },
     // Functional Networks
@@ -187,7 +169,6 @@ const USE_CASES: UseCase[] = [
         description: "Find genes that are functionally connected to a query gene in the proteogenomic network.",
         exampleQuery: "Find functional neighbors of TP53 in the FunMap network.",
         tools: ["get_funmap_functional_neighborhood"],
-        category: "Functional Networks",
         icon: Network,
     },
     {
@@ -196,7 +177,6 @@ const USE_CASES: UseCase[] = [
         description: "Chain neighborhood discovery into target and survival follow-up for candidate prioritization.",
         exampleQuery: "Find functional partners of BRCA1, identify which are druggable oncology targets, and check if any predict survival in breast cancer.",
         tools: ["get_funmap_functional_neighborhood", "get_drug_target_profile", "analyze_cptac_gene_survival_associations"],
-        category: "Functional Networks",
         icon: Network,
     },
     // Pathway Enrichment
@@ -206,7 +186,6 @@ const USE_CASES: UseCase[] = [
         description: "Run pathway enrichment on a custom gene set to summarize shared biological processes.",
         exampleQuery: "Run pathway enrichment analysis on TP53, MDM2, CDKN1A, ATM, and BRCA1.",
         tools: ["run_webgestalt_go_enrichment"],
-        category: "Pathway Enrichment",
         icon: Zap,
     },
     {
@@ -215,7 +194,6 @@ const USE_CASES: UseCase[] = [
         description: "Test whether a focused oncogene panel converges on common pathways or processes.",
         exampleQuery: "What pathways are enriched in this gene set: EGFR, MET, ERBB2, ALK, RET?",
         tools: ["run_webgestalt_go_enrichment"],
-        category: "Pathway Enrichment",
         icon: Zap,
     },
     // Literature
@@ -225,7 +203,6 @@ const USE_CASES: UseCase[] = [
         description: "Search recent PubMed papers for a gene, disease, drug, or clinical question.",
         exampleQuery: "Find recent papers on ESR1 and breast cancer survival.",
         tools: ["search_pubmed_articles"],
-        category: "Literature",
         icon: Library,
     },
     {
@@ -234,7 +211,6 @@ const USE_CASES: UseCase[] = [
         description: "Fetch the title, abstract, and citation details for a specific PMID.",
         exampleQuery: "Get the abstract for PMID 25892560.",
         tools: ["get_pubmed_article_details"],
-        category: "Literature",
         icon: Library,
     },
     // Gene Utilities
@@ -244,68 +220,47 @@ const USE_CASES: UseCase[] = [
         description: "Resolve Ensembl or UniProt identifiers to HGNC symbols before downstream analysis.",
         exampleQuery: "What gene is ENSG00000141510?",
         tools: ["resolve_gene_identifier"],
-        category: "Gene Utilities",
         icon: Dna,
     },
 ]
 
 interface CategoryDef {
+    key: CategoryKey
     label: string
+    server: string
     icon: React.ElementType
     color: string
     borderColor: string
 }
 
-const CATEGORIES: CategoryDef[] = [
-    {
-        label: "Expression Analysis",
-        icon: BarChart2,
-        color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
-        borderColor: "border-teal-400 dark:border-teal-500",
-    },
-    {
-        label: "Survival Analysis",
-        icon: HeartPulse,
-        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
-        borderColor: "border-rose-400 dark:border-rose-500",
-    },
-    {
-        label: "Drug Targets",
-        icon: Pill,
-        color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
-        borderColor: "border-amber-400 dark:border-amber-500",
-    },
-    {
-        label: "Clinical Trials",
-        icon: ClipboardList,
-        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
-        borderColor: "border-rose-400 dark:border-rose-500",
-    },
-    {
-        label: "Pathway Enrichment",
-        icon: FlaskConical,
-        color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
-        borderColor: "border-emerald-400 dark:border-emerald-500",
-    },
-    {
-        label: "Functional Networks",
-        icon: Network,
-        color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
-        borderColor: "border-blue-400 dark:border-blue-500",
-    },
-    {
-        label: "Literature",
-        icon: Library,
-        color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
-        borderColor: "border-indigo-400 dark:border-indigo-500",
-    },
-    {
-        label: "Gene Utilities",
-        icon: Dna,
-        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
-        borderColor: "border-violet-400 dark:border-violet-500",
-    },
+// Presentational config per MCP-server category. Labels and server names come
+// from the canonical taxonomy (toolCategories).
+const CATEGORY_STYLE: Record<CategoryKey, { icon: React.ElementType; color: string; borderColor: string }> = {
+    "ClinicalOmicsDB": { icon: ClipboardList, color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400", borderColor: "border-rose-400 dark:border-rose-500" },
+    "LinkedOmics Targets": { icon: Pill, color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400", borderColor: "border-amber-400 dark:border-amber-500" },
+    "LinkedOmicsKB": { icon: BarChart2, color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400", borderColor: "border-teal-400 dark:border-teal-500" },
+    "LinkedOmics": { icon: HeartPulse, color: "bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400", borderColor: "border-cyan-400 dark:border-cyan-500" },
+    "FunMap": { icon: Network, color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400", borderColor: "border-blue-400 dark:border-blue-500" },
+    "WebGestalt": { icon: FlaskConical, color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400", borderColor: "border-emerald-400 dark:border-emerald-500" },
+    "PubMed": { icon: Library, color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400", borderColor: "border-indigo-400 dark:border-indigo-500" },
+    "MyGene": { icon: Dna, color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400", borderColor: "border-violet-400 dark:border-violet-500" },
+}
+
+const CATEGORY_ORDER: CategoryKey[] = [
+    "ClinicalOmicsDB", "LinkedOmics Targets", "LinkedOmicsKB", "LinkedOmics",
+    "FunMap", "WebGestalt", "PubMed", "MyGene",
 ]
+
+const CATEGORIES: CategoryDef[] = CATEGORY_ORDER.map((key) => ({
+    key,
+    label: CATEGORY_META[key].label,
+    server: CATEGORY_META[key].server,
+    ...CATEGORY_STYLE[key],
+}))
+
+// A use case's category is derived from its primary tool's MCP server.
+const useCaseCategory = (uc: UseCase): string =>
+    CATEGORY_META[(categoryForToolName(uc.tools[0]) ?? "MyGene") as CategoryKey].label
 
 const TOOL_LABELS: Record<string, string> = {
     resolve_gene_identifier: "ID Resolve",
@@ -396,7 +351,7 @@ export function UseCasesPanel({ onStartChat }: UseCasesPanelProps) {
     const [activeCategory, setActiveCategory] = useState<string | null>(null)
 
     const filtered = activeCategory
-        ? USE_CASES.filter((uc) => uc.category === activeCategory)
+        ? USE_CASES.filter((uc) => useCaseCategory(uc) === activeCategory)
         : USE_CASES
 
     const activeCatDef = CATEGORIES.find((c) => c.label === activeCategory)
@@ -457,7 +412,7 @@ export function UseCasesPanel({ onStartChat }: UseCasesPanelProps) {
                     <div className="space-y-6">
                         {CATEGORIES.map((cat) => {
                             const Icon = cat.icon
-                            const items = USE_CASES.filter((uc) => uc.category === cat.label)
+                            const items = USE_CASES.filter((uc) => useCaseCategory(uc) === cat.label)
                             if (items.length === 0) return null
                             return (
                                 <div key={cat.label}>
@@ -468,6 +423,7 @@ export function UseCasesPanel({ onStartChat }: UseCasesPanelProps) {
                                         <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                                             {cat.label}
                                         </h3>
+                                        <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">{cat.server}</span>
                                         <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
                                         <span className="text-xs text-gray-400">{items.length}</span>
                                     </div>

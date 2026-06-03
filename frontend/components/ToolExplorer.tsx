@@ -33,7 +33,8 @@ import {
     Check,
     ClipboardList,
 } from "lucide-react"
-import { ToolCategoryGuide, getToolCategoryGuideKeyFromLabel } from "@/components/ToolCategoryGuide"
+import { ToolCategoryGuide, getToolCategoryGuideKeyFromLabel, getGuideKeyForTool } from "@/components/ToolCategoryGuide"
+import { CATEGORY_META, categoryForToolId, type CategoryKey } from "@/lib/toolCategories"
 
 interface ToolParameter {
     type?: string
@@ -858,81 +859,43 @@ const ToolCard = ({ id, toolName, schema, Icon, color, onSelect }: {
 )
 
 interface CategoryDef {
-    label: string
+    key: CategoryKey     // canonical MCP-server key
+    label: string        // friendly display label
+    server: string       // raw MCP server name (shown as subtitle/badge)
     icon: React.ElementType
     color: string        // Tailwind classes for icon bg + text
     borderColor: string  // active pill border
-    tools: string[]      // tool name suffixes (after ::)
-    serverPrefix?: string // match all tools from a server
 }
 
-const CATEGORIES: CategoryDef[] = [
-    {
-        label: "Expression Analysis",
-        icon: BarChart2,
-        color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
-        borderColor: "border-teal-400 dark:border-teal-500",
-        tools: ["compare_cptac_tumor_normal_expression", "batch_compare_cptac_tumor_normal_expression", "analyze_cptac_cis_associations", "batch_analyze_cptac_cis_associations", "analyze_tcga_cis_associations"],
-    },
-    {
-        label: "Survival Analysis",
-        icon: HeartPulse,
-        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
-        borderColor: "border-rose-400 dark:border-rose-500",
-        tools: ["analyze_cptac_gene_survival_associations", "batch_analyze_cptac_gene_survival_associations", "analyze_tcga_survival_associations"],
-    },
-    {
-        label: "Drug Targets",
-        icon: Pill,
-        color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
-        borderColor: "border-amber-400 dark:border-amber-500",
-        tools: ["get_drug_target_profile", "batch_get_drug_target_profiles", "search_drug_target_index", "rank_drug_targets"],
-    },
-    {
-        label: "Clinical Trials",
-        icon: ClipboardList,
-        color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
-        borderColor: "border-rose-400 dark:border-rose-500",
-        tools: ["search_gene_response_trials", "batch_search_gene_response_trials", "get_trial_study_details", "search_gene_set_response_trials", "search_trial_studies", "meta_analyze_response_genes", "meta_analyze_response_gene_sets", "rank_study_response_genes", "rank_study_response_gene_sets"],
-    },
-    {
-        label: "Functional Networks",
-        icon: Network,
-        color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
-        borderColor: "border-blue-400 dark:border-blue-500",
-        tools: ["get_funmap_functional_neighborhood"],
-    },
-    {
-        label: "Pathway Enrichment",
-        icon: FlaskConical,
-        color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
-        borderColor: "border-emerald-400 dark:border-emerald-500",
-        tools: ["run_webgestalt_go_enrichment"],
-    },
-    {
-        label: "Literature",
-        icon: Library,
-        color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
-        borderColor: "border-indigo-400 dark:border-indigo-500",
-        tools: [],
-        serverPrefix: "literature",
-    },
-    {
-        label: "Gene Utilities",
-        icon: Dna,
-        color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
-        borderColor: "border-violet-400 dark:border-violet-500",
-        tools: ["resolve_gene_identifier"],
-    },
+// Presentational config per MCP-server category. Tool membership, friendly
+// labels, and server names come from the canonical taxonomy (toolCategories).
+const CATEGORY_STYLE: Record<CategoryKey, { icon: React.ElementType; color: string; borderColor: string }> = {
+    "ClinicalOmicsDB": { icon: ClipboardList, color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400", borderColor: "border-rose-400 dark:border-rose-500" },
+    "LinkedOmics Targets": { icon: Pill, color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400", borderColor: "border-amber-400 dark:border-amber-500" },
+    "LinkedOmicsKB": { icon: BarChart2, color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400", borderColor: "border-teal-400 dark:border-teal-500" },
+    "LinkedOmics": { icon: HeartPulse, color: "bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400", borderColor: "border-cyan-400 dark:border-cyan-500" },
+    "FunMap": { icon: Network, color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400", borderColor: "border-blue-400 dark:border-blue-500" },
+    "WebGestalt": { icon: FlaskConical, color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400", borderColor: "border-emerald-400 dark:border-emerald-500" },
+    "PubMed": { icon: Library, color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400", borderColor: "border-indigo-400 dark:border-indigo-500" },
+    "MyGene": { icon: Dna, color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400", borderColor: "border-violet-400 dark:border-violet-500" },
+}
+
+// Display order of the category pills/sections.
+const CATEGORY_ORDER: CategoryKey[] = [
+    "ClinicalOmicsDB", "LinkedOmics Targets", "LinkedOmicsKB", "LinkedOmics",
+    "FunMap", "WebGestalt", "PubMed", "MyGene",
 ]
 
+const CATEGORIES: CategoryDef[] = CATEGORY_ORDER.map((key) => ({
+    key,
+    label: CATEGORY_META[key].label,
+    server: CATEGORY_META[key].server,
+    ...CATEGORY_STYLE[key],
+}))
+
 function getCategoryForTool(toolId: string): CategoryDef | null {
-    const toolName = toolId.split("::").pop() || toolId
-    const serverPrefix = toolId.split("::")[0]
-    return CATEGORIES.find(cat =>
-        (cat.serverPrefix && serverPrefix === cat.serverPrefix) ||
-        cat.tools.includes(toolName)
-    ) ?? null
+    const key = categoryForToolId(toolId)
+    return key ? (CATEGORIES.find(c => c.key === key) ?? null) : null
 }
 
 // Full names for TCGA cohort abbreviations (display-only, value passed is the abbreviation)
@@ -1389,8 +1352,10 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     const [searchQuery, setSearchQuery] = useState("")
     const [activeCategory, setActiveCategory] = useState<string | null>(null)
     const selectedCategory = selectedToolId ? getCategoryForTool(selectedToolId) : null
+    // Category-list banner: only the categories that map cleanly to one functional guide.
     const activeGuideKey = getToolCategoryGuideKeyFromLabel(activeCategory)
-    const selectedGuideKey = getToolCategoryGuideKeyFromLabel(selectedCategory?.label)
+    // Selected-tool guide: resolved per tool, since MCP-server categories cross-cut guides.
+    const selectedGuideKey = getGuideKeyForTool(selectedToolId)
 
     useEffect(() => {
         if (!_toolsCache) loadTools()
@@ -1699,6 +1664,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                                                 <Icon className="h-3.5 w-3.5" />
                                             </div>
                                             <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{cat.label}</h3>
+                                            <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">{cat.server}</span>
                                             <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
                                             <span className="text-xs text-gray-400">{entries.length}</span>
                                         </div>
@@ -1755,7 +1721,9 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                                         {selectedToolId.split("::").pop()}
                                     </h3>
                                     <p className="text-xs text-gray-400 dark:text-gray-500">
-                                        {selectedToolId.split("::")[0]} MCP Tool
+                                        {selectedCategory
+                                            ? `${selectedCategory.label} · ${selectedCategory.server}`
+                                            : "MCP Tool"}
                                     </p>
                                 </div>
                             </div>

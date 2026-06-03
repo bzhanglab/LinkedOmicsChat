@@ -34,6 +34,7 @@ from typing_extensions import Annotated, TypedDict
 from core.config import settings
 from core.llm_factory import LLMFactory
 from services.mcp_aggregator import MCPAggregator
+from services.tool_categories import TOOL_SOURCE_KEY as _CANONICAL_SOURCE_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -1780,35 +1781,14 @@ def _make_tool_node(tools: List[BaseTool]):
 # Graph builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Maps bare tool names → inline source key (used in #source:X hrefs)
+# Maps bare tool names → inline source key (used in #source:X hrefs).
+# Canonical mapping is derived from the tool taxonomy (services.tool_categories);
+# a few legacy/auxiliary tool names are kept for backward compatibility.
 _TOOL_SOURCE_KEY: dict = {
-    "compare_cptac_tumor_normal_expression":      "linkedomics",
-    "batch_compare_cptac_tumor_normal_expression": "linkedomics",
-    "analyze_cptac_cis_associations":        "linkedomics",
-    "batch_analyze_cptac_cis_associations":  "linkedomics",
-    "get_trans_correlations":      "linkedomics",
-    "analyze_cptac_gene_survival_associations": "linkedomics",
-    "batch_analyze_cptac_gene_survival_associations": "linkedomics",
-    "analyze_tcga_survival_associations":      "linkedomics",
-    "analyze_tcga_cis_associations": "linkedomics",
-    "search_gene_response_trials":       "trials",
-    "batch_search_gene_response_trials": "trials",
-    "get_trial_study_details":                   "trials",
-    "search_gene_set_response_trials":       "trials",
-    "search_trial_studies":           "trials",
-    "meta_analyze_response_genes":   "trials",
-    "rank_study_response_genes":           "trials",
-    "rank_study_response_gene_sets":       "trials",
-    "meta_analyze_response_gene_sets":   "trials",
-    "get_funmap_functional_neighborhood":              "funmap",
-    "get_drug_target_profile":                  "targets",
-    "batch_get_drug_target_profiles":            "targets",
-    "search_drug_target_index":              "targets",
-    "rank_drug_targets":                "targets",
-    "run_webgestalt_go_enrichment":                  "webgestalt",
+    **_CANONICAL_SOURCE_KEY,
+    "get_trans_correlations":      "tcga",
     "search_literature":           "pubmed",
     "pubmed_search":               "pubmed",
-    "search_pubmed_articles":               "pubmed",
     "get_cptac_proteomics":        "cptac",
     "get_cptac_transcriptomics":   "cptac",
     "get_cptac_phosphoproteomics": "cptac",
@@ -1849,7 +1829,7 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
         "search_trial_studies":               lambda _: f"{trials_home}/treatment_gene/",
         "meta_analyze_response_genes":       lambda _: f"{trials_home}/treatment_gene/",
         "meta_analyze_response_gene_sets":   lambda _: f"{trials_home}/treatment_gene_set/",
-        "webgestalt":                       lambda _: "https://www.webgestalt.org",
+        "run_webgestalt_go_enrichment":     lambda _: "https://www.webgestalt.org",
         "search_literature":                lambda _: "https://pubmed.ncbi.nlm.nih.gov",
         "search_pubmed_articles":                    lambda _: "https://pubmed.ncbi.nlm.nih.gov",
     }
@@ -3086,7 +3066,7 @@ RESPONSE STYLE:
 - Be concise, analytical, and easy to follow.
 - Never dump raw JSON, Python objects, or raw tool output.
 - Close with **one** brief, specific follow-up suggestion grounded in what was actually found — but ONLY when all of the following are true: (1) the response contains specific positive findings from tool results (expression values, survival stats, drug rankings, enriched pathways, etc.); (2) you are not asking the user a clarification question; (3) the result is not `[NO DATA]`, `[NO SIGNIFICANT RESULTS FOUND]`, or an error; (4) the response is not conversational or general-knowledge mode. When any of those conditions fail, omit the suggestion entirely. When included, weave it in as a natural closing sentence — no generic headers like "You might also want to ask:".
-- INLINE CITATIONS: After each factual claim that comes from a tool result, add a short inline source tag using this exact format: [Source](#source:KEY) where KEY is one of: linkedomics, pubmed, funmap, webgestalt, cptac, targets, trials. Use the key that matches the tool you called. For example: "TP53 is significantly overexpressed in LUAD [Source](#source:linkedomics)." Only cite sources that were actually queried — do not cite sources for general knowledge statements.
+- INLINE CITATIONS: After each factual claim that comes from a tool result, add a short inline source tag using this exact format: [Source](#source:KEY) where KEY is one of: trials, targets, cptac, tcga, funmap, mygene, pubmed, webgestalt. Use the key that matches the tool you called — CPTAC tools → cptac, TCGA tools → tcga, clinical-trial tools → trials, drug-target tools → targets, FunMap → funmap, WebGestalt → webgestalt, PubMed → pubmed. For example: "TP53 is significantly overexpressed in LUAD [Source](#source:cptac)." Only cite sources that were actually queried — do not cite sources for general knowledge statements.
 
 MARKDOWN FORMATTING — always apply these rules:
 - Use **bold** for gene names, cancer types, key statistics (p-values, correlation coefficients, hazard ratios), and notable findings.
