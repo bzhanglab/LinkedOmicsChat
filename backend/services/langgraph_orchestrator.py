@@ -1606,6 +1606,80 @@ def _strip_internal_fields(content: str) -> str:
     return json.dumps(_clean(data))
 
 
+def _compact_funmap(content: str) -> str:
+    """Drop the FunMap edge list before feeding the result to the LLM.
+
+    Edges (source/target pairs) are ~85% of the payload and exist for network
+    rendering, not for answering about functional neighbors. Node names + scores and
+    the neighborhood list are kept; the raw payload with edges is preserved elsewhere.
+    """
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content
+    if not isinstance(data, dict) or "edges" not in data:
+        return content
+    edges = data.get("edges")
+    compacted = {k: v for k, v in data.items() if k != "edges"}
+    if isinstance(edges, list):
+        compacted["edges_omitted"] = len(edges)
+    compacted["tool_message_compacted"] = True
+    return json.dumps(compacted)
+
+
+def _compact_neoantigen_entries(entries: Any, epitope_key: str) -> Any:
+    """Replace per-cohort neoepitope arrays with counts, keeping cohort presence."""
+    if not isinstance(entries, list):
+        return entries
+    out: List[Any] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            table = entry.get(epitope_key)
+            reduced = {k: v for k, v in entry.items() if k != epitope_key}
+            if isinstance(table, list):
+                reduced[f"{epitope_key}_count"] = len(table)
+            out.append(reduced)
+        else:
+            out.append(entry)
+    return out
+
+
+def _compact_drug_target(content: str) -> str:
+    """Summarize bulky neoantigen tables in drug-target profiles for the LLM.
+
+    Keeps tier/drugs/dependency/overexpression and neoantigen presence + cohort counts,
+    but drops the full per-epitope peptide/HLA/affinity arrays (the heaviest field),
+    which are not needed to answer targetability questions. Handles both the single-gene
+    ``{"result": ...}`` shape and the batch ``{"data": {gene: {"result": ...}}}`` shape.
+    """
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content
+
+    def _compact_profile(profile: Any) -> Any:
+        if not isinstance(profile, dict):
+            return profile
+        if "neoantigen_mutations" in profile:
+            profile["neoantigen_mutations"] = _compact_neoantigen_entries(
+                profile["neoantigen_mutations"], "neoepitopes"
+            )
+        if "neoantigen_fusions" in profile:
+            profile["neoantigen_fusions"] = _compact_neoantigen_entries(
+                profile["neoantigen_fusions"], "fusion_neoepitopes"
+            )
+        return profile
+
+    if isinstance(data, dict):
+        if isinstance(data.get("result"), dict):
+            data["result"] = _compact_profile(data["result"])
+        if isinstance(data.get("data"), dict):
+            for payload in data["data"].values():
+                if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
+                    payload["result"] = _compact_profile(payload["result"])
+    return json.dumps(data)
+
+
 def _compact_tool_message(tool_name: str, content: str) -> str:
     """Shrink tool outputs for the LLM while keeping raw payloads elsewhere.
 
@@ -1617,6 +1691,10 @@ def _compact_tool_message(tool_name: str, content: str) -> str:
         compacted = _compact_literature(content)
     elif bare == "analyze_tcga_survival_associations":
         compacted = _compact_tcga_survival(content)
+    elif bare == "get_funmap_functional_neighborhood":
+        compacted = _compact_funmap(content)
+    elif bare in ("get_drug_target_profile", "batch_get_drug_target_profiles"):
+        compacted = _compact_drug_target(content)
     else:
         compacted = content
     compacted = _strip_internal_fields(compacted)
