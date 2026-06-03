@@ -416,10 +416,9 @@
         "linkedomics::get_drug_target_profile"
       ],
       "forbidden_tools": [
-        "linkedomics::search_gene_response_trials",
-        "linkedomics::analyze_tcga_survival_associations"
+        "linkedomics::search_gene_response_trials"
       ],
-      "notes": "Classic three-part gene profile: expression + prognosis + druggability."
+      "notes": "Classic three-part gene profile: expression + prognosis + druggability. TCGA survival is allowed (not forbidden): adding it to a multi-part profile is extra evidence, not an error."
     },
     {
       "id": "expression_tcga_survival_literature",
@@ -514,10 +513,8 @@
         "linkedomics::search_gene_response_trials",
         "linkedomics::get_drug_target_profile"
       ],
-      "forbidden_tools": [
-        "linkedomics::analyze_tcga_survival_associations"
-      ],
-      "notes": "Tumor suppressor four-part profile combining expression, survival, trials, and target status."
+      "forbidden_tools": [],
+      "notes": "Tumor suppressor four-part profile combining expression, survival, trials, and target status. TCGA survival is allowed (not forbidden) in multi-part profiles."
     },
     {
       "id": "tp53_five_tool_comprehensive",
@@ -544,10 +541,8 @@
         "linkedomics::get_drug_target_profile",
         "literature::search_pubmed_articles"
       ],
-      "forbidden_tools": [
-        "linkedomics::analyze_tcga_survival_associations"
-      ],
-      "notes": "Five-tool clinical actionability report: omics, prognosis, trials, targets, literature."
+      "forbidden_tools": [],
+      "notes": "Five-tool clinical actionability report: omics, prognosis, trials, targets, literature. TCGA survival is allowed (not forbidden) in multi-part profiles."
     },
     {
       "id": "identifier_then_five_tools",
