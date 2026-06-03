@@ -1272,7 +1272,7 @@ def search_gene_set_response_trials(gene_set: str) -> dict[str, Any]:
     - The user asks whether a biological process predicts drug sensitivity or resistance
 
     Use cases:
-    - "Does HALLMARK_ESTROGEN_RESPONSE predict tamoxifen sensitivity?"
+    - "Does HALLMARK_ESTROGEN_RESPONSE_EARLY predict tamoxifen sensitivity?"
     - "Which trials show hypoxia signature predicting immunotherapy resistance?"
 
     Args:

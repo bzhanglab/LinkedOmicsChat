@@ -173,7 +173,7 @@
     },
     {
       "id": "trials_gene_set",
-      "query": "Does the HALLMARK_ESTROGEN_RESPONSE pathway predict tamoxifen sensitivity?",
+      "query": "Does the HALLMARK_ESTROGEN_RESPONSE_EARLY pathway predict tamoxifen sensitivity?",
       "expected_tools_all": [
         "linkedomics::search_gene_set_response_trials"
       ],

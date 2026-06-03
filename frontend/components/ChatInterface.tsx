@@ -2250,7 +2250,7 @@ export const ChatInterface = memo(function ChatInterface({
     const activeSearchJumpKeyRef = useRef<string | null>(null)
     const jumpHighlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [suggestions] = useState([
-        "Show me expression data for NFAT1 and CERS2",
+        "Show me expression data for NFATC2 and CERS2",
         "Compare survival for TP53 and BRCA1 across cancers",
         "Find clinical trials for EGFR in lung cancer",
         "Help me prioritize KRAS and PIK3CA as therapeutic targets",
