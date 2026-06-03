@@ -1021,6 +1021,60 @@ function getToolSpecificEnumOptions(toolId: string | null, name: string, options
     return options
 }
 
+// Small badge indicating whether a parameter must be filled in.
+function RequiredBadge({ required }: { required: boolean }) {
+    return required ? (
+        <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 rounded align-middle">
+            Required
+        </span>
+    ) : (
+        <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded align-middle">
+            Optional
+        </span>
+    )
+}
+
+// Example arguments per tool (keyed by the name after "::") so each form opens
+// pre-filled with a working example the user can submit immediately or edit.
+// Array params are given as comma-separated strings (coerced to lists on submit).
+const TOOL_EXAMPLE_ARGS: Record<string, Record<string, any>> = {
+    // Gene utilities
+    resolve_gene_identifier: { identifier: "ENSG00000141510" },
+    // Functional network
+    get_funmap_functional_neighborhood: { protein: "TP53" },
+    // Drug targets
+    get_drug_target_profile: { protein: "EGFR" },
+    batch_get_drug_target_profiles: { proteins: "EGFR, ERBB2, MET" },
+    search_drug_target_index: { tier: "T1" },
+    rank_drug_targets: { ranking_mode: "balanced" },
+    // CPTAC expression / cis
+    compare_cptac_tumor_normal_expression: { protein: "TP53" },
+    batch_compare_cptac_tumor_normal_expression: { proteins: "TP53, EGFR, ERBB2" },
+    analyze_cptac_cis_associations: { protein: "TP53" },
+    batch_analyze_cptac_cis_associations: { proteins: "TP53, EGFR" },
+    // CPTAC survival
+    analyze_cptac_gene_survival_associations: { protein: "TP53" },
+    batch_analyze_cptac_gene_survival_associations: { proteins: "TP53, EGFR, IDO1" },
+    // TCGA
+    analyze_tcga_survival_associations: { gene: "TP53", cohort: "BRCA", omics: "RNAseq" },
+    analyze_tcga_cis_associations: { gene: "TP53", cohort: "BRCA", source_omics: "SCNA", target_omics: "RNAseq", st_method: "spearman" },
+    // Clinical trials
+    search_gene_response_trials: { protein: "ESR1" },
+    batch_search_gene_response_trials: { proteins: "ESR1, TP53" },
+    search_gene_set_response_trials: { gene_set: "HALLMARK_HYPOXIA" },
+    search_trial_studies: { cancers: "Breast" },
+    meta_analyze_response_genes: { drugs: "paclitaxel" },
+    meta_analyze_response_gene_sets: { drugs: "paclitaxel" },
+    get_trial_study_details: { study_id: "GSE25066" },
+    rank_study_response_genes: { study_id: "GSE25066" },
+    rank_study_response_gene_sets: { study_id: "GSE25066" },
+    // Pathway enrichment
+    run_webgestalt_go_enrichment: { proteins: "EGFR, ERBB2, MET, ALK, RET, KRAS, BRAF, PIK3CA, AKT1, MTOR" },
+    // Literature
+    search_pubmed_articles: { query: "ESR1 breast cancer survival" },
+    get_pubmed_article_details: { pmid: "25892560" },
+}
+
 // ── Searchable enum select ────────────────────────────────────────────────────
 function EnumSelect({ name, description, required, options, value, onChange, getLabel }: {
     name: string
@@ -1080,7 +1134,8 @@ function EnumSelect({ name, description, required, options, value, onChange, get
     return (
         <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                {name} {required && <span className="text-red-500">*</span>}
+                <span className="font-mono">{name}</span>
+                <RequiredBadge required={required} />
                 <span className="ml-1.5 text-xs font-normal text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/30 px-1.5 py-0.5 rounded">
                     {options.length} options
                 </span>
@@ -1215,9 +1270,10 @@ function MultiSelect({ name, description, required, options, value, onChange, pl
     return (
         <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                {name} {required && <span className="text-red-500">*</span>}
+                <span className="font-mono">{name}</span>
+                <RequiredBadge required={required} />
                 <span className="ml-1.5 text-xs font-normal text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/30 px-1.5 py-0.5 rounded">
-                    optional multi-select
+                    multi-select
                 </span>
             </label>
             {description && (
@@ -1356,7 +1412,8 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     const handleToolSelect = (toolId: string) => {
         setSelectedToolId(toolId)
         setResult(null)
-        setArgs({})
+        const example = TOOL_EXAMPLE_ARGS[toolId.split("::").pop() || ""]
+        setArgs(example ? { ...example } : {})
         setError(null)
     }
 
@@ -1366,9 +1423,21 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
         try {
             setExecuting(true)
             setError(null)
+            // Coerce comma-separated strings into lists for array-typed params.
+            const props = tools?.[selectedToolId]?.inputSchema?.properties || {}
+            const coercedArgs = Object.fromEntries(
+                Object.entries(args).map(([k, v]) => {
+                    const p: any = props[k]
+                    const isArrayParam = p && (p.type === "array" || p.anyOf?.some((s: any) => s.type === "array"))
+                    if (isArrayParam && typeof v === "string") {
+                        return [k, v.split(",").map(s => s.trim()).filter(Boolean)]
+                    }
+                    return [k, v]
+                })
+            )
             // Strip empty strings so Optional params are sent as absent (None) not ""
             const cleanArgs = Object.fromEntries(
-                Object.entries(args).filter(([, v]) =>
+                Object.entries(coercedArgs).filter(([, v]) =>
                     v !== "" && v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0)
                 )
             )
@@ -1482,18 +1551,21 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
             )
         }
 
+        const isArrayParam = param.type === "array" || param.anyOf?.some((s: any) => s.type === "array")
         return (
             <div key={name} className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {name} {required && <span className="text-red-500">*</span>}
+                    <span className="font-mono">{name}</span>
+                    <RequiredBadge required={required} />
                 </label>
                 <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
                     {param.description}
+                    {isArrayParam && <span className="italic"> · comma-separated list</span>}
                 </div>
                 <input
                     type="text"
                     className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    placeholder={`Enter ${name}...`}
+                    placeholder={isArrayParam ? `e.g. ${name === "proteins" ? "TP53, EGFR" : "value1, value2"}` : `Enter ${name}...`}
                     value={args[name] || ""}
                     onChange={(e) => setArgs({ ...args, [name]: e.target.value })}
                 />
@@ -1712,6 +1784,15 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                         )}
 
                         <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                            {Object.keys(tools[selectedToolId].inputSchema.properties).length > 0 && (
+                                <div className="mb-4 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                                    <span>Pre-filled with an example — edit or just run.</span>
+                                    <RequiredBadge required={true} />
+                                    <span>must be filled,</span>
+                                    <RequiredBadge required={false} />
+                                    <span>can be left blank.</span>
+                                </div>
+                            )}
                             {Object.entries(tools[selectedToolId].inputSchema.properties).map(([name, param]) =>
                                 renderFormInput(
                                     name,
