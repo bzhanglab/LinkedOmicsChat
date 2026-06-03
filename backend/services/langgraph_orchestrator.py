@@ -55,6 +55,8 @@ class AgentState(TypedDict):
     # Accumulated token usage across all LLM calls in this query
     input_tokens: int
     output_tokens: int
+    # Cached prompt tokens (context caching) accumulated across LLM calls
+    cached_input_tokens: int
     # Per-node execution trace for observability and tuning
     execution_trace: List[Dict[str, Any]]
     # Ordered unique gene symbols detected in the current user query
@@ -1409,6 +1411,7 @@ def _make_agent_node(llm_with_tools, system_prompt: str):
         usage = LLMFactory._extract_usage(response, llm_with_tools)
         in_tok = usage.input_tokens
         out_tok = usage.output_tokens
+        cached_tok = usage.cached_tokens
         agent_step = state["steps"] + 1
         tool_calls = [
             _normalize_runtime_tool_name(str(tc.get("name", "")))
@@ -1421,14 +1424,18 @@ def _make_agent_node(llm_with_tools, system_prompt: str):
             "latency_ms": latency_ms,
             "input_tokens": in_tok,
             "output_tokens": out_tok,
+            "cached_tokens": cached_tok,
             "tool_calls": tool_calls,
         }
+        cache_hit_pct = (cached_tok / in_tok * 100) if in_tok else 0
         logger.info(
-            "[LangGraph] Agent step %s | latency_ms=%s | input_tokens=%s | output_tokens=%s | tool_calls=%s",
+            "[LangGraph] Agent step %s | latency_ms=%s | input_tokens=%s | output_tokens=%s | cached_tokens=%s (%.0f%%) | tool_calls=%s",
             agent_step,
             latency_ms,
             in_tok,
             out_tok,
+            cached_tok,
+            cache_hit_pct,
             tool_calls or ["final"],
         )
 
@@ -1437,6 +1444,7 @@ def _make_agent_node(llm_with_tools, system_prompt: str):
             "steps": agent_step,
             "input_tokens": state.get("input_tokens", 0) + in_tok,
             "output_tokens": state.get("output_tokens", 0) + out_tok,
+            "cached_input_tokens": state.get("cached_input_tokens", 0) + cached_tok,
             "execution_trace": list(state.get("execution_trace", [])) + [trace_entry],
         }
     return agent_node
@@ -3796,6 +3804,7 @@ DIRECT RESPONSE RULES:
             "steps": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "cached_input_tokens": 0,
             "execution_trace": preloaded_execution_trace,
             "requested_genes": requested_genes,
             "requested_identifiers": requested_identifiers,
@@ -3840,6 +3849,7 @@ DIRECT RESPONSE RULES:
         usage_tracker = {
             "input_tokens": final_state.get("input_tokens", 0),
             "output_tokens": final_state.get("output_tokens", 0),
+            "cached_input_tokens": final_state.get("cached_input_tokens", 0),
             "model": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", None) or settings.DEFAULT_LLM_MODEL,
         }
 
@@ -3848,8 +3858,10 @@ DIRECT RESPONSE RULES:
         if new_active_gene and new_active_gene != "unknown":
             session["context"]["active_gene"] = new_active_gene
 
+        _cached = usage_tracker["cached_input_tokens"]
+        _cache_pct = (_cached / usage_tracker["input_tokens"] * 100) if usage_tracker["input_tokens"] else 0
         logger.info(
-            "%s Execution summary | query=%r | steps=%s | tool_calls=%s | tools=%s | input_tokens=%s | output_tokens=%s | trace=%s",
+            "%s Execution summary | query=%r | steps=%s | tool_calls=%s | tools=%s | input_tokens=%s | output_tokens=%s | cached_input_tokens=%s (%.0f%%) | trace=%s",
             log_prefix,
             original_query[:120],
             final_state.get("steps", 0),
@@ -3857,6 +3869,8 @@ DIRECT RESPONSE RULES:
             tools_used,
             usage_tracker["input_tokens"],
             usage_tracker["output_tokens"],
+            _cached,
+            _cache_pct,
             _format_execution_trace(execution_trace),
         )
         return llm_summary, is_general_knowledge, raw_results, tools_used, usage_tracker, execution_trace

@@ -22,6 +22,7 @@ class LLMInvocationResult:
     text: str
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
     model: Optional[str] = None
 
 
@@ -158,6 +159,19 @@ class LLMFactory:
             response_metadata.get("candidates_token_count"),
         )
 
+        # Cached prompt tokens (context caching). Different providers surface this in
+        # different places; Gemini via LangChain reports it under input_token_details.
+        input_token_details = usage.get("input_token_details")
+        if not isinstance(input_token_details, dict):
+            input_token_details = {}
+        cached_tokens = _pick_int(
+            input_token_details.get("cache_read"),
+            usage.get("cached_content_token_count"),
+            usage.get("cache_read_input_tokens"),
+            token_usage.get("cached_content_token_count"),
+            response_metadata.get("cached_content_token_count"),
+        )
+
         model = (
             response_metadata.get("model_name")
             or response_metadata.get("model")
@@ -169,6 +183,7 @@ class LLMFactory:
             text=LLMFactory._extract_text(response),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
             model=str(model) if model else None,
         )
 
