@@ -1576,14 +1576,42 @@ def _annotate_empty_result(content: str, tool_name: str) -> str:
     return content
 
 
+def _strip_internal_fields(content: str) -> str:
+    """Drop underscore-prefixed (rendering/internal) keys from the LLM-facing tool JSON.
+
+    Keys like ``_plot_map``, ``_table_map``, and ``_drug_details`` exist only for
+    frontend rendering; the raw payload is preserved separately in tool_results, so
+    removing them here shrinks the agent context without affecting answers.
+    """
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content
+
+    def _clean(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: _clean(v) for k, v in obj.items() if not (isinstance(k, str) and k.startswith("_"))}
+        if isinstance(obj, list):
+            return [_clean(item) for item in obj]
+        return obj
+
+    return json.dumps(_clean(data))
+
+
 def _compact_tool_message(tool_name: str, content: str) -> str:
-    """Shrink tool outputs for the LLM while keeping raw payloads elsewhere."""
-    if tool_name in ("literature__search_pubmed", "literature__get_pubmed_abstract"):
+    """Shrink tool outputs for the LLM while keeping raw payloads elsewhere.
+
+    Matches on the bare tool name (without ``server::``/``server__`` prefix) so a
+    future rename of the server prefix does not silently disable compaction.
+    """
+    bare = tool_name.split("__")[-1].split("::")[-1]
+    if bare in ("search_pubmed_articles", "get_pubmed_article_details"):
         compacted = _compact_literature(content)
-    elif tool_name == "linkedomics__tcga_survival_analysis":
+    elif bare == "analyze_tcga_survival_associations":
         compacted = _compact_tcga_survival(content)
     else:
         compacted = content
+    compacted = _strip_internal_fields(compacted)
     return _annotate_empty_result(compacted, tool_name)
 
 
