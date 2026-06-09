@@ -2,8 +2,8 @@
 
 **LinkedOmicsChat** is an AI-powered conversational interface for multi-omics cancer research. Ask natural-language questions about gene expression, survival, methylation, copy number, and protein abundance across TCGA and CPTAC cohorts — and receive publication-ready plots, ranked tables, and LLM-generated summaries in a single chat turn.
 
-- **Live app**: _coming soon_
-- **About / data sources**: `/about` page in the app
+- **Live app**: [https://chat.linkedomics.org](https://chat.linkedomics.org)
+- **About / data sources**: [About](https://chat.linkedomics.org/about) and [Documentation](https://chat.linkedomics.org/docs)
 - **Issues / feedback**: [GitHub Issues](https://github.com/bzhanglab/LinkedOmicsChat/issues)
 
 ---
@@ -17,18 +17,21 @@
 - **Network & pathway** — FunMap neighborhood and WebGestalt enrichment
 - **Proteogenomics** — CPTAC mass-spec proteomics and phosphoproteomics integrated with TCGA
 - **Session history** — chat history persisted per user with shareable links and HTML export
-- **Guest mode** — try without registration; rate-limited to 20 queries/hour
+- **Guest mode** — try without registration; hourly limits are configurable
 
 ---
 
 ## Data Sources
 
-All data are retrieved in real time from [LinkedOmics](https://www.linkedomics.org) — no raw data is stored by this application.
+Core omics data are accessed in real time through [LinkedOmics](https://www.linkedomics.org) and LinkedOmics-hosted APIs. Supporting workflows also call external services such as FunMap, WebGestalt, PubMed, and MyGene.info. LinkedOmicsChat does not store or redistribute raw omics data.
 
 | Source | Description |
 |--------|-------------|
-| [TCGA](https://www.cancer.gov/tcga) | 11,000+ tumor samples across 32 cancer types; mRNA, miRNA, methylation, SCNA, RPPA |
-| [CPTAC](https://proteomics.cancer.gov/programs/cptac) | 10 cohorts; mass spectrometry proteomics and phosphoproteomics |
+| [LinkedOmics](https://www.linkedomics.org) / [TCGA](https://www.cancer.gov/tcga) | TCGA multi-omics analyses across 11,000+ tumor samples and 32 primary cancer types; includes mRNA, miRNA, methylation, SCNA, RPPA, and clinical data |
+| [CPTAC](https://proteomics.cancer.gov/programs/cptac) | 10 tumor cohorts with mass spectrometry proteomics and phosphoproteomics integrated with TCGA genomic data |
+| [FunMap](https://funmap.linkedomics.org) | Functional proteogenomic neighborhoods for network-based gene interpretation |
+| [WebGestalt](https://www.webgestalt.org) | Gene set enrichment analysis for pathways, processes, and functional categories |
+| [PubMed](https://pubmed.ncbi.nlm.nih.gov) / [MyGene.info](https://mygene.info) | Literature retrieval and gene identifier normalization |
 
 ---
 
@@ -42,12 +45,12 @@ All data are retrieved in real time from [LinkedOmics](https://www.linkedomics.o
 - **JWT** authentication with bcrypt password hashing
 
 ### Frontend
-- **Next.js 14+** (App Router) + **TypeScript**
+- **Next.js 14.1** (App Router) + **TypeScript**
 - **Tailwind CSS** + **shadcn/ui**
 - **ReactMarkdown** + **KaTeX** for rich response rendering
 
 ### LLM Support
-- Google Gemini, OpenAI, Anthropic Claude (configurable via `DEFAULT_LLM_MODEL`)
+- Google Gemini, OpenAI, Anthropic Claude, and Ollama (configurable via `DEFAULT_LLM_MODEL` / `USE_OLLAMA`)
 - Mock LLM mode for development without API keys
 
 ---
@@ -80,11 +83,15 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
 cat > .env << EOF
-MOCK_LLM=false
-DEFAULT_LLM_MODEL=gemini-3-flash-preview   # or gpt-4o, claude-opus-4-6, etc.
-GOOGLE_API_KEY=your-key-here               # or OPENAI_API_KEY / ANTHROPIC_API_KEY
+MOCK_LLM=true
+DEFAULT_LLM_MODEL=gpt-4-turbo-preview
 DATABASE_URL=sqlite:///./linkedomicsai.db
 DEBUG=True
+
+# To use a real provider, set MOCK_LLM=false and add one provider key:
+# OPENAI_API_KEY=your-key-here
+# GOOGLE_API_KEY=your-key-here
+# ANTHROPIC_API_KEY=your-key-here
 EOF
 
 python main.py
@@ -114,26 +121,41 @@ Set `MOCK_LLM=true` in `backend/.env` to run with simulated LLM responses.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFAULT_LLM_MODEL` | `gemini-3-flash-preview` | LLM model name |
+| `DEFAULT_LLM_MODEL` | `gpt-4-turbo-preview` | LLM model name |
 | `GOOGLE_API_KEY` | — | Google Gemini API key |
 | `OPENAI_API_KEY` | — | OpenAI API key |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key |
-| `MOCK_LLM` | `false` | Use mock responses (no key needed) |
+| `USE_OLLAMA` | `false` | Use a local Ollama model instead of a hosted provider |
+| `OLLAMA_MODEL` | `llama3` | Ollama model name |
+| `MOCK_LLM` | `true` | Use mock responses (Docker overrides this to `false` unless set) |
 | `DATABASE_URL` | `sqlite:///./linkedomicsai.db` | Database connection string |
-| `DEBUG` | `false` | Enable auto-reload (dev only) |
-| `GUEST_RATE_LIMIT_PER_HOUR` | `20` | Max guest queries per hour |
+| `DEBUG` | `true` | Enable auto-reload (dev only; Docker sets `false`) |
+| `GUEST_RATE_LIMIT_ENABLED` | `true` | Enable hourly guest query limits |
+| `GUEST_RATE_LIMIT_PER_HOUR` | `2` | Max guest queries per hour when guest limits are enabled |
 
 ### Frontend (`frontend/.env.local`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend base URL |
+| `NEXT_PUBLIC_API_URL` | local: `http://localhost:8000`; hosted: same-origin when unset | Backend base URL |
 
 ---
 
 ## Deployment
 
 ### Docker
+
+Create a root `.env` first (or let `./setup_ec2.sh` generate one on a server). For a local mock deployment:
+
+```bash
+cat > .env << EOF
+DB_PASSWORD=change-me
+MOCK_LLM=true
+CORS_ORIGINS=http://localhost:3000
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_WS_URL=ws://localhost:8000
+EOF
+```
 
 ```bash
 docker compose up -d --build
