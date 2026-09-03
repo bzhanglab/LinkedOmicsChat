@@ -3,6 +3,7 @@ services:
     postgres:
         image: postgres:16
         container_name: linkedomicsai-postgres
+        restart: unless-stopped
         environment:
             POSTGRES_DB: linkedomicsai
             POSTGRES_USER: linkedomicsai
@@ -23,6 +24,7 @@ services:
     redis:
         image: redis:7-alpine
         container_name: linkedomicsai-redis
+        restart: unless-stopped
         ports:
             - "6379:6379"
         volumes:
@@ -39,6 +41,7 @@ services:
     ollama:
         image: ollama/ollama:latest
         container_name: linkedomicsai-ollama
+        restart: unless-stopped
         ports:
             - "11434:11434"
         volumes:
@@ -56,6 +59,7 @@ services:
             context: ./backend
             dockerfile: Dockerfile
         container_name: linkedomicsai-backend
+        restart: unless-stopped
         env_file:
             - .env
         environment:
@@ -122,6 +126,7 @@ services:
                 - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
                 - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
         container_name: linkedomicsai-frontend
+        restart: unless-stopped
         environment:
             - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
             - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
