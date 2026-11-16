@@ -531,6 +531,35 @@ def _derived_webgestalt_gene_values(tool_results: Dict[str, Any]) -> set[str]:
     return derived
 
 
+_RESULT_GENE_FIELDS = ("gene", "protein", "gene_symbol", "symbol")
+
+
+def _derived_result_gene_values(tool_results: Dict[str, Any]) -> set[str]:
+    """Return gene symbols that prior same-turn tools returned (e.g. a ranking's top hits)."""
+    derived: set[str] = set()
+
+    def _walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in _RESULT_GENE_FIELDS and isinstance(value, str):
+                    normalized = _normalize_identifier_token(value)
+                    if normalized:
+                        derived.add(normalized)
+                else:
+                    _walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    for value in tool_results.values():
+        if not isinstance(value, dict):
+            continue
+        payload = value.get("_result") or {}
+        if isinstance(payload, dict) and not payload.get("error"):
+            _walk(payload)
+    return derived
+
+
 def _format_identifier_choices(values: Sequence[str]) -> str:
     """Render a short human-readable list of identifiers."""
     unique_values: List[str] = []
@@ -577,6 +606,10 @@ def _validate_tool_identifier_integrity(
     allowed_nonresolver_values.update(context_values)
     if bare == "run_webgestalt_go_enrichment":
         allowed_nonresolver_values.update(_derived_webgestalt_gene_values(tool_results))
+    if not requested_normalized:
+        # No gene named this turn, so a gene an earlier tool returned (e.g. the top
+        # hit of a ranking) is grounded rather than invented.
+        allowed_nonresolver_values.update(_derived_result_gene_values(tool_results))
 
     if bare == "resolve_gene_identifier":
         identifier = _normalize_identifier_token(args.get("identifier"))
