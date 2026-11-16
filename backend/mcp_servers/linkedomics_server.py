@@ -1217,7 +1217,7 @@ def search_gene_response_trials(protein: str) -> dict[str, Any]:
 
     Returns:
         status (str): `"available"` when trial results were retrieved, otherwise `"unavailable"`.
-        data (dict): Trial-response summary containing `resistant`, `sensitive`, `total_significant`, and `total_studies`. Each study entry includes series, study_id, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr, p_value, and response_evaluation.
+        data (dict): Trial-response summary containing `resistant`, `sensitive`, `total_significant`, and `total_studies`. Each study entry includes series, study_id, treatment, disease, subtype, clinical_trial_id, sample_size, auroc, fdr, p_value, and response_evaluation. `sensitive` lists studies where higher expression is associated with better response (`auroc < 0.5`); `resistant` lists studies where higher expression is associated with worse response (`auroc > 0.5`).
     """
     ret_val = {"status": "unavailable", "data": {}}
     req = requests.get(
@@ -1255,7 +1255,7 @@ def batch_search_gene_response_trials(proteins: list[str]) -> dict[str, Any]:
 
     Returns:
         status (str): `"available"` when the batch request completes.
-        data (dict): Per-gene results keyed by gene symbol; each value matches `search_gene_response_trials`.
+        data (dict): Per-gene results keyed by gene symbol; each value matches `search_gene_response_trials`: `sensitive` lists studies where higher expression is associated with better response (`auroc < 0.5`), `resistant` lists studies where higher expression is associated with worse response (`auroc > 0.5`).
     """
     results = {}
     for protein in proteins:
@@ -1315,7 +1315,7 @@ def search_gene_set_response_trials(gene_set: str) -> dict[str, Any]:
     Returns:
         status (str): `"available"` when trial results were retrieved, otherwise `"unavailable"`.
         gene_set (str): Normalized gene set name used in the API request.
-        data (dict): Trial-response summary containing `resistant`, `sensitive`, `total_significant`, and `total_studies`, with disease, treatment, AUROC, study metadata, and trial identifiers in each entry.
+        data (dict): Trial-response summary containing `resistant`, `sensitive`, `total_significant`, and `total_studies`, with disease, treatment, AUROC, study metadata, and trial identifiers in each entry. `sensitive` lists studies where a higher gene-set score is associated with better response (`auroc < 0.5`); `resistant` lists studies where a higher gene-set score is associated with worse response (`auroc > 0.5`).
     """
     gs = gene_set.strip().upper().replace(" ", "_")
     req = requests.get(f"https://trials.linkedomics.org/api/table/gene_set/{gs}", timeout=30)
@@ -1437,7 +1437,7 @@ def meta_analyze_response_genes(
     Returns:
         status (str): `"available"` when the meta-analysis completes, `"no_studies"` if no studies matched, or `"unavailable"` on request failure.
         data (dict): Meta-analysis result payload containing `filters`, `study_count`, `study_list`, and `top_genes`.
-        top_genes (list[dict]): Ranked gene entries with `gene`, `datasets`, `meta_p`, `meta_p_sci`, `meta_fdr`, `meta_fdr_signed`, `meta_fdr_sci`, `avg_auc`, and `direction`. Ranking follows the ClinicalOmicsDB treatment-gene table: genes are selected by smallest absolute `meta_p`. `datasets` is the number of studies where the gene was significant; `avg_auc < 0.5` indicates sensitivity and `avg_auc > 0.5` indicates resistance.
+        top_genes (list[dict]): Ranked gene entries with `gene`, `datasets`, `meta_p`, `meta_p_sci`, `meta_fdr`, `meta_fdr_signed`, `meta_fdr_sci`, `avg_auc`, and `direction`. Ranking follows the ClinicalOmicsDB treatment-gene table: genes are selected by smallest absolute `meta_p`. `datasets` is the number of studies where the gene was significant. `direction="sensitive"` (`avg_auc < 0.5`) means higher expression is associated with better response, on average across studies; `direction="resistant"` (`avg_auc > 0.5`) means higher expression is associated with worse response.
     """
     normalized_treatment_category = _normalize_treatment_category(treatment_category)
     resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
@@ -1529,7 +1529,7 @@ def meta_analyze_response_gene_sets(
     Returns:
         status (str): `"available"` when the meta-analysis completes, `"no_studies"` if no studies matched, or `"unavailable"` on request failure.
         data (dict): Meta-analysis result payload containing `filters`, `study_count`, `study_list`, and `top_gene_sets`.
-        top_gene_sets (list[dict]): Ranked gene-set entries with `gene_set`, `datasets`, `meta_p`, `meta_p_sci`, `meta_fdr`, `meta_fdr_signed`, `meta_fdr_sci`, `avg_auc`, and `direction`. Ranking follows the ClinicalOmicsDB treatment-gene-set table: gene sets are selected by smallest absolute `meta_p`. `datasets` is the number of studies where the gene set was significant; `avg_auc < 0.5` indicates sensitivity and `avg_auc > 0.5` indicates resistance.
+        top_gene_sets (list[dict]): Ranked gene-set entries with `gene_set`, `datasets`, `meta_p`, `meta_p_sci`, `meta_fdr`, `meta_fdr_signed`, `meta_fdr_sci`, `avg_auc`, and `direction`. Ranking follows the ClinicalOmicsDB treatment-gene-set table: gene sets are selected by smallest absolute `meta_p`. `datasets` is the number of studies where the gene set was significant. `direction="sensitive"` (`avg_auc < 0.5`) means a higher gene-set score is associated with better response, on average across studies; `direction="resistant"` (`avg_auc > 0.5`) means a higher gene-set score is associated with worse response.
     """
     normalized_treatment_category = _normalize_treatment_category(treatment_category)
     resolved_drugs = _resolve_treatment_category(treatment_category, drugs)
@@ -1650,7 +1650,7 @@ def rank_study_response_gene_sets(study_id: str, top_n: int = 20) -> dict[str, A
         status (str): `"available"` when study-level results were retrieved, otherwise `"unavailable"`.
         study_id (str): Study identifier requested by the user.
         data (dict): Study-level payload containing `study_id`, `total_gene_sets`, and `top_gene_sets`.
-        top_gene_sets (list[dict]): Ranked gene-set entries with `analyte`, `auc`, `fdr`, and `direction`.
+        top_gene_sets (list[dict]): Ranked gene-set entries with `analyte`, `auc`, `fdr`, and `direction`. `direction="sensitive"` means a higher gene-set score is associated with better response (`auc < 0.5`); `direction="resistant"` means a higher gene-set score is associated with worse response (`auc > 0.5`).
     """
     sid = study_id.strip()
     if not sid.endswith(".csv"):
