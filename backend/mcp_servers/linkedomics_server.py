@@ -14,6 +14,7 @@ Representative Questions & Use Cases:
 """
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -399,7 +400,7 @@ def _parse_target_html(html: str) -> dict[str, Any]:
 
 def get_target_json() -> dict[str, dict[str, str]]:
     """Get the target JSON data from the LinkedOmics API."""
-    json_req = requests.get("https://targets.linkedomics.org/index.json", timeout=5000)
+    json_req = requests.get("https://targets.linkedomics.org/index.json", timeout=60)
 
     targets_orig = json_req.json()
 
@@ -422,7 +423,40 @@ def get_target_json() -> dict[str, dict[str, str]]:
     return targets
 
 
-targets = get_target_json()
+_TARGETS_CACHE_PATH = Path(__file__).resolve().parents[1] / "data" / "cache" / "targets_index.json"
+_TARGETS_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
+_targets: Optional[dict[str, dict[str, str]]] = None
+
+
+def get_targets() -> dict[str, dict[str, str]]:
+    """Return the drug-target index, loaded on first use and cached on disk for a day.
+
+    Each tool call runs in a fresh server process, so loading the 2 MB index at import time
+    made every linkedomics tool call download it (and crash the server when the download
+    failed). Now only the target tools load it, from the disk cache while fresh; a stale
+    cache is used if a refresh download fails.
+    """
+    global _targets
+    if _targets is not None:
+        return _targets
+    cache = _TARGETS_CACHE_PATH
+    if not cache.exists() or time.time() - cache.stat().st_mtime > _TARGETS_CACHE_MAX_AGE_SECONDS:
+        try:
+            _targets = get_target_json()
+        except Exception:
+            if not cache.exists():
+                raise
+        else:
+            try:  # best effort; write-then-rename so concurrent processes never read a partial file
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                tmp = cache.with_name(f"{cache.name}.{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(_targets))
+                tmp.replace(cache)
+            except OSError:
+                pass
+            return _targets
+    _targets = json.loads(cache.read_text())
+    return _targets
 
 
 def _build_target_filter_metadata(
@@ -501,7 +535,7 @@ def search_drug_target_index(
         genes (list): Sorted by tier then gene name; each entry has gene, tier, family, drugs, antigen, count (LinkedOmics evidence score).
     """
     results = []
-    for gene, info in targets.items():
+    for gene, info in get_targets().items():
         gene_tier = info.get("tier", "")
         gene_family = info.get("Family", "") or info.get("family", "")
         gene_antigen = info.get("antigen", "")
@@ -684,7 +718,7 @@ def rank_drug_targets(
                 "filter_label": f"tiers={','.join(requested_tiers)}" if requested_tiers else "all targets",
             }
     candidates = []
-    for gene, info in targets.items():
+    for gene, info in get_targets().items():
         gene_tier = info.get("tier", "")
         if gene_tier not in included_tiers:
             continue
@@ -807,8 +841,7 @@ def get_drug_target_profile(protein: str) -> dict[str, Any]:
     Returns:
         result (dict | str): Detailed targeting and tumor biology fields when the gene is found, otherwise the string `"No target information found"`.
     """
-    global targets
-
+    targets = get_targets()
     if protein.upper() not in targets:
         return {"result": "No target information found"}
 
