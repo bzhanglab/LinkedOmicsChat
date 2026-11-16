@@ -1998,7 +1998,9 @@ def _make_tool_node(tools: List[BaseTool]):
             # Extract gene from args (protein, gene_symbol, gene, or proteins list for batch tools)
             gene_arg = args.get("protein") or args.get("gene_symbol") or args.get("gene")
             proteins_arg = args.get("proteins")  # batch tools use a list
-            if gene_arg and isinstance(gene_arg, str) and gene_arg.lower() not in {"it", "its", "it's"}:
+            if validation_error:
+                pass  # a blocked call's gene was not authorized, so it must not become the active gene
+            elif gene_arg and isinstance(gene_arg, str) and gene_arg.lower() not in {"it", "its", "it's"}:
                 active_gene = gene_arg.upper()
             elif proteins_arg and isinstance(proteins_arg, list) and proteins_arg:
                 active_gene = proteins_arg[0].upper()
