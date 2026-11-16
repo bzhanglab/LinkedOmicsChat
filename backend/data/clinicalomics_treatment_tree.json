@@ -1,0 +1,494 @@
+[
+  {
+    "id": 50,
+    "label": "Targeted Therapy",
+    "nodes": [
+      {
+        "id": 16,
+        "label": "Antibody",
+        "nodes": [
+          {
+            "id": 2,
+            "label": "Anti-CD20 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 1,
+                "label": "Rituximab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "label": "Anti-CTLA-4 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 3,
+                "label": "Ipilimumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "label": "Anti-HER2 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 5,
+                "label": "Pertuzumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "label": "Anti-IGF1R Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 7,
+                "label": "Ganitumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 10,
+            "label": "Anti-PD-L1 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 9,
+                "label": "Atezolizumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "label": "Anti-PD1 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 11,
+                "label": "Nivolumab",
+                "nodes": []
+              },
+              {
+                "id": 12,
+                "label": "Pembrolizumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 15,
+            "label": "Anti-VEGF Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 14,
+                "label": "Bevacizumab",
+                "nodes": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 19,
+        "label": "Antibody-Drug Conjugate",
+        "nodes": [
+          {
+            "id": 18,
+            "label": "Anti-HER2 Antibody-drug Conjugate",
+            "nodes": [
+              {
+                "id": 17,
+                "label": "Trastuzumab Emtansine",
+                "nodes": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 20,
+        "label": "Dexamethasone",
+        "nodes": []
+      },
+      {
+        "id": 28,
+        "label": "Immune Checkpoint Inhibitor",
+        "nodes": [
+          {
+            "id": 22,
+            "label": "Anti-CTLA-4 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 21,
+                "label": "Ipilimumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "label": "Anti-PD-L1 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 23,
+                "label": "Atezolizumab",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 27,
+            "label": "Anti-PD1 Monoclonal Antibody",
+            "nodes": [
+              {
+                "id": 25,
+                "label": "Nivolumab",
+                "nodes": []
+              },
+              {
+                "id": 26,
+                "label": "Pembrolizumab",
+                "nodes": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 48,
+        "label": "Small Molecule Inhibitor",
+        "nodes": [
+          {
+            "id": 30,
+            "label": "AKT Inhibitor",
+            "nodes": [
+              {
+                "id": 29,
+                "label": "Akt Inhibitor MK2206",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 33,
+            "label": "HER2 Inhibitor",
+            "nodes": [
+              {
+                "id": 31,
+                "label": "Lapatinib",
+                "nodes": []
+              },
+              {
+                "id": 32,
+                "label": "Neratinib",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 35,
+            "label": "HSP90 Inhibitor",
+            "nodes": [
+              {
+                "id": 34,
+                "label": "Ganetespib",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 37,
+            "label": "Non-Steroidal Aromatase Inhibitor",
+            "nodes": [
+              {
+                "id": 36,
+                "label": "Letrozole",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 39,
+            "label": "PDGFR Inhibitor",
+            "nodes": [
+              {
+                "id": 38,
+                "label": "Sunitinib",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 41,
+            "label": "Poly (ADP-Ribose) Polymerase Inhibitor",
+            "nodes": [
+              {
+                "id": 40,
+                "label": "Veliparib",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 43,
+            "label": "Proteasome Inhibitor",
+            "nodes": [
+              {
+                "id": 42,
+                "label": "Bortezomib",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 45,
+            "label": "VEGFR Tyrosine Kinase Inhibitor",
+            "nodes": [
+              {
+                "id": 44,
+                "label": "Sunitinib",
+                "nodes": []
+              }
+            ]
+          },
+          {
+            "id": 47,
+            "label": "c-KIT Inhibitor",
+            "nodes": [
+              {
+                "id": 46,
+                "label": "Sunitinib",
+                "nodes": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 49,
+        "label": "Thalidomide",
+        "nodes": []
+      }
+    ]
+  },
+  {
+    "id": 67,
+    "label": "Chemotherapy",
+    "nodes": [
+      {
+        "id": 53,
+        "label": "Anthracyclines",
+        "nodes": [
+          {
+            "id": 51,
+            "label": "Doxorubicin",
+            "nodes": []
+          },
+          {
+            "id": 52,
+            "label": "Epirubicin",
+            "nodes": []
+          }
+        ]
+      },
+      {
+        "id": 56,
+        "label": "Antimetabolites",
+        "nodes": [
+          {
+            "id": 54,
+            "label": "Capecitabine",
+            "nodes": []
+          },
+          {
+            "id": 55,
+            "label": "Fluorouracil",
+            "nodes": []
+          }
+        ]
+      },
+      {
+        "id": 57,
+        "label": "Ixabepilone",
+        "nodes": []
+      },
+      {
+        "id": 60,
+        "label": "Nitrogen Mustards",
+        "nodes": [
+          {
+            "id": 58,
+            "label": "Chlorambucil",
+            "nodes": []
+          },
+          {
+            "id": 59,
+            "label": "Cyclophosphamide",
+            "nodes": []
+          }
+        ]
+      },
+      {
+        "id": 62,
+        "label": "Platinum Compounds",
+        "nodes": [
+          {
+            "id": 61,
+            "label": "Carboplatin",
+            "nodes": []
+          }
+        ]
+      },
+      {
+        "id": 65,
+        "label": "Taxanes",
+        "nodes": [
+          {
+            "id": 63,
+            "label": "Docetaxel",
+            "nodes": []
+          },
+          {
+            "id": 64,
+            "label": "Paclitaxel",
+            "nodes": []
+          }
+        ]
+      },
+      {
+        "id": 66,
+        "label": "Thiotepa",
+        "nodes": []
+      }
+    ]
+  },
+  {
+    "id": 92,
+    "label": "Combinations",
+    "nodes": [
+      {
+        "id": 68,
+        "label": "ACV",
+        "nodes": []
+      },
+      {
+        "id": 69,
+        "label": "Anti-CD20 + Nitrogen mustard",
+        "nodes": []
+      },
+      {
+        "id": 70,
+        "label": "FAC",
+        "nodes": []
+      },
+      {
+        "id": 71,
+        "label": "PAC",
+        "nodes": []
+      },
+      {
+        "id": 72,
+        "label": "Proteasome inhibitor + Immune modulator",
+        "nodes": []
+      },
+      {
+        "id": 73,
+        "label": "TA",
+        "nodes": []
+      },
+      {
+        "id": 74,
+        "label": "TAC",
+        "nodes": []
+      },
+      {
+        "id": 75,
+        "label": "TAC + AKT inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 76,
+        "label": "TAC + AKT inhibitor + HER2 inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 77,
+        "label": "TAC + Angiopoietin inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 78,
+        "label": "TAC + Angiopoietin inhibitor + HER2 inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 79,
+        "label": "TAC + HER2 inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 80,
+        "label": "TAC + HER2 inhibitor + Immune checkpoint inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 81,
+        "label": "TAC + HSP90 inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 82,
+        "label": "TAC + IGF1R inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 83,
+        "label": "TAC + Immune checkpoint inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 84,
+        "label": "TFAC",
+        "nodes": []
+      },
+      {
+        "id": 85,
+        "label": "TFAC + HER2 inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 86,
+        "label": "TP",
+        "nodes": []
+      },
+      {
+        "id": 87,
+        "label": "TP + Immune checkpoint inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 88,
+        "label": "TPAC",
+        "nodes": []
+      },
+      {
+        "id": 89,
+        "label": "TPAC + PARP inhibitor",
+        "nodes": []
+      },
+      {
+        "id": 90,
+        "label": "TX",
+        "nodes": []
+      },
+      {
+        "id": 91,
+        "label": "VEFGR inhibitor + Immune checkpoint inhibitor",
+        "nodes": []
+      }
+    ]
+  }
+]

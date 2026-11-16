@@ -60,6 +60,7 @@ data/*
 !data/.gitkeep
 backend/data/*
 !backend/data/.gitkeep
+!backend/data/clinicalomics_treatment_tree.json
 
 # Generated exports/artifacts
 outputs/
