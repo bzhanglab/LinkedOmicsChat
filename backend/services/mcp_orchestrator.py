@@ -5626,18 +5626,24 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             out_tok = response.get("_output_tokens", 0) or 0
             model_name = response.get("_model") or self._default_llm_model_name()
             if (in_tok or out_tok) and session.get("client_ip"):
-                db = SessionLocal()
-                try:
-                    db.add(GuestTokenUsage(
-                        ip_address=session["client_ip"],
-                        input_tokens=in_tok,
-                        output_tokens=out_tok,
-                        model=model_name,
-                        timestamp=time.time(),
-                    ))
-                    db.commit()
-                finally:
-                    db.close()
+                usage = GuestTokenUsage(
+                    ip_address=session["client_ip"],
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
+                    model=model_name,
+                    timestamp=time.time(),
+                )
+                if settings.DATABASE_URL.startswith("sqlite"):
+                    db = SessionLocal()
+                    try:
+                        db.add(usage)
+                        db.commit()
+                    finally:
+                        db.close()
+                else:
+                    async with SessionLocal() as db:
+                        db.add(usage)
+                        await db.commit()
             return None
 
         if settings.DATABASE_URL.startswith("sqlite"):
