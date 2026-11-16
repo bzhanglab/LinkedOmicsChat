@@ -10,7 +10,7 @@ langchain-core>=0.3.0
 langchain-openai
 langchain-anthropic
 langchain-google-genai>=2.0.0
-langchain-community>=0.3.0
+langchain-community==0.4.1  # 0.4.2 removed ChatOllama (used in core/llm_factory.py)
 openai
 anthropic
 
@@ -39,7 +39,7 @@ plotly
 kaleido
 
 # Database
-sqlalchemy
+sqlalchemy[asyncio]
 asyncpg
 
 # HTTP & WebSocket
