@@ -347,10 +347,9 @@ read -p "Rebuild and restart Docker containers? (y/n) " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Build first so the running containers keep serving; only then swap in the new images.
-    # If the build fails, the site is left untouched. The backend runs the synced code through
-    # a bind mount (./backend:/app), so restart it even when its image did not change.
+    # If the build fails, the site is left untouched.
     echo "🔨 Building images on server (the site keeps serving until the swap)..."
-    $SSH_CMD "$LINKEDOMICSCHAT_AWS_HOST" "cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose build && docker compose up -d && docker compose restart backend"
+    $SSH_CMD "$LINKEDOMICSCHAT_AWS_HOST" "cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose build && docker compose up -d"
     echo ""
     echo -e "${GREEN}✅ Deployment complete!${NC}"
     echo ""
@@ -361,7 +360,7 @@ else
     echo ""
     echo "ℹ️  Files synced. Containers not rebuilt."
     echo "   To rebuild manually:"
-    echo "   ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose build && docker compose up -d && docker compose restart backend'"
+    echo "   ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose build && docker compose up -d'"
 fi
 
 echo ""
