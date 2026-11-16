@@ -776,6 +776,8 @@ _LITERATURE_KEYWORDS = (
 
 _TARGET_KEYWORDS = (
     "drug target", "drug targets",
+    # "What drugs target ITGB7?" — without these, "drugs" alone routes to trials-only tools
+    "drugs target", "drugs that target", "targeting", "targeted by",
     "druggable",
     "therapeutic target", "therapeutic targets",
     "oncology target", "oncology targets",
@@ -2461,6 +2463,39 @@ def _first_payload_for_tool(raw_results: Dict[str, Any], bare_tool: str) -> tupl
     return None
 
 
+# Row ID fields a follow-up may point back to ("the first study", "those genes").
+_RESULT_ID_FIELDS = ("series", "study_id", "pmid", "gene", "protein", "gene_symbol", "symbol", "gene_set")
+
+
+def _result_refs(raw_results: Dict[str, Any], per_list: int = 8, max_lists: int = 4) -> List[str]:
+    """Leading IDs (studies, genes, PMIDs, ...) each tool returned, in display order.
+
+    The one-sentence turn summary drops result tables, so without these a follow-up like
+    "tell me more about the first study in those results" cannot resolve its reference.
+    """
+    refs: List[str] = []
+
+    def _walk(obj: Any, label: str) -> None:
+        if len(refs) >= max_lists:
+            return
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if not str(key).startswith("_"):
+                    _walk(value, f"{label}.{key}")
+        elif isinstance(obj, list) and obj and isinstance(obj[0], dict):
+            field = next((name for name in _RESULT_ID_FIELDS if name in obj[0]), None)
+            if field is None:
+                return
+            values = _ordered_unique_strings([item.get(field) for item in obj if isinstance(item, dict)])
+            if values:
+                more = f" (+{len(values) - per_list} more)" if len(values) > per_list else ""
+                refs.append(f"{label} [{field}]: {', '.join(values[:per_list])}{more}")
+
+    for key, wrapped in (raw_results or {}).items():
+        _walk(_unwrap_tool_payload(wrapped)[2], _bare_tool_name(key))
+    return refs
+
+
 def _build_cptac_expression_sentence(raw_results: Dict[str, Any], query: str) -> str:
     """Build a deterministic CPTAC expression note when that tool is omitted."""
     first = _first_payload_for_tool(raw_results, "compare_cptac_tumor_normal_expression")
@@ -3689,6 +3724,10 @@ DIRECT RESPONSE RULES:
             sentences = re.split(r"(?<=[.!?])\s+", clean)
             first = sentences[0][:300] if sentences else clean[:300]
             lines.append(f"Finding: {first}")
+
+        refs = _result_refs(response.get("raw_results") or {})
+        if refs:
+            lines.append("Results shown (in order): " + "; ".join(refs))
 
         if lines:
             return "\n".join(lines)
