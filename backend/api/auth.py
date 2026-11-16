@@ -4,6 +4,7 @@ Handles user registration, login, and token management
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 import logging
@@ -39,7 +40,6 @@ from core.auth import (
 )
 from core.config import settings
 from core.dependencies import get_current_user, is_admin_user
-from core.database import SessionLocal
 from core.email import email_delivery_configured, send_verification_email
 from models.database import User, TokenUsage
 import time
@@ -341,42 +341,42 @@ async def get_public_runtime_config():
 
 
 @router.get("/me/usage")
-async def get_usage(current_user: User = Depends(get_current_user)):
+async def get_usage(current_user: User = Depends(get_current_user), db = Depends(get_db)):
     """Token usage summary for the authenticated user."""
-    db = SessionLocal()
-    try:
+    if settings.DATABASE_URL.startswith("sqlite"):
         rows = db.query(TokenUsage).filter(TokenUsage.user_id == current_user.id).all()
+    else:
+        result = await db.execute(select(TokenUsage).where(TokenUsage.user_id == current_user.id))
+        rows = result.scalars().all()
 
-        total_input = sum(r.input_tokens for r in rows)
-        total_output = sum(r.output_tokens for r in rows)
-        total_queries = len(rows)
+    total_input = sum(r.input_tokens for r in rows)
+    total_output = sum(r.output_tokens for r in rows)
+    total_queries = len(rows)
 
-        # Per-day breakdown (last 30 days)
-        now = time.time()
-        cutoff = now - 30 * 86400
-        from collections import defaultdict
-        import datetime
-        daily: dict = defaultdict(lambda: {"input_tokens": 0, "output_tokens": 0, "queries": 0})
-        for r in rows:
-            if r.timestamp >= cutoff:
-                day = datetime.datetime.utcfromtimestamp(r.timestamp).strftime("%Y-%m-%d")
-                daily[day]["input_tokens"] += r.input_tokens
-                daily[day]["output_tokens"] += r.output_tokens
-                daily[day]["queries"] += 1
+    # Per-day breakdown (last 30 days)
+    now = time.time()
+    cutoff = now - 30 * 86400
+    from collections import defaultdict
+    import datetime
+    daily: dict = defaultdict(lambda: {"input_tokens": 0, "output_tokens": 0, "queries": 0})
+    for r in rows:
+        if r.timestamp >= cutoff:
+            day = datetime.datetime.utcfromtimestamp(r.timestamp).strftime("%Y-%m-%d")
+            daily[day]["input_tokens"] += r.input_tokens
+            daily[day]["output_tokens"] += r.output_tokens
+            daily[day]["queries"] += 1
 
-        return {
-            "user_id": current_user.id,
-            "username": current_user.username,
-            "total_queries": total_queries,
-            "total_input_tokens": total_input,
-            "total_output_tokens": total_output,
-            "total_tokens": total_input + total_output,
-            "last_30_days": [
-                {"date": d, **v} for d, v in sorted(daily.items())
-            ],
-        }
-    finally:
-        db.close()
+    return {
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "total_queries": total_queries,
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "total_tokens": total_input + total_output,
+        "last_30_days": [
+            {"date": d, **v} for d, v in sorted(daily.items())
+        ],
+    }
 
 
 @router.post("/forgot-password")
