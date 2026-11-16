@@ -101,7 +101,8 @@ fi
 
 # Test SSH connection
 echo "🔌 Testing SSH connection..."
-if ! $SSH_CMD -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$LINKEDOMICSCHAT_AWS_HOST" "echo 'Connection successful'" > /dev/null 2>&1; then
+# -n: don't read stdin, so answers piped into this script reach the prompts below
+if ! $SSH_CMD -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$LINKEDOMICSCHAT_AWS_HOST" "echo 'Connection successful'" > /dev/null 2>&1; then
     echo -e "${RED}❌ Cannot connect to $LINKEDOMICSCHAT_AWS_HOST${NC}"
     echo "Please check:"
     echo "  1. Instance is running"
@@ -240,6 +241,16 @@ if [ ! -z "$LINKEDOMICSCHAT_SERVER_FILES" ]; then
     done
 fi
 
+# Skip everything git ignores (local caches, session artifacts, notes, ...). Ask git
+# for the list so negations, nested .gitignore files, and .git/info/exclude all apply.
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    echo "" >> "$EXCLUDE_FILE"
+    echo "# Git-ignored paths (anchored to the repo root)" >> "$EXCLUDE_FILE"
+    git ls-files --others --ignored --exclude-standard --directory | sed 's|^|/|' >> "$EXCLUDE_FILE"
+else
+    echo -e "${YELLOW}⚠️  Not in a git work tree - git-ignored files will not be skipped${NC}"
+fi
+
 echo "📦 Syncing files to server..."
 echo "   From: $(pwd)"
 echo "   To: $LINKEDOMICSCHAT_AWS_HOST:$LINKEDOMICSCHAT_REMOTE_PATH"
@@ -321,6 +332,12 @@ fi
 # Clean up exclude file
 rm -f "$EXCLUDE_FILE"
 
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo ""
+    echo -e "${YELLOW}Dry run complete - no files were changed and containers were not rebuilt.${NC}"
+    exit 0
+fi
+
 echo ""
 echo -e "${GREEN}✅ Files synced successfully${NC}"
 echo ""
@@ -329,8 +346,10 @@ echo ""
 read -p "Rebuild and restart Docker containers? (y/n) " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "🔨 Rebuilding containers on server..."
-    $SSH_CMD "$LINKEDOMICSCHAT_AWS_HOST" "cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose down && docker compose up -d --build"
+    # Build first so the running containers keep serving; only then swap in the new images.
+    # If the build fails, the site is left untouched.
+    echo "🔨 Building images on server (the site keeps serving until the swap)..."
+    $SSH_CMD "$LINKEDOMICSCHAT_AWS_HOST" "cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose build && docker compose up -d"
     echo ""
     echo -e "${GREEN}✅ Deployment complete!${NC}"
     echo ""
@@ -341,7 +360,7 @@ else
     echo ""
     echo "ℹ️  Files synced. Containers not rebuilt."
     echo "   To rebuild manually:"
-    echo "   ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose up -d --build'"
+    echo "   ssh $LINKEDOMICSCHAT_AWS_HOST 'cd $LINKEDOMICSCHAT_REMOTE_PATH && docker compose build && docker compose up -d'"
 fi
 
 echo ""
