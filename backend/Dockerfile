@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
+# Copy pinned requirements (generated from requirements.txt; see the header of requirements.lock)
+COPY requirements.lock .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the exact, tested dependency versions
+RUN pip install --no-cache-dir -r requirements.lock
 
 # Copy application code
 COPY . .
