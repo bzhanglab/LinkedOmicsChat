@@ -384,16 +384,16 @@
     },
     {
       "id": "cis_and_enrichment",
-      "query": "Find the top cis-correlated genes for MYC and run pathway enrichment on them.",
+      "query": "In TCGA breast cancer (BRCA), which genes have the strongest copy-number (SCNA) to RNA cis associations, and what pathways are enriched among the top genes?",
       "expected_tools_all": [
-        "linkedomics::analyze_cptac_cis_associations",
+        "linkedomics::analyze_tcga_cis_associations",
         "linkedomics::run_webgestalt_go_enrichment"
       ],
       "forbidden_tools": [
         "linkedomics::analyze_cptac_gene_survival_associations",
         "linkedomics::search_gene_response_trials"
       ],
-      "notes": "Correlation discovery followed by enrichment — natural two-step workflow."
+      "notes": "Correlation discovery followed by enrichment — genome-wide TCGA cis scan whose top genes feed enrichment. (A cis tool for one gene, e.g. MYC, returns that gene's cross-layer correlations, not a gene list to enrich.)"
     },
     {
       "id": "survival_and_literature",
