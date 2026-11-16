@@ -1468,7 +1468,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
 
             setResult(cleanResult)
         } catch (err: any) {
-            setError(err.message || "Execution failed")
+            setError(err.response?.data?.detail || err.message || "Execution failed")
         } finally {
             setExecuting(false)
         }

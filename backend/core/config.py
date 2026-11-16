@@ -172,6 +172,12 @@ class Settings(BaseSettings):
     # Set USER_RATE_LIMIT_ENABLED=true in .env to enable; disabled by default.
     USER_RATE_LIMIT_ENABLED: bool = False
     USER_RATE_LIMIT_PER_HOUR: int = 20
+
+    # Direct tool runs (Tool Explorer, POST /api/v1/tools/execute), counted separately from chat.
+    # Guests are limited per client IP, signed-in users per user ID; admins are exempt.
+    TOOL_RATE_LIMIT_ENABLED: bool = True
+    TOOL_GUEST_RATE_LIMIT_PER_HOUR: int = 30
+    TOOL_USER_RATE_LIMIT_PER_HOUR: int = 120
     
     model_config = SettingsConfigDict(
         env_file=".env",

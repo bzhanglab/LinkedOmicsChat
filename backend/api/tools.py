@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import Dict, Any, List, Optional
+from collections import defaultdict, deque
 from pydantic import BaseModel
 import logging
 
+from api.chat import _check_rate_limit, _client_ip
 from core.config import settings
+from core.dependencies import get_current_user_optional, is_admin_user
+from models.database import User
 from services.mcp_orchestrator import MCPOrchestrator
 
 router = APIRouter()
@@ -11,6 +15,26 @@ logger = logging.getLogger(__name__)
 
 # Global orchestrator reference (set by main.py)
 orchestrator: Optional[MCPOrchestrator] = None
+
+# Sliding-window logs for direct tool runs, kept separate from the chat quotas.
+_guest_tool_log: Dict[str, deque] = defaultdict(deque)
+_user_tool_log: Dict[str, deque] = defaultdict(deque)
+
+
+def _check_tool_rate_limit(http_request: Request, current_user: Optional[User]) -> None:
+    """Raise HTTP 429 when a guest IP or user exceeds its hourly tool-run limit (admins exempt)."""
+    if not settings.TOOL_RATE_LIMIT_ENABLED or is_admin_user(current_user):
+        return
+    if current_user is None:
+        _check_rate_limit(
+            _client_ip(http_request), _guest_tool_log,
+            settings.TOOL_GUEST_RATE_LIMIT_PER_HOUR, "guest", unit="tool runs",
+        )
+    else:
+        _check_rate_limit(
+            str(current_user.id), _user_tool_log,
+            settings.TOOL_USER_RATE_LIMIT_PER_HOUR, "user", unit="tool runs",
+        )
 
 class ToolExecutionRequest(BaseModel):
     tool_id: str
@@ -33,11 +57,16 @@ async def list_tools():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/execute")
-async def execute_tool(request: ToolExecutionRequest):
+async def execute_tool(
+    request: ToolExecutionRequest,
+    http_request: Request,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
     """Execute a specific MCP tool directly."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="MCP Orchestrator not initialized")
-    
+    _check_tool_rate_limit(http_request, current_user)
+
     try:
         logger.info(f"Direct tool execution request: {request.tool_id}")
         result = await orchestrator.mcp_aggregator.call_tool(request.tool_id, request.arguments)

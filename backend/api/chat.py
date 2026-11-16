@@ -39,12 +39,14 @@ def _check_rate_limit(
     limit: int,
     label: str,
     signup_hint: bool = False,
+    unit: str = "queries",
 ) -> None:
     """Shared sliding-window rate-limit checker.
 
     Raises HTTP 429 when ``key`` has reached ``limit`` requests within the last
     hour.  ``label`` is used in the error message; ``signup_hint`` appends the
-    account creation suggestion (for guest users).
+    account creation suggestion (for guest users); ``unit`` names what is being
+    counted in the message (e.g. "queries", "tool runs").
     """
     now = time.time()
     timestamps = log[key]
@@ -54,14 +56,14 @@ def _check_rate_limit(
         timestamps.popleft()
 
     if len(timestamps) >= limit:
-        oldest = timestamps[0]
+        oldest = timestamps[0] if timestamps else now  # limit 0: nothing logged yet
         retry_after = int(_RATE_LIMIT_WINDOW - (now - oldest)) + 1
         minutes = (retry_after + 59) // 60
         wait_msg = f"in about {minutes} minute{'s' if minutes != 1 else ''}" if minutes > 1 else "shortly"
-        detail = f"You've reached the limit of {limit} queries per hour. You can try again {wait_msg}."
+        detail = f"You've reached the limit of {limit} {unit} per hour. You can try again {wait_msg}."
         if signup_hint:
             detail = (
-                f"You've used all {limit} free queries for this hour. "
+                f"You've used all {limit} free {unit} for this hour. "
                 f"You can try again {wait_msg}, or create a free account for unlimited access."
             )
         raise HTTPException(
@@ -71,6 +73,17 @@ def _check_rate_limit(
         )
 
     timestamps.append(now)
+
+
+def _client_ip(http_request: Request) -> str:
+    """Return the caller's IP address for per-IP rate limits.
+
+    In production nginx sets X-Real-IP to the connecting client's address, overwriting any
+    client-supplied value, and the backend port is not publicly reachable, so the header can
+    be trusted. Without a proxy (local development) fall back to the socket peer.
+    X-Forwarded-For is deliberately ignored: nginx does not set it, so it is client-controlled.
+    """
+    return http_request.headers.get("X-Real-IP") or http_request.client.host
 
 
 def _check_guest_rate_limit(ip: str) -> None:
@@ -214,7 +227,7 @@ async def chat_query(
     client_ip: Optional[str] = None
 
     if user_id == "guest":
-        client_ip = http_request.headers.get("X-Forwarded-For", http_request.client.host).split(",")[0].strip()
+        client_ip = _client_ip(http_request)
         _check_guest_rate_limit(client_ip)
     else:
         _check_user_rate_limit(user_id)
@@ -287,7 +300,7 @@ async def chat_stream(
     client_ip: Optional[str] = None
 
     if user_id == "guest":
-        client_ip = http_request.headers.get("X-Forwarded-For", http_request.client.host).split(",")[0].strip()
+        client_ip = _client_ip(http_request)
         _check_guest_rate_limit(client_ip)
     else:
         _check_user_rate_limit(user_id)
