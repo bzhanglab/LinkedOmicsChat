@@ -831,7 +831,8 @@ _TCGA_CIS_KEYWORDS = (
     # TCGA-specific cis-association phrasing
     "cis association", "cis-association", "cis associations", "cis-associations",
     "genome-wide cis", "pan-cancer cis",
-    "strongest.*cis", "top.*cis", "cis.*across",
+    # \b keeps "cis" from matching drug names such as cisplatin
+    r"strongest.*\bcis\b", r"top.*\bcis\b", r"\bcis\b.*across",
 )
 
 _TCGA_CIS_ASSOCIATION_WORDS = (
@@ -1261,10 +1262,19 @@ def _infer_tool_scope(query: str, active_gene: Optional[str] = None) -> str:
         _EXPRESSION_KEYWORDS,
         _CORRELATION_KEYWORDS,
     ]
+    # Cross-omics cis phrasing ("SCNA to RNA cis associations") has no correlation keyword,
+    # so count it as the correlation scope; its layer words ("RNA expression") are then not
+    # a separate expression scope.
+    cis_only = not any(kw in normalized for kw in _CORRELATION_KEYWORDS) and (
+        _has_dual_cis_association_intent(normalized)
+        or _has_cptac_cis_correlation_intent(normalized)
+        or _has_tcga_cis_association_intent(normalized)
+    )
     scopes_hit = sum(
         1 for kw_list in _MULTI_SCOPE_SIGNALS
-        if any(kw in normalized for kw in kw_list)
-    )
+        if not (cis_only and kw_list is _EXPRESSION_KEYWORDS)
+        and any(kw in normalized for kw in kw_list)
+    ) + cis_only
     if scopes_hit >= 2:
         return "full"
 
@@ -1599,7 +1609,16 @@ def _compact_tcga_cis(content: str) -> str:
         result for result in sorted_results if _survival_significance_key(result) < 0.05
     ]
 
-    compact_results = (significant_results or sorted_results)[:25] if mode == 4 else sorted_results
+    if mode == 4:
+        # Same top hits as the user-facing table and bar chart, so downstream steps such as
+        # enrichment use the genes the user sees.
+        from services.mcp_orchestrator import _tcga_cis_mode4_top_hits
+
+        by_gene = {result.get("gene"): result for result in simplified_results}
+        top_genes = [hit["gene"] for hit in _tcga_cis_mode4_top_hits(results, limit=25)]
+        compact_results = [by_gene[gene] for gene in top_genes if gene in by_gene]
+    else:
+        compact_results = sorted_results
 
     compacted["results"] = compact_results
     compacted["result_summary"] = {
@@ -1608,6 +1627,10 @@ def _compact_tcga_cis(content: str) -> str:
         "significant_results": len(significant_results),
         "samples_omitted": any(isinstance(item, dict) and "samples" in item for item in results),
     }
+    if mode == 4:
+        compacted["result_summary"]["ranking"] = (
+            "top genes by absolute correlation among FDR < 0.5, same as the results table"
+        )
     compacted["results_truncated"] = len(compact_results) < len(results)
     compacted["tool_message_compacted"] = True
     return json.dumps(compacted)
