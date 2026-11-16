@@ -181,6 +181,7 @@ def build_mcp_tools(
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAX_STEPS = 8  # Safety cap on tool-call iterations
+MAX_TOOL_MESSAGE_CHARS = 100_000  # Safety cap on any single tool result fed back to the LLM
 
 
 def _normalize_runtime_tool_name(tool_name: str) -> str:
@@ -1555,6 +1556,61 @@ def _compact_tcga_survival(content: str) -> str:
     return json.dumps(compacted)
 
 
+def _compact_tcga_cis(content: str) -> str:
+    """
+    Reduce TCGA cis-association payloads before feeding them back to the LLM.
+
+    Per-sample arrays (modes 1-2) are dropped, and the genome-wide scan (mode 4,
+    one row per gene) keeps only the most significant, strongest associations.
+    The raw result is still preserved separately for downstream rendering.
+    """
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content
+
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or not isinstance(results, list):
+        return content
+
+    mode = int(data.get("mode", 0) or 0)
+    compacted = {k: v for k, v in data.items() if k != "results"}
+
+    simplified_results: List[Dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        simplified_results.append(
+            {key: value for key, value in item.items() if not isinstance(value, (list, dict))}
+        )
+
+    def _strength(result: Dict[str, Any]) -> float:
+        try:
+            return abs(float(result.get("correlation")))
+        except (TypeError, ValueError):
+            return 0.0
+
+    sorted_results = sorted(
+        simplified_results, key=lambda result: (_survival_significance_key(result), -_strength(result))
+    )
+    significant_results = [
+        result for result in sorted_results if _survival_significance_key(result) < 0.05
+    ]
+
+    compact_results = (significant_results or sorted_results)[:25] if mode == 4 else sorted_results
+
+    compacted["results"] = compact_results
+    compacted["result_summary"] = {
+        "total_results": len(results),
+        "returned_results": len(compact_results),
+        "significant_results": len(significant_results),
+        "samples_omitted": any(isinstance(item, dict) and "samples" in item for item in results),
+    }
+    compacted["results_truncated"] = len(compact_results) < len(results)
+    compacted["tool_message_compacted"] = True
+    return json.dumps(compacted)
+
+
 def _annotate_empty_result(content: str, tool_name: str) -> str:
     """
     If a tool returned no usable data, prepend a clear marker so the LLM
@@ -1691,6 +1747,8 @@ def _compact_tool_message(tool_name: str, content: str) -> str:
         compacted = _compact_literature(content)
     elif bare == "analyze_tcga_survival_associations":
         compacted = _compact_tcga_survival(content)
+    elif bare == "analyze_tcga_cis_associations":
+        compacted = _compact_tcga_cis(content)
     elif bare == "get_funmap_functional_neighborhood":
         compacted = _compact_funmap(content)
     elif bare in ("get_drug_target_profile", "batch_get_drug_target_profiles"):
@@ -1698,7 +1756,47 @@ def _compact_tool_message(tool_name: str, content: str) -> str:
     else:
         compacted = content
     compacted = _strip_internal_fields(compacted)
+    compacted = _cap_tool_message(compacted, tool_name)
     return _annotate_empty_result(compacted, tool_name)
+
+
+def _cap_tool_message(content: str, tool_name: str) -> str:
+    """Last-resort size cap so no single tool result can flood the agent context.
+
+    Applies to every tool, including those without a dedicated compactor: every
+    list is shortened to its first N items (N shrinking until the JSON fits), with
+    a hard character cut for non-JSON or still-oversized content.
+    """
+    if len(content) <= MAX_TOOL_MESSAGE_CHARS:
+        return content
+    bare = tool_name.split("__")[-1].split("::")[-1]
+
+    def _trim(obj: Any, max_items: int) -> Any:
+        if isinstance(obj, dict):
+            return {k: _trim(v, max_items) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_trim(item, max_items) for item in obj[:max_items]]
+        return obj
+
+    capped, detail = content[:MAX_TOOL_MESSAGE_CHARS], "the text was cut off"
+    try:
+        data = json.loads(content)
+    except Exception:
+        data = None
+    if data is not None:
+        for max_items in (50, 20, 10, 5):
+            candidate = json.dumps(_trim(data, max_items))
+            if len(candidate) <= MAX_TOOL_MESSAGE_CHARS:
+                capped, detail = candidate, f"long lists were cut to their first {max_items} items"
+                break
+
+    logger.warning(
+        "[LangGraph] Capped %s tool message from %s to %s chars", bare, len(content), len(capped)
+    )
+    return (
+        f"[TRUNCATED — {bare} returned {len(content):,} characters; {detail} to fit the "
+        f"model context. Treat these results as partial.]\n{capped}"
+    )
 
 
 def _make_tool_node(tools: List[BaseTool]):
