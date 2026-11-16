@@ -32,6 +32,10 @@ if grep -q "USE_MCP=true" .env; then
     echo ""
 fi
 
+# Model in effect: an exported DEFAULT_LLM_MODEL overrides .env (as in core/config.py);
+# commented-out lines in .env are ignored.
+llm_model="${DEFAULT_LLM_MODEL:-$(grep -E '^DEFAULT_LLM_MODEL=' .env | tail -1 | cut -d'=' -f2)}"
+
 # Check mode (mock or real API)
 if grep -q "MOCK_LLM=true" .env; then
     echo "🎭 Running in MOCK MODE (no API key needed)"
@@ -42,10 +46,13 @@ elif grep -q "USE_OLLAMA=true" .env; then
     ollama_model=$(grep "OLLAMA_MODEL=" .env | cut -d'=' -f2)
     echo "   Model: ${ollama_model:-llama3}"
     echo ""
-elif grep -q "DEFAULT_LLM_MODEL=gemini-" .env; then
+elif [[ "$llm_model" == gemini-* ]]; then
     echo "♊ Running with Google Gemini API"
-    gemini_model=$(grep "DEFAULT_LLM_MODEL=" .env | cut -d'=' -f2)
-    echo "   Model: ${gemini_model}"
+    echo "   Model: ${llm_model}"
+    echo ""
+elif [[ "$llm_model" == claude-* ]]; then
+    echo "🤖 Running with Anthropic Claude API"
+    echo "   Model: ${llm_model}"
     echo ""
 elif grep -q "OPENAI_API_KEY=sk-" .env; then
     echo "🤖 Running with OpenAI API"

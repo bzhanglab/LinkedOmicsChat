@@ -86,9 +86,10 @@ class LLMFactory:
         # Check for Anthropic/Claude
         if "claude" in model_name.lower() or settings.ANTHROPIC_API_KEY:
             logger.info(f"Creating Anthropic LLM: {model_name}")
+            # No temperature: current Claude models (e.g. claude-haiku-5-5) reject a
+            # non-default value with HTTP 400 ("`temperature` is deprecated for this model").
             return ChatAnthropic(
                 model=model_name,
-                temperature=temperature,
                 max_tokens=kwargs.get("max_tokens") or settings.MAX_TOKENS,
                 anthropic_api_key=settings.ANTHROPIC_API_KEY or kwargs.get("anthropic_api_key"),
                 **{k: v for k, v in kwargs.items() if k not in ["anthropic_api_key", "ollama_model", "max_tokens"]}

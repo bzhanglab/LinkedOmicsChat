@@ -54,9 +54,14 @@ def _infer_llm_provider(model_name: str) -> str:
     """Infer the active provider from server settings."""
     if settings.USE_OLLAMA:
         return "Ollama"
-    if "gemini" in model_name.lower() or settings.GOOGLE_API_KEY:
+    # The model name decides first (as in llm_factory); several provider keys may be set.
+    if "gemini" in model_name.lower():
         return "Google Gemini"
-    if "claude" in model_name.lower() or settings.ANTHROPIC_API_KEY:
+    if "claude" in model_name.lower():
+        return "Anthropic"
+    if settings.GOOGLE_API_KEY:
+        return "Google Gemini"
+    if settings.ANTHROPIC_API_KEY:
         return "Anthropic"
     return "OpenAI"
 
