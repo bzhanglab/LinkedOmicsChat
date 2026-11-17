@@ -73,7 +73,7 @@ export function OmicsCohorts() {
                         <li key={code} className="rounded border border-border bg-background px-3 py-2 flex items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <span className="font-mono text-sm text-teal-700 dark:text-teal-400 block">{code}</span>
-                                <span className="text-xs text-muted-foreground">{desc}</span>
+                                <span className="text-sm text-muted-foreground">{desc}</span>
                             </div>
                             <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
                                 source === "CPTAC"
@@ -91,7 +91,7 @@ export function OmicsCohorts() {
                     TCGA Cohorts & Aggregate Cohorts ({COHORTS.length})
                 </h3>
                 <div
-                    className="overflow-y-auto rounded border border-border text-xs"
+                    className="overflow-y-auto rounded border border-border text-sm"
                     style={cohortsHeight ? { height: cohortsHeight } : { maxHeight: 400 }}
                 >
                     <table className="w-full border-collapse">
