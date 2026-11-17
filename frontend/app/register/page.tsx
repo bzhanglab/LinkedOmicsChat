@@ -191,7 +191,8 @@ export default function RegisterPage() {
                 </div>
 
                 <p className="text-center text-xs text-slate-400">
-                    &copy; 2026 Zhang Lab · CPTAC · LinkedOmics · NCBI PubMed
+                    © 2026 Zhang Lab · Free to use · Source code under the{" "}
+                    <a href="https://github.com/bzhanglab/LinkedOmicsChat/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-600 transition-colors">MIT License</a>
                 </p>
             </div>
         </div>

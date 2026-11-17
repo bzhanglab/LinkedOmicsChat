@@ -5,33 +5,6 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/components/AuthContext"
 
-const features = [
-    {
-        label: "CPTAC proteomics",
-        icon: (
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15M14.25 3.104c.251.023.501.05.75.082M19.8 15l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.607L5 14.5m14.8.5-2.6.65a9 9 0 01-10.4 0L4.2 15M5 14.5v6m14-6v6" />
-            </svg>
-        ),
-    },
-    {
-        label: "LinkedOmics networks",
-        icon: (
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-            </svg>
-        ),
-    },
-    {
-        label: "PubMed literature",
-        icon: (
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-            </svg>
-        ),
-    },
-]
-
 export default function LoginPage() {
     const [username, setUsername] = useState("")
     const [password, setPassword] = useState("")
@@ -76,19 +49,8 @@ export default function LoginPage() {
                         <span className="text-slate-800 text-4xl font-bold tracking-tight">LinkedOmics<span className="text-teal-600">Chat</span></span>
                     </Link>
                     <p className="text-slate-500 text-sm">
-                        Natural language interface to TCGA, CPTAC, and biomedical literature.
+                        Ask cancer multi-omics questions in plain English: TCGA, CPTAC, clinical trial datasets, and literature.
                     </p>
-                    <div className="flex flex-wrap justify-center gap-2 pt-1">
-                        {features.map((f) => (
-                            <span
-                                key={f.label}
-                                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-slate-600 text-xs font-medium border border-slate-200 bg-white/60"
-                            >
-                                {f.icon}
-                                {f.label}
-                            </span>
-                        ))}
-                    </div>
                 </div>
 
                 {/* ── Glass card ── */}
@@ -179,22 +141,26 @@ export default function LoginPage() {
                         <button
                             type="button"
                             onClick={handleGuestMode}
-                            className="w-full py-2.5 px-4 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-all"
+                            className="w-full py-3 px-4 rounded-xl border-2 border-teal-500 bg-teal-50 hover:bg-teal-100 text-teal-700 text-sm font-semibold transition-all inline-flex items-center justify-center gap-2"
                         >
                             Continue as Guest
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                            </svg>
                         </button>
                         <p className="text-center text-xs text-slate-400 leading-relaxed">
                             Guest access is rate-limited and sessions are not saved.{" "}
                             <Link href="/register" className="underline hover:text-slate-600">
                                 Sign up
                             </Link>{" "}
-                            for unlimited access.
+                            for a higher limit and saved history.
                         </p>
                     </div>
                 </div>
 
                 <p className="text-center text-xs text-slate-400">
-                    &copy; 2026 Zhang Lab · CPTAC · LinkedOmics · NCBI PubMed
+                    © 2026 Zhang Lab · Free to use · Source code under the{" "}
+                    <a href="https://github.com/bzhanglab/LinkedOmicsChat/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-600 transition-colors">MIT License</a>
                 </p>
             </div>
         </div>
