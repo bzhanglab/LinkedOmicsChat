@@ -13,12 +13,20 @@ import {
     Sun,
     Moon,
     Monitor,
+    BookOpen,
+    Info,
 } from "lucide-react"
 import { ChatHistory } from "@/components/ChatHistory"
 import { useAuth } from "@/components/AuthContext"
 import { useTheme } from "@/components/ThemeProvider"
 
 type View = "chat" | "tools" | "usecases"
+
+// Pages outside the chat; they open in a new tab so a chat in progress stays open
+const pageLinks = [
+    { label: "Documentation", href: "/docs", icon: BookOpen },
+    { label: "About", href: "/about", icon: Info },
+]
 
 interface SidebarProps {
     currentView: View
@@ -149,6 +157,23 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                         </div>
                     )
                 })}
+                {!isCollapsed && <div className="my-3 border-t border-border" />}
+                {pageLinks.map(({ label, href, icon: Icon }) => (
+                    <a
+                        key={href}
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(
+                            "w-full flex items-center rounded-lg transition-all font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                            isCollapsed ? "justify-center p-3" : "gap-3 px-4 py-3 text-left"
+                        )}
+                        title={isCollapsed ? label : undefined}
+                    >
+                        <Icon className="h-5 w-5" />
+                        {!isCollapsed && <span>{label}</span>}
+                    </a>
+                ))}
             </nav>
 
             {/* Content area - always takes remaining space */}
@@ -267,8 +292,6 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                 {!isCollapsed && (
                     <p className="px-4 pt-1 text-xs text-muted-foreground">
                         &copy; 2026 Zhang Lab &middot;{" "}
-                        <a href="/about" target="_blank" rel="noopener noreferrer" className="hover:underline">About</a>
-                        {" "}&middot;{" "}
                         <a href="https://github.com/bzhanglab/LinkedOmicsChat/issues" target="_blank" rel="noopener noreferrer" className="hover:underline">Feedback</a>
                         {process.env.NEXT_PUBLIC_APP_VERSION && (
                             <span className="ml-1 text-muted-foreground/60">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
