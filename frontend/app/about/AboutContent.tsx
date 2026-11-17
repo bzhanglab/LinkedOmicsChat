@@ -149,7 +149,7 @@ export function AboutContent() {
                                 {OVERVIEW_EXAMPLES.map((q) => <li key={q}><QuestionLink q={q} /></li>)}
                             </ul>
                             <p className="mt-4 text-sm text-muted-foreground">
-                                Each opens a new chat with the question. The{" "}
+                                Each opens a new chat with the question filled in, ready to send. The{" "}
                                 <Link href="/docs" className="text-primary hover:underline">documentation</Link>{" "}
                                 has more examples, explains how to read the results, and describes how the app works.
                             </p>
@@ -197,7 +197,7 @@ export function AboutContent() {
                         <div>
                             <h2 className="text-xl font-semibold mb-2">Analyses</h2>
                             <p className="text-base text-muted-foreground mb-4">
-                                One example question per analysis; click it to run it in a new chat.
+                                One example question per analysis; clicking one opens a new chat with the question filled in, ready to send.
                             </p>
                             <dl className="divide-y divide-border rounded-lg border border-border bg-white/70 dark:bg-transparent">
                                 {ANALYSES.map((a) => (

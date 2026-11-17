@@ -2188,6 +2188,7 @@ interface ChatInterfaceProps {
     onSessionChange: (sessionId: string) => void
     onContextUpdate?: (ctx: import("@/components/RightPanel").RightPanelContext) => void
     initialQuery?: string | null
+    autoSendInitialQuery?: boolean
     onInitialQueryConsumed?: () => void
     pendingSearchTarget?: { sessionId: string; messageId: number; requestKey: string } | null
     onSearchTargetHandled?: (requestKey: string) => void
@@ -2214,6 +2215,7 @@ export const ChatInterface = memo(function ChatInterface({
     onSessionChange,
     onContextUpdate,
     initialQuery,
+    autoSendInitialQuery,
     onInitialQueryConsumed,
     pendingSearchTarget,
     onSearchTargetHandled,
@@ -2338,11 +2340,20 @@ export const ChatInterface = memo(function ChatInterface({
         if (focusKey !== undefined) chatInputRef.current?.focus()
     }, [focusKey])
 
-    // Pre-fill input when launched from Use Cases panel
+    // Pre-fill input when launched from Use Cases panel or a ?q= link; send it when it came from the welcome page's Ask.
+    // autoSentQueryRef keeps React's development double-run of effects from sending the question twice.
+    const autoSentQueryRef = useRef<string | null>(null)
     useEffect(() => {
         if (initialQuery) {
-            inputRef.current = initialQuery
-            setInput(initialQuery)
+            if (autoSendInitialQuery) {
+                if (autoSentQueryRef.current !== initialQuery) {
+                    autoSentQueryRef.current = initialQuery
+                    handleSend(initialQuery)
+                }
+            } else {
+                inputRef.current = initialQuery
+                setInput(initialQuery)
+            }
             onInitialQueryConsumed?.()
         }
     }, [initialQuery])

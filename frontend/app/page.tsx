@@ -33,6 +33,8 @@ export default function Home() {
         return "chat"
     })
     const [prefilledQuery, setPrefilledQuery] = useState<string | null>(null)
+    // Questions sent from the welcome page's Ask run at once; ?q= links and Use Cases only fill the box
+    const [autoSendPrefill, setAutoSendPrefill] = useState(false)
     const [rightPanelContext, setRightPanelContext] = useState<RightPanelContext | null>(null)
     const [rightPanelOpen, setRightPanelOpen] = useState(false)
     const [guestBannerDismissed, setGuestBannerDismissed] = useState(false)
@@ -77,6 +79,7 @@ export default function Home() {
         if (!isAuthenticated) return
         const urlQuery = new URLSearchParams(window.location.search).get("q")
         if (urlQuery) {
+            setAutoSendPrefill(false)
             setPrefilledQuery(urlQuery)
             const url = new URL(window.location.href)
             url.searchParams.delete("q")
@@ -86,6 +89,8 @@ export default function Home() {
         const prefill = sessionStorage.getItem("linkedomicsai-prefill-query")
         if (prefill) {
             sessionStorage.removeItem("linkedomicsai-prefill-query")
+            setSessionId(null) // a question asked on the welcome page starts a new chat
+            setAutoSendPrefill(true)
             setPrefilledQuery(prefill)
         }
     }, [isAuthenticated])
@@ -175,6 +180,7 @@ export default function Home() {
 
     const handleInitialQueryConsumed = useCallback(() => {
         setPrefilledQuery(null)
+        setAutoSendPrefill(false)
     }, [])
 
     // NOW we can do conditional returns after all hooks
@@ -259,6 +265,7 @@ export default function Home() {
                         onSessionChange={handleSessionChange}
                         onContextUpdate={handleContextUpdate}
                         initialQuery={prefilledQuery}
+                        autoSendInitialQuery={autoSendPrefill}
                         onInitialQueryConsumed={handleInitialQueryConsumed}
                         pendingSearchTarget={pendingSearchTarget}
                         onSearchTargetHandled={(requestKey) => {
@@ -276,6 +283,7 @@ export default function Home() {
                     <div className="w-full h-full" style={currentView !== "usecases" ? { visibility: "hidden", pointerEvents: "none", position: "absolute", top: 0, left: 0 } : {}}>
                         <UseCasesPanel
                             onStartChat={(query) => {
+                                setAutoSendPrefill(false)
                                 setPrefilledQuery(query)
                                 startTransition(() => setCurrentView("chat"))
                             }}
