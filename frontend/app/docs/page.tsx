@@ -437,7 +437,7 @@ export default function DocsPage() {
                             href="/"
                             className="border border-slate-200 hover:border-slate-300 bg-white/80 hover:bg-white text-slate-700 font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors"
                         >
-                            Open workspace
+                            Start asking questions
                         </Link>
                     </div>
                     <p className="mt-6 text-xs text-slate-400">
