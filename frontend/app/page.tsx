@@ -21,7 +21,7 @@ interface SearchJumpTarget {
 }
 
 export default function Home() {
-    const { isAuthenticated, isGuest, loading } = useAuth()
+    const { isAuthenticated, isGuest, loading, enterGuestMode } = useAuth()
     const router = useRouter()
 
     // All hooks must be declared before any conditional returns
@@ -60,12 +60,17 @@ export default function Home() {
         return null
     })
 
-    // Redirect to welcome page if not authenticated
+    // Redirect to welcome page if not authenticated. A linked question (?q=) starts guest mode
+    // instead, so the question below is picked up rather than dropped by the redirect.
     useEffect(() => {
         if (!loading && !isAuthenticated) {
-            router.push("/welcome")
+            if (new URLSearchParams(window.location.search).get("q")) {
+                enterGuestMode()
+            } else {
+                router.push("/welcome")
+            }
         }
-    }, [isAuthenticated, loading, router])
+    }, [isAuthenticated, loading, router, enterGuestMode])
 
     // Pick up prefill query — from URL ?q= param (new tab) or sessionStorage (same tab)
     useEffect(() => {
