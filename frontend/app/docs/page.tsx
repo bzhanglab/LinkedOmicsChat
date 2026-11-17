@@ -214,8 +214,20 @@ const FAQS = [
         a: "No. Type a question on the welcome page, or start from an example, and it runs right away. Create an account to save session history and export results.",
     },
     {
+        q: "Is my data private?",
+        a: "Other users cannot see your chats. Signed-in users' chats are saved to their own account, and guest chats are not saved to any account. A chat becomes visible to others only if you create a share link for it. To generate answers, your question and the analysis results are sent to a third-party large language model provider (currently Anthropic). The LinkedOmicsChat team can see usage statistics and short previews of questions in an administrator dashboard, and questions are recorded in server logs for troubleshooting. For guests, IP addresses are recorded for rate limiting and usage statistics.",
+    },
+    {
         q: "What cancer types are supported?",
         a: "TCGA survival analysis supports 35 cohort codes, including aggregate cohorts such as COADREAD, GBMLGG, KIPAN, and STES. CPTAC-integrated expression, survival, and correlation analyses currently cover 10 cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC.",
+    },
+    {
+        q: "Does LinkedOmicsChat use cookies?",
+        a: "No. LinkedOmicsChat sets no cookies and uses no tracking or analytics services, so there is no cookie banner. For signed-in users, the browser's local storage keeps the sign-in token and the current chat; for guests, a guest-mode flag is kept only until the tab is closed.",
+    },
+    {
+        q: "How should I enter a gene list?",
+        a: "Use gene symbols (for example TP53, EGFR), separated by commas, spaces, or one per line; upper or lower case both work. For pathway enrichment, 10–50 genes works best. Ensembl and UniProt IDs are converted to gene symbols automatically, but for lists, gene symbols are faster and more reliable.",
     },
     {
         q: "Can it run multi-step analyses automatically?",
@@ -416,7 +428,7 @@ export default function DocsPage() {
                 {/* FAQ */}
                 <section id="faq">
                     <SectionLabel>FAQ</SectionLabel>
-                    <SectionTitle icon={<HelpCircle className="w-6 h-6" />}>Common questions</SectionTitle>
+                    <SectionTitle icon={<HelpCircle className="w-6 h-6" />}>Using LinkedOmicsChat</SectionTitle>
 
                     <div className="space-y-4">
                         {FAQS.map((faq) => (

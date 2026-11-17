@@ -72,6 +72,11 @@ export default function RegisterPage() {
                         <span className="text-slate-800 text-4xl font-bold tracking-tight">LinkedOmics<span className="text-teal-600">Chat</span></span>
                     </Link>
                     <p className="text-slate-500 text-sm">Create your account</p>
+                    <p className="text-slate-500 text-sm pt-2">
+                        An account is optional: you can{" "}
+                        <Link href="/welcome" className="text-teal-600 hover:text-teal-700 hover:underline font-medium">use LinkedOmicsChat without one</Link>.
+                        Signing up saves your chat history and lets you share results.
+                    </p>
                 </div>
 
                 {/* Glass card */}
