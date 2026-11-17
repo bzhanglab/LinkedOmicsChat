@@ -203,7 +203,7 @@ const ARCH_STEPS = [
 const FAQS = [
     {
         q: "Do I need an account to use LinkedOmicsChat?",
-        a: "No. You can try the platform as a guest — click any chip on the welcome page or use the 'Try as guest' button. Create an account to save session history and export results.",
+        a: "No. Type a question on the welcome page, or start from an example, and it runs right away. Create an account to save session history and export results.",
     },
     {
         q: "What cancer types are supported?",
@@ -319,7 +319,7 @@ export default function DocsPage() {
                     <SectionTitle icon={<MessageSquare className="w-6 h-6" />}>What you can ask</SectionTitle>
                     <SectionDesc>
                         These are representative questions across analysis types. You can also click
-                        example chips on the welcome page to launch them directly. To try it with
+                        an example on the welcome page to fill in the question box. To try it with
                         sample data, click "Pathway enrichment for a sample gene list" on the welcome page,
                         or paste your own gene list into a question.
                     </SectionDesc>
