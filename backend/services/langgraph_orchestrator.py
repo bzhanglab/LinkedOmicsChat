@@ -4055,8 +4055,12 @@ DIRECT RESPONSE RULES:
         # Deterministic routing stays authoritative for explicit scientific queries.
         tool_scope = keyword_scope
         workflow = route_decision.workflow
+        # Make the model resolve identifiers itself only when pre-resolution did not already map
+        # them; otherwise it often repeats every lookup that is already in tool_results.
         force_identifier_resolution = any(
-            _is_external_gene_identifier(token) for token in requested_identifiers
+            _is_external_gene_identifier(token)
+            and _normalize_identifier_token(token) not in pre_resolved_identifiers
+            for token in requested_identifiers
         )
 
         self._rebuild_graph(
