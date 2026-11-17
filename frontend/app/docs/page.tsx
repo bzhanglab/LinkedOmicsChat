@@ -1,153 +1,76 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowLeft, ArrowUpRight, Database, MessageSquare, Cpu, HelpCircle, BookOpen, BarChart3 } from "lucide-react"
+import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle } from "lucide-react"
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function H2({ id, icon: Icon, children }: { id: string; icon: React.ElementType; children: React.ReactNode }) {
     return (
-        <p className="text-xs font-bold uppercase tracking-widest text-teal-600 mb-3">
-            {children}
-        </p>
-    )
-}
-
-function SectionTitle({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
-    return (
-        <h2 className="text-2xl font-bold tracking-tight text-slate-900 mb-2 flex items-center gap-3">
-            {icon && <span className="text-teal-500">{icon}</span>}
+        <h2 id={id} className="text-xl font-semibold tracking-tight text-slate-900 mt-14 mb-4 scroll-mt-20 flex items-center gap-2.5">
+            <Icon className="w-5 h-5 text-teal-500 flex-shrink-0" />
             {children}
         </h2>
     )
 }
 
-function SectionDesc({ children }: { children: React.ReactNode }) {
+function P({ children }: { children: React.ReactNode }) {
+    return <p className="text-[15px] text-slate-600 leading-relaxed mb-4">{children}</p>
+}
+
+function DefList({ items }: { items: { term: React.ReactNode; text: React.ReactNode }[] }) {
     return (
-        <p className="text-slate-500 leading-relaxed mb-8">
-            {children}
-        </p>
+        <dl className="divide-y divide-slate-100 rounded-xl border border-slate-200/80 bg-white/70">
+            {items.map((item, i) => (
+                <div key={i} className="px-5 py-3.5 sm:grid sm:grid-cols-[11rem_1fr] sm:gap-6">
+                    <dt className="text-sm font-medium text-slate-900">{item.term}</dt>
+                    <dd className="mt-1 sm:mt-0 text-sm text-slate-600 leading-relaxed">{item.text}</dd>
+                </div>
+            ))}
+        </dl>
     )
 }
 
-function Divider() {
-    return <hr className="border-slate-100 my-12" />
+function BackToTop() {
+    return (
+        <div className="mt-4 flex justify-end">
+            <a href="#top" className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-teal-700 transition-colors">
+                <ArrowUp className="w-3 h-3" />
+                Back to top
+            </a>
+        </div>
+    )
 }
 
-// ── Data ──────────────────────────────────────────────────────────────────
+function ExtLink({ href, children }: { href: string; children: React.ReactNode }) {
+    return (
+        <a href={href} target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">
+            {children}
+        </a>
+    )
+}
 
-const DATA_SOURCES = [
-    {
-        name: "LinkedOmics",
-        url: "https://www.linkedomics.org",
-        color: "bg-teal-50 border-teal-100",
-        dot: "bg-teal-500",
-        description: "Core multi-omics and analysis services used by the app, including TCGA survival, CPTAC-integrated expression and correlation analyses, drug target annotations, and treatment-response studies served through LinkedOmics-hosted APIs.",
-        tools: ["TCGA survival", "CPTAC-integrated expression", "Drug target lookup", "Clinical trial studies"],
-    },
-    {
-        name: "ClinicalOmicsDB",
-        url: "https://trials.linkedomics.org",
-        color: "bg-indigo-50 border-indigo-100",
-        dot: "bg-indigo-500",
-        description: "Trial-linked public gene-expression studies with treatment-response annotations, used to find genes and gene sets whose expression is associated with response or resistance to specific treatments, within single studies and by meta-analysis across studies.",
-        tools: ["Gene–treatment response", "Gene set response", "Study details", "Cross-study meta-analysis"],
-    },
-    {
-        name: "FunMap",
-        url: "https://funmap.linkedomics.org",
-        color: "bg-emerald-50 border-emerald-100",
-        dot: "bg-emerald-500",
-        description: "Functional proteogenomic interaction network for discovering gene co-functional neighborhoods and pathway modules.",
-        tools: ["Gene functional neighborhood", "Protein interaction graph", "Module-level enrichment"],
-    },
-    {
-        name: "WebGestalt",
-        url: "https://www.webgestalt.org",
-        color: "bg-violet-50 border-violet-100",
-        dot: "bg-violet-500",
-        description: "Gene set enrichment analysis across GO, KEGG, WikiPathways, and other ontology databases.",
-        tools: ["Pathway enrichment (ORA)", "GSEA enrichment", "Network topology-based analysis"],
-    },
-    {
-        name: "CPTAC",
-        url: "https://proteomics.cancer.gov/programs/cptac",
-        color: "bg-rose-50 border-rose-100",
-        dot: "bg-rose-500",
-        description: "Underlying proteomics and phosphoproteomics datasets used in LinkedOmics-supported proteogenomic analyses across 10 cohorts.",
-        tools: ["Protein abundance", "Phosphorylation sites", "mRNA-protein correlation", "Clinical metadata"],
-    },
-    {
-        name: "PubMed",
-        url: "https://pubmed.ncbi.nlm.nih.gov",
-        color: "bg-amber-50 border-amber-100",
-        dot: "bg-amber-500",
-        description: "NCBI literature search integrated into the research workflow for evidence-backed answers.",
-        tools: ["Keyword and gene searches", "Recent publication summaries", "Abstract-level evidence"],
-    },
-    {
-        name: "MyGene.info",
-        url: "https://mygene.info",
-        color: "bg-sky-50 border-sky-100",
-        dot: "bg-sky-500",
-        description: "Identifier normalization service used to resolve Ensembl and UniProt identifiers to HGNC gene symbols before analysis.",
-        tools: ["Gene ID normalization", "Ensembl to HGNC", "UniProt to HGNC"],
-    },
+// ── Content ───────────────────────────────────────────────────────────────
+
+const SECTIONS = [
+    { id: "examples", title: "Asking questions" },
+    { id: "example-outputs", title: "Example results" },
+    { id: "interpret", title: "Reading the results" },
+    { id: "data-sources", title: "Data sources" },
+    { id: "architecture", title: "How it works" },
+    { id: "faq", title: "FAQ" },
 ]
 
-const EXAMPLE_CATEGORIES = [
-    {
-        label: "Survival Analysis",
-        color: "text-rose-700 bg-rose-50 border-rose-100",
-        queries: [
-            "Is ESR1 associated with overall survival in breast cancer?",
-            "Compare survival outcomes for high vs low MYC expression in LUAD",
-            "Show me survival analysis for PIK3CA across all TCGA cancer types",
-        ],
-    },
-    {
-        label: "Gene Expression",
-        color: "text-teal-700 bg-teal-50 border-teal-100",
-        queries: [
-            "What is the expression profile of EGFR across TCGA cancer types?",
-            "Show tumor vs normal expression for TP53 in colorectal cancer",
-            "Find genes co-expressed with BRCA1 in ovarian cancer",
-        ],
-    },
-    {
-        label: "Proteomics",
-        color: "text-violet-700 bg-violet-50 border-violet-100",
-        queries: [
-            "Compare KRAS RNA and protein levels in pancreatic cancer",
-            "Show EGFR phosphorylation sites in LUAD from CPTAC",
-            "What is the mRNA–protein correlation for MYC in breast cancer?",
-        ],
-    },
-    {
-        label: "Network & Pathway",
-        color: "text-emerald-700 bg-emerald-50 border-emerald-100",
-        queries: [
-            "Find functional neighbors of TP53 in the FunMap network",
-            "Run pathway enrichment for BRCA1 FunMap partners",
-            "What pathways are enriched in PTEN-low tumors?",
-        ],
-    },
-    {
-        label: "Your Own Gene List",
-        color: "text-sky-700 bg-sky-50 border-sky-100",
-        queries: [
-            "Run pathway enrichment on my gene list: CDK1, CCNB1, CCNA2, AURKA, AURKB, PLK1, BUB1, BUB1B, TOP2A, KIF11, BIRC5, MKI67, CDC20, CENPF, TTK",
-        ],
-    },
-    {
-        label: "Multi-step",
-        color: "text-slate-700 bg-slate-50 border-slate-200",
-        queries: [
-            "Find BRCA1 drug targets, then show their survival associations in BRCA",
-            "Get TP53 functional neighbors, then run WebGestalt enrichment on them",
-            "Show KRAS expression in PDAC and find relevant clinical trials",
-        ],
-    },
+// All example questions come from the golden test set (backend/examples/langgraph_golden_queries.json).
+const EXAMPLES = [
+    { term: "Tumor vs. normal", text: "How is EGFR expressed tumor vs normal in LUAD?" },
+    { term: "Survival", text: "Show TP53 overall survival in BRCA. · Show TP53 methylation survival in BRCA from TCGA." },
+    { term: "Same-gene correlations", text: "Show cis-correlations for MYC." },
+    { term: "Treatment response", text: "Which genes best predict paclitaxel response in breast cancer? · Which drugs are patients likely to be resistant to if they have high EGFR expression?" },
+    { term: "Drug targets", text: "Is EGFR a validated oncology target? · Which kinases are FDA-approved oncology targets?" },
+    { term: "Networks and pathways", text: "Find functional neighbors of TP53 in the FunMap network. · What pathways are enriched in this gene set: EGFR, MET, ERBB2, ALK, RET?" },
+    { term: "Literature", text: "Find recent papers on ESR1 and breast cancer survival." },
+    { term: "Combined", text: "Is EGFR overexpressed in lung cancer and is it a validated drug target?" },
 ]
 
 const EXAMPLE_OUTPUTS = [
@@ -175,94 +98,62 @@ const EXAMPLE_OUTPUTS = [
 
 const INTERPRETATION = [
     {
-        title: "Numbers vs. written summary",
-        text: "Every number, table and plot comes directly from the analysis tools, with a source link to the underlying data. The written summary is generated by a large language model from those results, so check key claims against the tables. All results are statistical associations in public patient cohorts, not proof of cause and effect.",
+        term: "Survival",
+        text: "A hazard ratio (HR) above 1 means higher levels of the gene go with shorter overall survival; below 1, with longer survival. CPTAC results compare high- and low-expression groups and are called significant at p < 0.05. In genome-wide TCGA scans thousands of genes are tested, so go by the FDR where it is shown.",
     },
     {
-        title: "Survival (TCGA and CPTAC)",
-        text: "Tests whether the gene's level is associated with overall survival. A hazard ratio (HR) above 1 means higher levels go with shorter survival (worse prognosis); below 1, with longer survival. CPTAC results compare high- and low-expression groups and are labeled significant at p < 0.05. When many genes or cohorts are tested at once, rely on the FDR (false discovery rate) where shown.",
+        term: "Tumor vs. normal",
+        text: "For each of the 10 CPTAC cohorts, RNA and protein in tumors are compared with adjacent normal tissue. Each cohort gets a direction (higher or lower in tumor), called significant at p < 0.05.",
     },
     {
-        title: "Tumor vs. normal (CPTAC)",
-        text: "For each of the 10 CPTAC cohorts, RNA and protein levels in tumors are compared with adjacent normal tissue. Each result gives the direction (higher or lower in tumor) and is labeled significant at p < 0.05. Higher in tumor can point to oncogenic overexpression; lower, to tumor-suppressive downregulation.",
+        term: "Same-gene correlations",
+        text: "Correlation across tumors between two measurements of one gene: copy number vs. RNA, methylation vs. RNA, or RNA vs. protein. TCGA uses Spearman correlation by default. A strong positive copy number–RNA correlation suggests a dosage effect, a negative methylation–RNA correlation suggests silencing, and a weak RNA–protein correlation points to regulation after transcription.",
     },
     {
-        title: "Same-gene associations between molecular layers",
-        text: "Correlation, across tumors, between two measurements of the same gene, such as copy number vs. RNA, methylation vs. RNA, or RNA vs. protein (TCGA uses Spearman correlation by default). A strong positive copy number–RNA correlation suggests a gene-dosage effect; a negative methylation–RNA correlation suggests silencing by methylation; a weak RNA–protein correlation suggests regulation after transcription.",
+        term: "Treatment response",
+        text: "AUROC measures how well expression separates responders from non-responders in a study. Below 0.5, higher expression goes with better response (sensitive); above 0.5, with worse response (resistant). The meta-analysis combines studies: the meta FDR says whether the association holds across them, and the average AUROC gives its direction.",
     },
     {
-        title: "Treatment response (clinical trial datasets)",
-        text: "AUROC measures how well the gene's expression separates responders from non-responders in a study. Below 0.5 means higher expression goes with better response (labeled sensitive); above 0.5, with worse response (resistant); 0.5 means no association. Meta-analysis combines studies: the meta FDR shows whether the association holds up across studies, and the average AUROC gives its direction.",
+        term: "FunMap partners",
+        text: "The 50 genes closest to your gene in the FunMap network, ranked by random-walk probability. FunMap links are predicted from co-expression across cancers and known protein interactions, so they suggest shared function, not necessarily physical binding.",
     },
     {
-        title: "Functional partners (FunMap)",
-        text: "The 50 genes most closely connected to your gene in the FunMap network, ranked by random-walk probability. FunMap links are predicted from co-expression across cancers and known protein interactions, so partners suggest shared function or pathway membership, not necessarily direct physical binding.",
+        term: "Pathway enrichment",
+        text: "Over-representation analysis of Gene Ontology biological processes in WebGestalt. The enrichment ratio is observed ÷ expected genes in a term; judge significance by the FDR. Lists of 10–50 genes work best.",
     },
     {
-        title: "Pathway enrichment (WebGestalt)",
-        text: "Over-representation analysis of Gene Ontology biological processes: it asks whether your gene list contains more genes from a process than expected by chance. The enrichment ratio is observed ÷ expected genes; use the FDR to judge significance. Works best with 10–50 genes.",
-    },
-    {
-        title: "Drug-target tiers",
-        text: "T1: FDA-approved drug for a cancer indication. T2: FDA-approved drug for another indication. T3: drug in clinical trials. T4: preclinical or druggable. T5: cell-surface protein.",
+        term: "Drug-target tiers",
+        text: "T1: FDA-approved drug for a cancer indication. T2: FDA-approved for another indication. T3: in clinical trials. T4: preclinical or druggable. T5: cell-surface protein.",
     },
 ]
 
-const ARCH_STEPS = [
-    {
-        step: "1",
-        title: "You type a question",
-        desc: "Natural language query with no required syntax — gene name, cancer type, and analysis type are inferred from context.",
-    },
-    {
-        step: "2",
-        title: "LangGraph plans the steps",
-        desc: "A LangGraph agent decides which tools to call, in what order, and with what parameters — including multi-step chains.",
-    },
-    {
-        step: "3",
-        title: "MCP tools query real APIs",
-        desc: "Each tool calls the relevant live endpoint or service layer, including LinkedOmics-hosted APIs, FunMap, WebGestalt, PubMed, and MyGene.info.",
-    },
-    {
-        step: "4",
-        title: "LLM synthesizes the answer",
-        desc: "Results are formatted into a cited markdown response with visualizations, tables, and literature references.",
-    },
+const DATA_SOURCES = [
+    { name: "LinkedOmics", url: "https://www.linkedomics.org", text: "TCGA analyses across 35 cohorts: survival by RNA, methylation, RPPA protein, copy number, or miRNA, and same-gene correlations between methylation, RNA, RPPA, and copy number." },
+    { name: "LinkedOmicsKB", url: "https://kb.linkedomics.org", text: "CPTAC proteogenomics for 10 cohorts: tumor-vs-normal RNA and protein, survival, and same-gene correlations." },
+    { name: "LinkedOmics Targets", url: "https://targets.linkedomics.org", text: "Drug-target annotations per gene: tier, drugs, cell-line dependency, tumor overexpression, phosphosite activation, driver and antigen evidence." },
+    { name: "ClinicalOmicsDB", url: "https://trials.linkedomics.org", text: "Public expression studies from clinical trials with treatment-response labels; used for per-study associations and cross-study meta-analysis." },
+    { name: "FunMap", url: "https://funmap.linkedomics.org", text: "Functional network; the app retrieves a gene's top-50 neighborhood." },
+    { name: "WebGestalt", url: "https://www.webgestalt.org", text: "Gene Ontology over-representation analysis for gene lists." },
+    { name: "PubMed", url: "https://pubmed.ncbi.nlm.nih.gov", text: "Article search and article details." },
+    { name: "MyGene.info", url: "https://mygene.info", text: "Converts Ensembl and UniProt IDs to gene symbols." },
 ]
 
 const FAQS = [
     {
-        q: "Do I need an account to use LinkedOmicsChat?",
-        a: "No. Type a question on the welcome page, or start from an example, and it runs right away. Create an account to save session history and export results.",
+        term: "Do I need an account?",
+        text: "No. Without one you can ask 30 questions an hour and run 30 analyses an hour in the Tools view. Signing in raises that to 50 questions and 120 tool runs an hour, saves your chat history, and lets you share chats and export them as HTML.",
     },
     {
-        q: "Is my data private?",
-        a: "Other users cannot see your chats. Signed-in users' chats are saved to their own account; chats by visitors who aren't signed in are not saved. A chat becomes visible to others only if you create a share link for it. To generate answers, your question and the analysis results are sent to a third-party large language model provider (currently Anthropic). The LinkedOmicsChat team can see usage statistics and short previews of questions in an administrator dashboard, and questions are recorded in server logs for troubleshooting. For visitors who aren't signed in, IP addresses are recorded for rate limiting and usage statistics.",
+        term: "Is my data private?",
+        text: "Other users cannot see your chats. Signed-in users' chats are saved to their own account; chats by visitors who aren't signed in are not saved. A chat becomes visible to others only if you create a share link for it. To generate answers, your question and the analysis results are sent to a third-party large language model provider (currently Anthropic). The LinkedOmicsChat team can see usage statistics and short previews of questions in an administrator dashboard, and questions are recorded in server logs for troubleshooting. For visitors who aren't signed in, IP addresses are recorded for rate limiting and usage statistics.",
     },
     {
-        q: "What cancer types are supported?",
-        a: "TCGA survival analysis supports 35 cohort codes, including aggregate cohorts such as COADREAD, GBMLGG, KIPAN, and STES. CPTAC-integrated expression, survival, and correlation analyses currently cover 10 cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC.",
+        term: "Does LinkedOmicsChat use cookies?",
+        text: "No. LinkedOmicsChat sets no cookies and uses no tracking or analytics services, so there is no cookie banner. For signed-in users, the browser's local storage keeps the sign-in token and the current chat; for visitors who aren't signed in, a single flag is kept only until the tab is closed.",
     },
     {
-        q: "Does LinkedOmicsChat use cookies?",
-        a: "No. LinkedOmicsChat sets no cookies and uses no tracking or analytics services, so there is no cookie banner. For signed-in users, the browser's local storage keeps the sign-in token and the current chat; for visitors who aren't signed in, a single flag is kept only until the tab is closed.",
-    },
-    {
-        q: "How should I enter a gene list?",
-        a: "Use gene symbols (for example TP53, EGFR), separated by commas, spaces, or one per line; upper or lower case both work. For pathway enrichment, 10–50 genes works best. Ensembl and UniProt IDs are converted to gene symbols automatically, but for lists, gene symbols are faster and more reliable.",
-    },
-    {
-        q: "Can it run multi-step analyses automatically?",
-        a: "Yes. The LangGraph agent can chain tools without you specifying the steps. For example: 'Find BRCA1 neighbors and run enrichment' automatically calls FunMap, collects the gene list, then calls WebGestalt with those genes.",
-    },
-    {
-        q: "What if my question is ambiguous?",
-        a: "The assistant will ask a focused clarification question rather than guessing. For finite choices (like analysis type), it shows quick-select option chips. For open-ended inputs like gene names, it asks directly.",
-    },
-    {
-        q: "Is the data real or simulated?",
-        a: "Production responses use live API calls to LinkedOmics-hosted services, FunMap, WebGestalt, PubMed, and MyGene.info as needed.",
+        term: "Which cancer types are covered?",
+        text: "TCGA analyses support 35 cohort codes, including the combined cohorts COADREAD, GBMLGG, KIPAN, and STES. CPTAC analyses cover 10 cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC.",
     },
 ]
 
@@ -274,250 +165,159 @@ export default function DocsPage() {
 
             {/* Nav */}
             <nav className="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-slate-100">
-                <div className="max-w-4xl mx-auto px-6 py-3 flex items-center justify-between">
+                <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Link href="/" className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 transition-colors text-sm">
-                            <ArrowLeft className="w-4 h-4" />
-                            Back
+                        <Link href="/" className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors text-sm font-medium">
+                            <img src="/logo.png" alt="" className="h-5 w-auto" />
+                            LinkedOmicsChat
                         </Link>
                         <span className="text-slate-200">/</span>
                         <span className="text-sm font-semibold text-slate-700">Documentation</span>
                     </div>
-                    <Link
-                        href="/"
-                        className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
-                    >
-                        Get started
+                    <Link href="/about" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">
+                        About
                     </Link>
                 </div>
             </nav>
 
-            <div className="max-w-4xl mx-auto px-6 py-14">
+            <div className="max-w-3xl mx-auto px-6 py-12">
 
-                {/* Hero */}
-                <div className="mb-14">
-                    <div className="inline-flex items-center gap-2 bg-white/80 border border-teal-100 text-teal-700 text-xs font-semibold px-3 py-1.5 rounded-full mb-6">
-                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
-                        LinkedOmicsChat · Documentation
-                    </div>
-                    <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-slate-900 leading-tight flex items-center gap-4">
-                        <BookOpen className="w-10 h-10 text-teal-500 stroke-[1.5] flex-shrink-0" />
-                        Everything you need to know
-                    </h1>
-                    <p className="mt-4 text-lg text-slate-500 max-w-2xl leading-relaxed">
-                        LinkedOmicsChat is a natural language interface to cancer multi-omics databases.
-                        Ask research questions in plain English and get structured, cited answers from
-                        real data sources.
-                    </p>
+                <h1 id="top" className="text-3xl font-bold tracking-tight text-slate-900 mb-5 scroll-mt-20">LinkedOmicsChat documentation</h1>
+                <P>
+                    LinkedOmicsChat answers questions about cancer genes by running analyses on LinkedOmics and related
+                    resources: TCGA and CPTAC multi-omics, clinical-trial expression studies, drug-target annotations, the
+                    FunMap network, and WebGestalt enrichment. You ask in plain English; it picks the analyses, runs them
+                    against the live services, and returns the plots and tables they produce with a short written summary.
+                </P>
+                <nav aria-label="On this page" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                    {SECTIONS.map((sec, i) => (
+                        <span key={sec.id} className="flex items-center gap-2">
+                            {i > 0 && <span className="text-slate-300">·</span>}
+                            <a href={`#${sec.id}`} className="text-teal-700 hover:underline">{sec.title}</a>
+                        </span>
+                    ))}
+                </nav>
+
+                <H2 id="examples" icon={MessageSquare}>Asking questions</H2>
+                <P>
+                    Name the gene (or genes) and, where it matters, the cancer type. These questions are from the test
+                    set the app is checked against, one or two per kind of analysis:
+                </P>
+                <DefList items={EXAMPLES} />
+                <div className="mt-5" />
+                <P>
+                    You can also analyze your own gene list. Paste gene symbols separated by commas, spaces, or one per
+                    line, in upper or lower case. For pathway enrichment, 10–50 genes works best. Ensembl and UniProt IDs
+                    are converted to gene symbols with MyGene.info before the analysis runs, but for long lists symbols
+                    are faster. To try it, click &ldquo;Pathway enrichment for a sample gene list&rdquo; on the welcome page.
+                </P>
+                <P>
+                    If a question is too vague to act on, such as a gene with no cancer type or analysis, the app asks
+                    which one you mean, usually with clickable options. If it is outside what the tools cover (protein
+                    structure, for example), it says so and offers to answer from general knowledge instead. Starting a
+                    question with &ldquo;Answer using general knowledge:&rdquo; does that directly; those answers are
+                    labeled &ldquo;General knowledge mode&rdquo; and do not come from the data.
+                </P>
+                <P>
+                    To run a single analysis without the language model, open <strong className="font-medium text-slate-800">Tools</strong> in
+                    the sidebar. Each of the 26 tools has a form with an example input.
+                </P>
+
+                <BackToTop />
+
+                <H2 id="example-outputs" icon={Eye}>Example results</H2>
+                <P>
+                    These are shared chats from real questions. They open read-only, with the same interactive plots,
+                    tables, and networks as the app.
+                </P>
+                <div className="grid sm:grid-cols-2 gap-3">
+                    {EXAMPLE_OUTPUTS.map((ex) => (
+                        <a
+                            key={ex.url}
+                            href={ex.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="group rounded-xl border border-slate-200/80 bg-white/70 p-4 hover:border-teal-300 hover:bg-white transition-colors"
+                        >
+                            <p className="text-sm font-medium text-slate-900 mb-1 flex items-center gap-1.5">
+                                {ex.title}
+                                <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-600" />
+                            </p>
+                            <p className="text-sm text-slate-500 leading-relaxed">{ex.shows}</p>
+                        </a>
+                    ))}
                 </div>
 
-                <Divider />
+                <BackToTop />
 
-                {/* Data Sources */}
-                <section id="data-sources">
-                    <SectionLabel>Data Sources</SectionLabel>
-                    <SectionTitle icon={<Database className="w-6 h-6" />}>Where the data comes from</SectionTitle>
-                    <SectionDesc>
-                        Results are grounded in live API calls to these datasets and services.
-                        Different workflows query different sources in real time depending on the question.
-                    </SectionDesc>
+                <H2 id="interpret" icon={BarChart3}>Reading the results</H2>
+                <P>
+                    The numbers, tables, and plots come straight from the analysis output, and each section links to its
+                    source. The written summary is generated by the language model from those same results, so check
+                    anything important against the tables. All results are associations in public patient cohorts, not
+                    evidence of cause and effect.
+                </P>
+                <DefList items={INTERPRETATION} />
 
-                    <div className="grid sm:grid-cols-2 gap-4">
-                        {DATA_SOURCES.map((src) => (
-                            <div key={src.name} className={`rounded-2xl border p-5 ${src.color}`}>
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className={`w-2 h-2 rounded-full ${src.dot}`} />
-                                        <span className="text-sm font-bold text-slate-900">{src.name}</span>
-                                    </div>
-                                    <a
-                                        href={src.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs text-slate-400 hover:text-slate-700 transition-colors flex items-center gap-0.5"
-                                    >
-                                        Visit <ArrowUpRight className="w-3 h-3" />
-                                    </a>
-                                </div>
-                                <p className="text-xs text-slate-600 leading-relaxed mb-3">
-                                    {src.description}
-                                </p>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {src.tools.map((t) => (
-                                        <span key={t} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white/70 border border-white text-slate-600">
-                                            {t}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
+                <BackToTop />
 
-                <Divider />
+                <H2 id="data-sources" icon={Database}>Data sources</H2>
+                <P>
+                    LinkedOmicsChat keeps no copy of these datasets; each analysis queries the service when you ask. The
+                    one exception is the drug-target index, which is cached for a day.
+                </P>
+                <DefList items={DATA_SOURCES.map((s) => ({ term: <ExtLink href={s.url}>{s.name}</ExtLink>, text: s.text }))} />
 
-                {/* Example Queries */}
-                <section id="examples">
-                    <SectionLabel>Example Queries</SectionLabel>
-                    <SectionTitle icon={<MessageSquare className="w-6 h-6" />}>What you can ask</SectionTitle>
-                    <SectionDesc>
-                        These are representative questions across analysis types. You can also click
-                        an example on the welcome page to fill in the question box. To try it with
-                        sample data, click "Pathway enrichment for a sample gene list" on the welcome page,
-                        or paste your own gene list into a question.
-                    </SectionDesc>
+                <BackToTop />
 
-                    <div className="space-y-4">
-                        {EXAMPLE_CATEGORIES.map((cat) => (
-                            <div key={cat.label} className="rounded-2xl border border-slate-200/80 bg-white/70 overflow-hidden">
-                                <div className={`px-5 py-3 border-b border-inherit flex items-center gap-2`}>
-                                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${cat.color}`}>
-                                        {cat.label}
-                                    </span>
-                                </div>
-                                <ul className="divide-y divide-slate-100">
-                                    {cat.queries.map((q) => (
-                                        <li key={q} className="px-5 py-3 text-sm text-slate-700 flex items-start gap-2">
-                                            <span className="text-slate-300 mt-0.5 select-none">"</span>
-                                            <span>{q}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        ))}
-                    </div>
-                </section>
+                <H2 id="architecture" icon={Cpu}>How it works</H2>
+                <P>
+                    The chat runs a LangGraph agent on Claude Haiku 5.5 (Anthropic API) with 26 tools served by three
+                    MCP servers: 23 analyses on the LinkedOmics family of resources, FunMap, and WebGestalt; one gene ID
+                    converter; and two PubMed tools. Before the model sees a question, a keyword router decides which
+                    group of tools is relevant and only those are offered, and any Ensembl or UniProt IDs are converted
+                    to gene symbols.
+                </P>
+                <P>
+                    The model then calls tools, and can chain them: for &ldquo;find TP53&rsquo;s FunMap neighbors and run
+                    enrichment&rdquo;, it passes the neighbors from the first call to the second. Every call is checked
+                    against the genes in your question plus any genes returned earlier in the same answer, and a call on
+                    some other gene is blocked, so the model cannot quietly swap in a gene you did not ask about. Each
+                    call starts its own tool-server process and queries the live service; answers take from a few seconds
+                    to under a minute, depending on how many analyses they need.
+                </P>
+                <P>
+                    The server builds the plots and tables from the tool output: static plots with matplotlib, and
+                    interactive tables, drug-target grids, and network views in the browser. The written summary comes
+                    from the model, working from the same results. The backend is FastAPI with LangGraph and FastMCP, and the
+                    frontend is Next.js; the source is on{" "}
+                    <ExtLink href="https://github.com/bzhanglab/LinkedOmicsChat">GitHub</ExtLink>.
+                </P>
 
-                <Divider />
+                <BackToTop />
 
-                {/* Example outputs */}
-                <section id="example-outputs">
-                    <SectionLabel>Example Outputs</SectionLabel>
-                    <SectionTitle icon={<ArrowUpRight className="w-6 h-6" />}>See real results</SectionTitle>
-                    <SectionDesc>
-                        Saved results from real questions, shown read-only. Plots, tables, and networks
-                        work the same way as in the app.
-                    </SectionDesc>
+                <H2 id="faq" icon={HelpCircle}>FAQ</H2>
+                <DefList items={FAQS} />
+                <BackToTop />
 
-                    <div className="grid sm:grid-cols-2 gap-4">
-                        {EXAMPLE_OUTPUTS.map((ex) => (
-                            <a
-                                key={ex.url}
-                                href={ex.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="group rounded-2xl border border-slate-200/80 bg-white/70 p-5 hover:border-teal-300 hover:bg-white transition-colors"
-                            >
-                                <p className="text-sm font-semibold text-slate-900 mb-1 flex items-center gap-1.5">
-                                    {ex.title}
-                                    <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-600" />
-                                </p>
-                                <p className="text-sm text-slate-500 leading-relaxed">{ex.shows}</p>
-                            </a>
-                        ))}
-                    </div>
-                </section>
-
-                <Divider />
-
-                {/* Interpreting results */}
-                <section id="interpret">
-                    <SectionLabel>Interpreting Results</SectionLabel>
-                    <SectionTitle icon={<BarChart3 className="w-6 h-6" />}>How to read the results</SectionTitle>
-                    <SectionDesc>
-                        What the statistics in each type of result mean.
-                    </SectionDesc>
-
-                    <div className="grid sm:grid-cols-2 gap-4">
-                        {INTERPRETATION.map((item) => (
-                            <div key={item.title} className="rounded-2xl border border-slate-200/80 bg-white/70 p-5">
-                                <p className="text-sm font-semibold text-slate-900 mb-2">{item.title}</p>
-                                <p className="text-sm text-slate-500 leading-relaxed">{item.text}</p>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                <Divider />
-
-                {/* How it works */}
-                <section id="architecture">
-                    <SectionLabel>Architecture</SectionLabel>
-                    <SectionTitle icon={<Cpu className="w-6 h-6" />}>How a query becomes an answer</SectionTitle>
-                    <SectionDesc>
-                        LinkedOmicsChat uses a LangGraph agent loop with MCP-connected tool servers.
-                        The LLM autonomously decides which tools to call and in what order — enabling
-                        multi-step analyses without manual workflow configuration.
-                    </SectionDesc>
-
-                    <div className="grid sm:grid-cols-2 gap-4">
-                        {ARCH_STEPS.map((s) => (
-                            <div key={s.step} className="rounded-2xl border border-slate-200/80 bg-white/70 p-5 flex gap-4">
-                                <span className="flex-shrink-0 w-8 h-8 rounded-full bg-teal-600 text-white text-sm font-bold flex items-center justify-center shadow-sm shadow-teal-200">
-                                    {s.step}
-                                </span>
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-900 mb-1">{s.title}</p>
-                                    <p className="text-sm text-slate-500 leading-relaxed">{s.desc}</p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="mt-6 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-5">
-                        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Tech stack</p>
-                        <div className="flex flex-wrap gap-2">
-                            {["FastAPI", "LangGraph", "Model Context Protocol (MCP)", "Next.js", "FastMCP", "LangChain"].map((t) => (
-                                <span key={t} className="text-xs font-medium px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-600">
-                                    {t}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                </section>
-
-                <Divider />
-
-                {/* FAQ */}
-                <section id="faq">
-                    <SectionLabel>FAQ</SectionLabel>
-                    <SectionTitle icon={<HelpCircle className="w-6 h-6" />}>Using LinkedOmicsChat</SectionTitle>
-
-                    <div className="space-y-4">
-                        {FAQS.map((faq) => (
-                            <div key={faq.q} className="rounded-2xl border border-slate-200/80 bg-white/70 p-5">
-                                <p className="text-sm font-semibold text-slate-900 mb-2">{faq.q}</p>
-                                <p className="text-sm text-slate-500 leading-relaxed">{faq.a}</p>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                <Divider />
-
-                {/* CTA */}
-                <div className="text-center pb-4">
-                    <p className="text-slate-500 text-sm mb-4">Ready to start exploring your research questions?</p>
-                    <div className="flex justify-center gap-3">
+                <div className="mt-14 pt-8 border-t border-slate-200 flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex gap-3">
                         <Link
                             href="/"
-                            className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors shadow-md shadow-teal-200 inline-flex items-center gap-2"
+                            className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors inline-flex items-center gap-1.5"
                         >
                             Start asking questions
                             <ArrowUpRight className="w-4 h-4" />
                         </Link>
                         <Link
                             href="/register"
-                            className="border border-slate-200 hover:border-slate-300 bg-white/80 hover:bg-white text-slate-700 font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors"
+                            className="border border-slate-200 hover:border-slate-300 bg-white/80 hover:bg-white text-slate-700 font-semibold px-5 py-2 rounded-lg text-sm transition-colors"
                         >
                             Create free account
                         </Link>
                     </div>
-                    <p className="mt-6 text-xs text-slate-400">
-                        Built by Zhang Lab · Data and services from LinkedOmics, TCGA, CPTAC, PubMed, and related research resources
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                        Free to use · Source code under the{" "}
+                    <p className="text-xs text-slate-400">
+                        Zhang Lab · Free to use · Source code under the{" "}
                         <a href="https://github.com/bzhanglab/LinkedOmicsChat/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-600 transition-colors">MIT License</a>
                     </p>
                 </div>
