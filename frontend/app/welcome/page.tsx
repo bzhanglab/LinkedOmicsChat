@@ -35,9 +35,11 @@ const CAT_LABEL: Record<Category, string> = {
     clinical_trials: "Clinical trials",
 }
 
-interface Chip { text: string; cat: Category }
+// `label` is shown on the chip when the full query (`text`) is too long, e.g. sample data
+interface Chip { text: string; cat: Category; label?: string }
 
 const ROW1: Chip[] = [
+    { label: "Pathway enrichment for a sample gene list", text: "Run pathway enrichment on my gene list: CDK1, CCNB1, CCNA2, AURKA, AURKB, PLK1, BUB1, BUB1B, TOP2A, KIF11, BIRC5, MKI67, CDC20, CENPF, TTK", cat: "network" },
     { text: "Is ESR1 associated with survival in BRCA?",            cat: "survival"        },
     { text: "EGFR expression in LUAD vs normal tissue",             cat: "expression"      },
     { text: "Which genes predict paclitaxel response in breast cancer?", cat: "clinical_trials" },
@@ -108,7 +110,7 @@ function ChipRow({
                         onClick={(e) => { e.stopPropagation(); onChipClick(chip.text, chip.cat) }}
                         className={`chip-row-item ${CAT_ROW_STYLE[chip.cat]} transition-colors duration-150`}
                     >
-                        {chip.text}
+                        {chip.label ?? chip.text}
                     </button>
                 ))}
             </div>
@@ -335,7 +337,10 @@ export default function WelcomePage() {
 
             {/* ── Footer ────────────────────────────────────────────── */}
             <div className="relative z-10 flex items-center justify-between px-6 lg:px-10 py-4">
-                <p className="text-xs text-slate-400">© 2026 Zhang Lab</p>
+                <p className="text-xs text-slate-400">
+                    © 2026 Zhang Lab · Free to use · Source code under the{" "}
+                    <a href="https://github.com/bzhanglab/LinkedOmicsChat/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-600 transition-colors">MIT License</a>
+                </p>
                 <div className="hidden sm:flex items-center gap-4 text-xs text-slate-400">
                     <Link href="/about" className="hover:text-slate-600 transition-colors">About</Link>
                     <Link href="/docs" className="hover:text-slate-600 transition-colors">Docs</Link>
