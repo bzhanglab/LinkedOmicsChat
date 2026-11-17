@@ -99,9 +99,6 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                                 LinkedOmics<span className="text-teal-600 dark:text-teal-400">Chat</span>
                             </span>
                         </a>
-                        <p className="text-sm text-muted-foreground mt-1">
-                            Multi-Omics AI Platform
-                        </p>
                     </>
                 ) : (
                     <div className="flex justify-center">

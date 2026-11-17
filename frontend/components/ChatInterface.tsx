@@ -785,9 +785,10 @@ const MessagesPane = memo(function MessagesPane({
         }
     }
 
+    // Top clearance for the floating chat actions sits on the inner list (pt-10) so it scrolls away; the frame keeps only 8px
     return (
-        <ScrollArea ref={scrollAreaRootRef} className="flex-1 p-6">
-            <div className="space-y-4 max-w-4xl mx-auto">
+        <ScrollArea ref={scrollAreaRootRef} className="flex-1 px-6 pb-6 pt-2">
+            <div className="space-y-4 max-w-4xl mx-auto pt-10">
                 {isHistoryLoading && (
                     <div className="text-center text-xs text-muted-foreground py-2">
                         Loading history...
@@ -3168,10 +3169,10 @@ export const ChatInterface = memo(function ChatInterface({
     }
 
     return (
-        <div className="h-full flex flex-col bg-background">
-            {/* Header */}
-            <div className="border-b border-border px-4 py-3 md:px-6 md:py-4 flex items-center justify-between gap-3">
-                {searchOpen ? (
+        <div className="relative h-full flex flex-col bg-background">
+            {/* No header row: the in-chat search gets a bar while open; otherwise the chat actions float top-right */}
+            {searchOpen ? (
+                <div className="border-b border-border px-4 py-3 md:px-6 md:py-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 flex-1 pr-10 md:pr-12">
                         <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                         <input
@@ -3194,30 +3195,23 @@ export const ChatInterface = memo(function ChatInterface({
                         <button onClick={() => navigateSearch(1)} disabled={!searchMatchIndices.length} className="p-1 hover:bg-muted rounded disabled:opacity-30"><ChevronDown className="w-4 h-4" /></button>
                         <button onClick={() => { setSearchOpen(false); setSearchTerm("") }} className="p-1 hover:bg-muted rounded mr-1"><X className="w-4 h-4" /></button>
                     </div>
-                ) : (
-                    <>
-                        <div className="flex-1 min-w-0">
-                            <h2 className="text-lg md:text-2xl font-semibold">Cancer Multi-Omics AI</h2>
-                            <p className="hidden sm:block text-sm text-muted-foreground mt-1">
-                                Expression · Survival · Trials · Targets
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0 pr-10 md:pr-12">
-                            {messages.length > 1 && (
-                                <Button variant="ghost" size="sm" onClick={openSearch} title="Search in this chat (⌘F)">
-                                    <Search className="w-4 h-4" />
-                                </Button>
-                            )}
-                            {showSessionActions && (
-                                <ShareSessionControl sessionId={sessionId} isGuest={isGuest} />
-                            )}
-                            {showSessionActions && (
-                                <ExportSessionControl sessionId={sessionId} />
-                            )}
-                        </div>
-                    </>
-                )}
-            </div>
+                </div>
+            ) : (messages.length > 1 || showSessionActions) && (
+                // Desktop: right-14 keeps clear of the fixed right-panel toggle in the corner
+                <div className="absolute top-2 right-3 md:right-14 z-10 flex items-center gap-1 rounded-lg border border-border/60 bg-background/80 backdrop-blur px-1 py-0.5 shadow-sm">
+                    {messages.length > 1 && (
+                        <Button variant="ghost" size="sm" onClick={openSearch} title="Search in this chat (⌘F)">
+                            <Search className="w-4 h-4" />
+                        </Button>
+                    )}
+                    {showSessionActions && (
+                        <ShareSessionControl sessionId={sessionId} isGuest={isGuest} />
+                    )}
+                    {showSessionActions && (
+                        <ExportSessionControl sessionId={sessionId} />
+                    )}
+                </div>
+            )}
 
             {/* Messages */}
             <MessagesPane
