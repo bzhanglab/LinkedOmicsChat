@@ -2,45 +2,20 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { chatAPI, API_URL } from "@/lib/api"
+import { chatAPI, resolveDataSources, type AnyVisualization } from "@/lib/api"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import { AppIcon } from "@/components/AppLogo"
-
-interface AtRiskRow { time: number; [group: string]: number }
-
-function parseAtRiskCsv(csv: string): { rows: AtRiskRow[]; groups: string[] } | null {
-    const lines = csv.trim().split("\n")
-    if (lines.length < 2) return null
-    const headers = lines[0].split(",").map(h => h.trim())
-    const groupIdx = headers.indexOf("group")
-    const timeIdx = headers.indexOf("time_days")
-    const atRiskIdx = headers.indexOf("at_risk")
-    if (groupIdx === -1 || timeIdx === -1 || atRiskIdx === -1) return null
-    const byTime = new Map<number, Record<string, number>>()
-    const groupSet = new Set<string>()
-    for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",").map(c => c.trim())
-        if (cols.length < headers.length) continue
-        const time = parseFloat(cols[timeIdx])
-        const group = cols[groupIdx]
-        const atRisk = parseInt(cols[atRiskIdx], 10)
-        if (isNaN(time) || isNaN(atRisk)) continue
-        groupSet.add(group)
-        if (!byTime.has(time)) byTime.set(time, {})
-        byTime.get(time)![group] = atRisk
-    }
-    const groups = Array.from(groupSet).sort()
-    const rows = Array.from(byTime.entries()).sort(([a], [b]) => a - b).map(([time, vals]) => ({ time, ...vals }))
-    return rows.length > 0 ? { rows, groups } : null
-}
-
-const PLOT_MARKER_RE = /^\[PLOT:([^\]]+)\]$/
-
-interface Viz { id: string; type: string; title?: string }
+import { AssistantMarkdown } from "@/components/ChatInterface"
+import { StaticPlot } from "@/components/StaticPlot"
+import { NetworkPlot } from "@/components/NetworkPlot"
+import { DrugTargetGrid } from "@/components/DrugTargetGrid"
+import { TargetSearchTable } from "@/components/TargetSearchTable"
+import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
+import { TCGACisResultsTable } from "@/components/TCGACisResultsTable"
 
 interface HistoryEntry {
     id: number
@@ -48,7 +23,9 @@ interface HistoryEntry {
     response: {
         message?: string
         summary?: string
-        visualizations?: Viz[]
+        visualizations?: AnyVisualization[]
+        tool_sources?: Record<string, string>
+        tools_used?: string[]
     }
     timestamp: number
 }
@@ -60,51 +37,40 @@ interface SharedSession {
     created_at: number
 }
 
-/** Split markdown on [PLOT:id] lines and render text + images inline. */
-function AssistantContent({ message, summary, visualizations }: {
+const INLINE_MARKER_RE = /\[(?:PLOT|NETWORK|TABLE):([^\]]+)\]/g
+
+/** Same type-to-component mapping the live chat uses for results not placed inline. */
+function VisualizationView({ viz }: { viz: AnyVisualization }) {
+    if (viz.type === "network_plot") return <NetworkPlot visualization={viz} />
+    if (viz.type === "drug_target_grid") return <DrugTargetGrid visualization={viz} />
+    if (viz.type === "target_search_table") return <TargetSearchTable visualization={viz} />
+    if (viz.type === "predictive_results_table") return <PredictiveResultsTable visualization={viz} />
+    if (viz.type === "tcga_cis_results_table") return <TCGACisResultsTable visualization={viz} />
+    return <StaticPlot visualization={viz} />
+}
+
+/** Render an answer with the live chat's renderer, so shared results look and behave the same. */
+function AssistantContent({ message, summary, visualizations, toolSources, toolsUsed }: {
     message?: string
     summary?: string
-    visualizations?: Viz[]
+    visualizations?: AnyVisualization[]
+    toolSources?: Record<string, string>
+    toolsUsed?: string[]
 }) {
-    const vizMap: Record<string, Viz> = {}
-    visualizations?.forEach(v => { vizMap[v.id] = v })
-
-    const text = message || "_(no response)_"
-
-    // Split into text/plot segments
-    const segments: { type: "text" | "plot"; value: string }[] = []
-    let buf: string[] = []
-    for (const line of text.split("\n")) {
-        const m = line.trim().match(PLOT_MARKER_RE)
-        if (m) {
-            if (buf.length) { segments.push({ type: "text", value: buf.join("\n") }); buf = [] }
-            segments.push({ type: "plot", value: m[1] })
-        } else {
-            buf.push(line)
-        }
-    }
-    if (buf.length) segments.push({ type: "text", value: buf.join("\n") })
-
-    // Plots not referenced inline — render after message
-    const inlinedIds = new Set(segments.filter(s => s.type === "plot").map(s => s.value))
-    const trailingVizs = (visualizations || []).filter(v => !inlinedIds.has(v.id))
-
+    const content = message || "_(no response)_"
+    const inlineIds = new Set(Array.from(content.matchAll(INLINE_MARKER_RE), (m) => m[1]))
+    const remaining = (visualizations || []).filter((viz) => !inlineIds.has(viz.id))
+    const sources = resolveDataSources(toolsUsed || [])
     const showSummary = summary && summary.trim().length > 0 && summary !== message
 
     return (
         <div className="space-y-3">
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-                {segments.map((seg, i) =>
-                    seg.type === "plot" ? (
-                        vizMap[seg.value] ? <PlotImage key={i} viz={vizMap[seg.value]} /> : null
-                    ) : (
-                        <ReactMarkdown key={i} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-                            {seg.value}
-                        </ReactMarkdown>
-                    )
-                )}
-            </div>
-            {trailingVizs.map(viz => <PlotImage key={viz.id} viz={viz} />)}
+            <AssistantMarkdown content={content} visualizations={visualizations} toolSources={toolSources} />
+            {remaining.length > 0 && (
+                <div className="space-y-4">
+                    {remaining.map((viz) => <VisualizationView key={viz.id} viz={viz} />)}
+                </div>
+            )}
             {showSummary && (
                 <div className="mt-2 pt-3 border-t border-border">
                     <div className="rounded-md border border-border bg-muted/40 p-3">
@@ -117,69 +83,20 @@ function AssistantContent({ message, summary, visualizations }: {
                     </div>
                 </div>
             )}
-        </div>
-    )
-}
-
-function PlotImage({ viz }: { viz: Viz }) {
-    const [atRiskData, setAtRiskData] = useState<{ rows: AtRiskRow[]; groups: string[] } | null>(null)
-    const [showAtRisk, setShowAtRisk] = useState(false)
-
-    useEffect(() => {
-        fetch(`${API_URL}/api/v1/chat/visualizations/${encodeURIComponent(viz.id)}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (data?.csv) {
-                    const parsed = parseAtRiskCsv(data.csv)
-                    if (parsed) setAtRiskData(parsed)
-                }
-            })
-            .catch(() => {})
-    }, [viz.id])
-
-    return (
-        <div className="my-3 rounded border border-border overflow-hidden">
-            {viz.title && <p className="text-xs font-medium text-muted-foreground px-3 pt-2">{viz.title}</p>}
-            <div className="p-2 flex justify-center">
-                <img
-                    src={`${API_URL}/api/v1/chat/visualizations/${viz.id}/png`}
-                    alt={viz.title || "Plot"}
-                    className="max-w-full h-auto"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
-                />
-            </div>
-            {atRiskData && (
-                <div className="border-t border-border px-3 py-2 bg-muted/20">
-                    <button
-                        className="text-xs text-primary hover:underline mb-1.5"
-                        onClick={() => setShowAtRisk(v => !v)}
-                    >
-                        {showAtRisk ? "Hide at-risk table" : "Show at-risk table"}
-                    </button>
-                    {showAtRisk && (
-                        <div className="max-h-48 overflow-y-auto rounded border border-border text-xs">
-                            <table className="w-full border-collapse">
-                                <thead className="sticky top-0 bg-muted/80">
-                                    <tr>
-                                        <th className="text-left px-2 py-1 font-medium text-muted-foreground border-b border-border">Time (days)</th>
-                                        {atRiskData.groups.map(g => (
-                                            <th key={g} className="text-right px-2 py-1 font-medium text-muted-foreground border-b border-border">{g}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {atRiskData.rows.map((row, i) => (
-                                        <tr key={row.time} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
-                                            <td className="px-2 py-0.5 tabular-nums">{row.time}</td>
-                                            {atRiskData.groups.map(g => (
-                                                <td key={g} className="px-2 py-0.5 text-right tabular-nums">{row[g] ?? "—"}</td>
-                                            ))}
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
+            {sources.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground/60">Sources:</span>
+                    {sources.map((src) => (
+                        <a
+                            key={src.label}
+                            href={src.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs px-2 py-0.5 rounded-full border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                        >
+                            {src.label}
+                        </a>
+                    ))}
                 </div>
             )}
         </div>
@@ -255,6 +172,8 @@ export default function SharedSessionPage() {
                                 message={entry.response?.message}
                                 summary={entry.response?.summary}
                                 visualizations={entry.response?.visualizations}
+                                toolSources={entry.response?.tool_sources}
+                                toolsUsed={entry.response?.tools_used}
                             />
                         </div>
                         <p className="text-xs text-muted-foreground text-right">

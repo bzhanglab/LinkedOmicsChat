@@ -200,7 +200,7 @@ function resolveInlineSourceUrl(key: string, toolSources?: Record<string, string
     return fallbackUrl
 }
 
-const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
+export const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
     const handleCopyTable = useCallback((tableContent: string) => {
         if (onCopyTable) {
             onCopyTable(tableContent)
