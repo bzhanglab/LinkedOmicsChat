@@ -3881,28 +3881,38 @@ DIRECT RESPONSE RULES:
         preloaded_results: Dict[str, Any] = {}
         resolved_map: Dict[str, str] = {}
         trace_metrics: List[Dict[str, Any]] = []
-        count = 0
-        for identifier in requested_identifiers:
-            normalized = _normalize_identifier_token(identifier)
-            if not _is_external_gene_identifier(normalized):
-                continue
-            started = time.perf_counter()
-            try:
-                raw = await self.mcp_aggregator.call_tool(
-                    "gene_utils::resolve_gene_identifier",
-                    {"identifier": normalized},
-                )
-                latency_ms = int((time.perf_counter() - started) * 1000)
-            except Exception as exc:
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                logger.warning(
-                    "%s Failed to pre-resolve identifier %s: %s",
-                    log_prefix,
-                    normalized,
-                    exc,
-                )
-                raw = {"error": str(exc)}
+        identifiers = [
+            normalized
+            for normalized in (_normalize_identifier_token(identifier) for identifier in requested_identifiers)
+            if _is_external_gene_identifier(normalized)
+        ]
 
+        # Look identifiers up concurrently (each lookup starts its own tool process), at most 10 at a time.
+        lookup_slots = asyncio.Semaphore(10)
+
+        async def _lookup(normalized: str) -> tuple[Any, int]:
+            async with lookup_slots:
+                started = time.perf_counter()
+                try:
+                    raw = await self.mcp_aggregator.call_tool(
+                        "gene_utils::resolve_gene_identifier",
+                        {"identifier": normalized},
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "%s Failed to pre-resolve identifier %s: %s",
+                        log_prefix,
+                        normalized,
+                        exc,
+                    )
+                    raw = {"error": str(exc)}
+                return raw, int((time.perf_counter() - started) * 1000)
+
+        lookups_started = time.perf_counter()
+        lookups = await asyncio.gather(*(_lookup(normalized) for normalized in identifiers))
+        lookups_ms = int((time.perf_counter() - lookups_started) * 1000)
+
+        for count, (normalized, (raw, latency_ms)) in enumerate(zip(identifiers, lookups)):
             if isinstance(raw, dict):
                 result_dict = raw
             elif isinstance(raw, str):
@@ -3925,7 +3935,6 @@ DIRECT RESPONSE RULES:
                 }
             )
             unique_key = f"gene_utils::resolve_gene_identifier#{count}"
-            count += 1
             preloaded_results[unique_key] = {
                 "_gene": None,
                 "_args": {"identifier": normalized},
@@ -3951,7 +3960,7 @@ DIRECT RESPONSE RULES:
                 {
                     "node": "tools",
                     "step": 0,
-                    "latency_ms": sum(item["latency_ms"] for item in trace_metrics),
+                    "latency_ms": lookups_ms,
                     "tool_calls": trace_metrics,
                 }
             )
