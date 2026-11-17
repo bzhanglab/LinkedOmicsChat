@@ -98,9 +98,9 @@ export default function WelcomePage() {
             <div className="relative z-10 pt-6 sm:pt-10 pb-2 px-6 text-center">
 
                 {/* Badge */}
-                <div className="inline-flex items-center gap-2 bg-white/80 border border-teal-100 text-teal-700 text-xs font-semibold px-3.5 py-1.5 rounded-full shadow-sm mb-6">
+                <div className="inline-flex items-center gap-2 bg-white/80 border border-teal-100 text-teal-700 text-xs font-semibold text-center px-3.5 py-1.5 rounded-2xl sm:rounded-full shadow-sm mb-6">
                     <Zap className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                    AI-powered · TCGA · CPTAC · LinkedOmics
+                    TCGA · CPTAC · LinkedOmics · ClinicalOmicsDB · FunMap · WebGestalt · PubMed
                 </div>
 
                 <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.1]">

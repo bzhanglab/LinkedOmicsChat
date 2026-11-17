@@ -46,6 +46,14 @@ const DATA_SOURCES = [
         tools: ["TCGA survival", "CPTAC-integrated expression", "Drug target lookup", "Clinical trial studies"],
     },
     {
+        name: "ClinicalOmicsDB",
+        url: "https://trials.linkedomics.org",
+        color: "bg-indigo-50 border-indigo-100",
+        dot: "bg-indigo-500",
+        description: "Trial-linked public gene-expression studies with treatment-response annotations, used to find genes and gene sets whose expression is associated with response or resistance to specific treatments, within single studies and by meta-analysis across studies.",
+        tools: ["Gene–treatment response", "Gene set response", "Study details", "Cross-study meta-analysis"],
+    },
+    {
         name: "FunMap",
         url: "https://funmap.linkedomics.org",
         color: "bg-emerald-50 border-emerald-100",
