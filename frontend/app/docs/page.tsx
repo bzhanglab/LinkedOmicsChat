@@ -150,6 +150,29 @@ const EXAMPLE_CATEGORIES = [
     },
 ]
 
+const EXAMPLE_OUTPUTS = [
+    {
+        title: "Pathway enrichment for a sample gene list",
+        shows: "Gene Ontology enrichment plot and table for 15 cell-cycle genes",
+        url: "https://chat.linkedomics.org/shared/977d0926-4ce8-411c-8295-e1bb94a295e1",
+    },
+    {
+        title: "Gene biomarkers for checkpoint inhibitor response",
+        shows: "Cross-study meta-analysis table, drug-target grid, FunMap network, and tumor-vs-normal expression",
+        url: "https://chat.linkedomics.org/shared/addc448b-5e83-48ab-ba3f-749a4233d4eb",
+    },
+    {
+        title: "CDK4 therapeutic potential in breast cancer",
+        shows: "Drug-target grid, tumor-vs-normal expression, and clinical trial associations",
+        url: "https://chat.linkedomics.org/shared/95167454-c30c-4ac7-b638-17c273d04a3d",
+    },
+    {
+        title: "ESR1 expression and survival in breast cancer",
+        shows: "Survival plots across RNA, protein, methylation, and copy number",
+        url: "https://chat.linkedomics.org/shared/6c48044d-22e7-462d-b162-9d8c7607796d",
+    },
+]
+
 const INTERPRETATION = [
     {
         title: "Numbers vs. written summary",
@@ -361,6 +384,36 @@ export default function DocsPage() {
                                     ))}
                                 </ul>
                             </div>
+                        ))}
+                    </div>
+                </section>
+
+                <Divider />
+
+                {/* Example outputs */}
+                <section id="example-outputs">
+                    <SectionLabel>Example Outputs</SectionLabel>
+                    <SectionTitle icon={<ArrowUpRight className="w-6 h-6" />}>See real results</SectionTitle>
+                    <SectionDesc>
+                        Saved results from real questions, shown read-only. Plots, tables, and networks
+                        work the same way as in the app.
+                    </SectionDesc>
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                        {EXAMPLE_OUTPUTS.map((ex) => (
+                            <a
+                                key={ex.url}
+                                href={ex.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group rounded-2xl border border-slate-200/80 bg-white/70 p-5 hover:border-teal-300 hover:bg-white transition-colors"
+                            >
+                                <p className="text-sm font-semibold text-slate-900 mb-1 flex items-center gap-1.5">
+                                    {ex.title}
+                                    <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-600" />
+                                </p>
+                                <p className="text-sm text-slate-500 leading-relaxed">{ex.shows}</p>
+                            </a>
                         ))}
                     </div>
                 </section>
