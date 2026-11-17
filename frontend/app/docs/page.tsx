@@ -249,7 +249,7 @@ export default function DocsPage() {
                         <span className="text-sm font-semibold text-slate-700">Documentation</span>
                     </div>
                     <Link
-                        href="/register"
+                        href="/"
                         className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
                     >
                         Get started
@@ -435,17 +435,17 @@ export default function DocsPage() {
                     <p className="text-slate-500 text-sm mb-4">Ready to start exploring your research questions?</p>
                     <div className="flex justify-center gap-3">
                         <Link
-                            href="/register"
+                            href="/"
                             className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors shadow-md shadow-teal-200 inline-flex items-center gap-2"
                         >
-                            Create free account
+                            Start asking questions
                             <ArrowUpRight className="w-4 h-4" />
                         </Link>
                         <Link
-                            href="/"
+                            href="/register"
                             className="border border-slate-200 hover:border-slate-300 bg-white/80 hover:bg-white text-slate-700 font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors"
                         >
-                            Start asking questions
+                            Create free account
                         </Link>
                     </div>
                     <p className="mt-6 text-xs text-slate-400">
