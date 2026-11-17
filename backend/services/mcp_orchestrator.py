@@ -3008,10 +3008,19 @@ Classify this query. Return JSON only."""
         compact: Dict[str, Any] = {}
         tcga_survival_groups: Dict[tuple[str, str], list[dict[str, Any]]] = {}
         tcga_survival_group_order: list[tuple[str, str]] = []
+        identifier_conversions: Dict[str, str] = {}
 
         for tool_id, raw in (results or {}).items():
             bare_tool_id = tool_id.split('#')[0] if '#' in tool_id else tool_id
             if bare_tool_id.endswith("resolve_gene_identifier"):
+                # Drop the verbose resolver output but keep its identifier -> symbol pair, so the
+                # summary knows results for the symbols are results for the user's identifiers.
+                args = raw.get("_args") if isinstance(raw, dict) else None
+                _, payload = _parsed_payload(raw)
+                identifier = (args or {}).get("identifier")
+                symbol = payload.get("hgnc_symbol") if isinstance(payload, dict) and not payload.get("error") else None
+                if identifier and symbol:
+                    identifier_conversions[str(identifier)] = str(symbol)
                 continue
             if bare_tool_id.endswith("analyze_tcga_survival_associations"):
                 wrapped_gene, payload = _parsed_payload(raw)
@@ -3056,6 +3065,16 @@ Classify this query. Return JSON only."""
             compact[compact_key] = _sanitize_value(
                 _compact_tcga_survival_group_for_summary(parsed_list, gene_key, cohort_key)
             )
+
+        if identifier_conversions:
+            compact = {
+                "identifier_conversions": {
+                    "note": "The user's identifiers were converted to these gene symbols before analysis, "
+                            "so results for the symbols are results for the user's identifiers.",
+                    "mapping": identifier_conversions,
+                },
+                **compact,
+            }
 
         text = json.dumps(compact, indent=2)
         if len(text) > 80_000:
