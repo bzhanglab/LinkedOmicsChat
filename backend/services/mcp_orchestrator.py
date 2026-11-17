@@ -5917,6 +5917,8 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             "created_at": s.created_at,
                             "last_updated": s.last_updated,
                             "message_count": counts.get(s.id, 0),
+                            "pinned": bool(s.pinned),
+                            "shared": bool(s.shared_token),
                         }
                         for s in db_sessions
                     ]
@@ -5950,6 +5952,8 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             "created_at": s.created_at,
                             "last_updated": s.last_updated,
                             "message_count": counts.get(s.id, 0),
+                            "pinned": bool(s.pinned),
+                            "shared": bool(s.shared_token),
                         }
                         for s in db_sessions
                     ]

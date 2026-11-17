@@ -13,7 +13,7 @@ import time
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, cast, Text as SAText
-from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest
+from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest, PinRequest
 from models.database import User, ChatSession, ChatMessage as DBChatMessage, MessageFeedback
 from services.mcp_orchestrator import MCPOrchestrator
 from core.config import settings
@@ -384,7 +384,9 @@ async def list_sessions(
                 "title": session.get("title", "New Chat"),
                 "created_at": session.get("created_at", 0) * 1000,  # Convert to milliseconds for JavaScript
                 "last_updated": session.get("last_updated", 0) * 1000,  # Convert to milliseconds
-                "message_count": session.get("message_count", 0)
+                "message_count": session.get("message_count", 0),
+                "pinned": session.get("pinned", False),
+                "shared": session.get("shared", False),
             })
         
         return {"sessions": formatted_sessions}
@@ -1258,18 +1260,22 @@ async def clear_session(
         if session_id in active_orchestrator.sessions:
             if active_orchestrator.sessions[session_id].get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
-            del active_orchestrator.sessions[session_id]
         else:
             # Load from DB to verify ownership
             session = await active_orchestrator._load_session_from_db(session_id)
             if session and session.get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
-        
+        if await _session_is_pinned(session_id):
+            raise HTTPException(status_code=409, detail="This chat is pinned. Unpin it before deleting it.")
+        active_orchestrator.sessions.pop(session_id, None)
+
         # Delete from database
         await active_orchestrator._delete_session_from_db(session_id)
         
         return {"message": "Session cleared", "session_id": session_id}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error clearing session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1298,6 +1304,8 @@ async def truncate_session_from_turn(
             if session.get("user_id") != current_user.id:
                 raise HTTPException(status_code=403, detail="Access denied")
             active_orchestrator.sessions[session_id] = session
+        if await _session_is_pinned(session_id):
+            raise HTTPException(status_code=409, detail="This chat is pinned. Unpin it before editing it.")
 
         stats = await active_orchestrator._truncate_session_from_message(session_id, request.message_id)
         refreshed = await active_orchestrator._load_session_from_db(session_id)
@@ -1317,6 +1325,63 @@ async def truncate_session_from_turn(
         raise
     except Exception as e:
         logger.error(f"Error truncating session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _session_is_pinned(session_id: str) -> bool:
+    """Whether the stored chat is pinned; pinned chats cannot be deleted or truncated."""
+    if settings.DATABASE_URL.startswith("sqlite"):
+        db = SessionLocal()
+        try:
+            sess = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            return bool(sess and sess.pinned)
+        finally:
+            db.close()
+    async with SessionLocal() as db:
+        result = await db.execute(select(ChatSession).filter(ChatSession.id == session_id))
+        sess = result.scalar_one_or_none()
+        return bool(sess and sess.pinned)
+
+
+@router.put("/sessions/{session_id}/pin")
+async def set_session_pinned(
+    session_id: str,
+    request: PinRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Pin or unpin one of the user's chats."""
+    try:
+        if settings.DATABASE_URL.startswith("sqlite"):
+            db = SessionLocal()
+            try:
+                sess = (
+                    db.query(ChatSession)
+                    .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+                    .first()
+                )
+                if not sess:
+                    raise HTTPException(status_code=404, detail="Session not found")
+                sess.pinned = request.pinned
+                db.commit()
+            finally:
+                db.close()
+        else:
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(ChatSession).filter(
+                        ChatSession.id == session_id, ChatSession.user_id == current_user.id
+                    )
+                )
+                sess = result.scalar_one_or_none()
+                if not sess:
+                    raise HTTPException(status_code=404, detail="Session not found")
+                sess.pinned = request.pinned
+                await db.commit()
+        return {"session_id": session_id, "pinned": request.pinned}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error pinning session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -59,6 +59,10 @@ def _run_sqlite_migrations(conn):
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_chat_sessions_shared_token ON chat_sessions (shared_token)")
         logger.info("Migration: added shared_token column to chat_sessions")
         changed = True
+    if "pinned" not in existing:
+        cursor.execute("ALTER TABLE chat_sessions ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0")
+        logger.info("Migration: added pinned column to chat_sessions")
+        changed = True
 
     cursor.execute("PRAGMA table_info(users)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -94,6 +98,10 @@ async def _run_postgres_migrations(conn):
     if "shared_token" not in chat_session_columns:
         await conn.execute(text("ALTER TABLE chat_sessions ADD COLUMN shared_token VARCHAR"))
         logger.info("Migration: added shared_token column to chat_sessions")
+        changed = True
+    if "pinned" not in chat_session_columns:
+        await conn.execute(text("ALTER TABLE chat_sessions ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT FALSE"))
+        logger.info("Migration: added pinned column to chat_sessions")
         changed = True
     await conn.execute(
         text(

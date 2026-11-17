@@ -41,6 +41,10 @@ class ChatRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
+class PinRequest(BaseModel):
+    pinned: bool
+
+
 class TurnTruncateRequest(BaseModel):
     """Request schema for truncating a session from a given turn/message row."""
     message_id: int

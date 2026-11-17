@@ -669,6 +669,8 @@ export const chatAPI = {
                 created_at: number
                 last_updated: number
                 message_count: number
+                pinned: boolean
+                shared: boolean
             }>
         }>("/api/v1/chat/sessions")
         return response.data
@@ -711,6 +713,11 @@ export const chatAPI = {
     async clearSession(sessionId: string) {
         const response = await api.delete(`/api/v1/chat/sessions/${sessionId}`)
         return response.data
+    },
+
+    async setSessionPinned(sessionId: string, pinned: boolean) {
+        const response = await api.put(`/api/v1/chat/sessions/${sessionId}/pin`, { pinned })
+        return response.data as { session_id: string; pinned: boolean }
     },
 
     async truncateSessionFromMessage(sessionId: string, messageId: number) {

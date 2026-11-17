@@ -40,6 +40,7 @@ class ChatSession(Base):
     last_updated = Column(Float, nullable=False)
     context = Column(JSON, nullable=True)
     shared_token = Column(String, nullable=True, unique=True, index=True)
+    pinned = Column(Boolean, nullable=False, default=False)  # pinned chats cannot be deleted or truncated
 
     # Relationships
     user = relationship("User", back_populates="sessions")

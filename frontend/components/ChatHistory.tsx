@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react"
-import { Trash2, MessageSquare, Plus, Pencil, Check, X, Search } from "lucide-react"
+import { Trash2, MessageSquare, Plus, Pencil, Check, X, Search, Pin, PinOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { chatAPI } from "@/lib/api"
@@ -23,6 +23,8 @@ interface ChatSession {
     created_at: string | number
     last_updated: string | number
     message_count: number
+    pinned?: boolean
+    shared?: boolean
 }
 
 interface ChatHistoryProps {
@@ -149,6 +151,21 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
             console.error("Failed to delete session:", error)
         }
     }
+
+    // Pinned chats are listed first and cannot be deleted (the server refuses too) until unpinned
+    const togglePin = async (session: ChatSession, e: React.MouseEvent) => {
+        e.stopPropagation()
+        const pinned = !session.pinned
+        try {
+            await chatAPI.setSessionPinned(session.session_id, pinned)
+            setSessions(prev => prev.map(s => s.session_id === session.session_id ? { ...s, pinned } : s))
+        } catch (error) {
+            console.error("Failed to pin session:", error)
+        }
+    }
+
+    const pinnedCount = sessions.filter(s => s.pinned).length
+    const orderedSessions = [...sessions.filter(s => s.pinned), ...sessions.filter(s => !s.pinned)]
 
     const startEditing = (sessionId: string, currentTitle: string, e: React.MouseEvent) => {
         e.stopPropagation()
@@ -285,9 +302,15 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                     </div>
                 ) : (
                     <div className="space-y-1">
-                        {sessions.map((session) => (
+                        {orderedSessions.map((session, index) => (
+                            <React.Fragment key={session.session_id}>
+                            {index === 0 && session.pinned && (
+                                <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pinned</p>
+                            )}
+                            {index === pinnedCount && pinnedCount > 0 && (
+                                <p className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent</p>
+                            )}
                             <div
-                                key={session.session_id}
                                 onClick={() => editingId !== session.session_id && onSessionSelect(session.session_id)}
                                 className={cn(
                                     "group relative p-3 rounded-lg transition-all",
@@ -336,7 +359,9 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                 ) : (
                                     // Normal Mode
                                     <div className="flex items-start gap-2">
-                                        <MessageSquare className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                        {session.pinned
+                                            ? <Pin className="h-4 w-4 mt-0.5 text-primary flex-shrink-0" />
+                                            : <MessageSquare className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />}
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-medium truncate">
                                                 {session.title}
@@ -347,12 +372,22 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                         </div>
                                         <div className="opacity-0 group-hover:opacity-100 flex gap-1 flex-shrink-0">
                                             <button
+                                                onClick={(e) => togglePin(session, e)}
+                                                className="p-1 hover:bg-primary/10 rounded transition-all"
+                                                title={session.pinned ? "Unpin chat" : "Pin chat (pinned chats cannot be deleted)"}
+                                            >
+                                                {session.pinned
+                                                    ? <PinOff className="h-3.5 w-3.5 text-muted-foreground" />
+                                                    : <Pin className="h-3.5 w-3.5 text-muted-foreground" />}
+                                            </button>
+                                            <button
                                                 onClick={(e) => startEditing(session.session_id, session.title, e)}
                                                 className="p-1 hover:bg-primary/10 rounded transition-all"
                                                 title="Rename chat"
                                             >
                                                 <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                                             </button>
+                                            {!session.pinned && (
                                             <AlertDialog>
                                                 <AlertDialogTrigger asChild>
                                                     <button
@@ -368,6 +403,11 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                                         <AlertDialogTitle>Delete Chat Session?</AlertDialogTitle>
                                                         <AlertDialogDescription>
                                                             Are you sure you want to delete "{session.title}"? This action cannot be undone.
+                                                            {session.shared && (
+                                                                <span className="block mt-2 font-medium text-destructive">
+                                                                    This chat has a public share link. Deleting it will break that link for anyone who has it.
+                                                                </span>
+                                                            )}
                                                         </AlertDialogDescription>
                                                     </AlertDialogHeader>
                                                     <AlertDialogFooter>
@@ -381,10 +421,12 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                                     </AlertDialogFooter>
                                                 </AlertDialogContent>
                                             </AlertDialog>
+                                            )}
                                         </div>
                                     </div>
                                 )}
                             </div>
+                            </React.Fragment>
                         ))}
                     </div>
                 )}
