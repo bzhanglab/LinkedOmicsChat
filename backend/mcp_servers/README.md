@@ -30,9 +30,9 @@ and `MCP_LITERATURE_SERVER_ENABLED` default to on.
   list.
 
 **`gene_utils_server.py`** (1 tool) has `resolve_gene_identifier`, which converts Ensembl gene IDs and UniProt
-accessions to HGNC symbols through MyGene.info (`gene_converter.py`). It checks the result against
-`valid_genes.txt` at the repository root. Inside the Docker container that path does not exist (only `backend/`
-is mounted), so the check is silently skipped in production.
+accessions to HGNC symbols through MyGene.info (`gene_converter.py`). Input that is already a gene symbol is
+checked against `valid_genes.txt` at the repository root instead. Inside the Docker container that path does not
+exist (only `backend/` is mounted), so the symbol check is silently skipped in production.
 
 **`literature_server.py`** (2 tools) has `search_pubmed_articles` and `get_pubmed_article_details`, through NCBI
 E-utilities. Setting `NCBI_EMAIL` is recommended by NCBI's terms; `NCBI_API_KEY` raises the rate limit from 3 to
