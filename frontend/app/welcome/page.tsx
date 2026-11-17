@@ -73,7 +73,7 @@ export default function WelcomePage() {
                         About
                     </Link>
                     <Link href="/docs" className="text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium">
-                        Docs
+                        Documentation
                     </Link>
                     <Link href="/login" className="text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium">
                         Sign in
@@ -160,7 +160,7 @@ export default function WelcomePage() {
                 </p>
                 <div className="hidden sm:flex items-center gap-4 text-xs text-slate-400">
                     <Link href="/about" className="hover:text-slate-600 transition-colors">About</Link>
-                    <Link href="/docs" className="hover:text-slate-600 transition-colors">Docs</Link>
+                    <Link href="/docs" className="hover:text-slate-600 transition-colors">Documentation</Link>
                 </div>
             </div>
         </div>
