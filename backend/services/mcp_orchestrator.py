@@ -3973,7 +3973,7 @@ Please provide a clear, informative response about this gene. Include the key de
             if normalized in {"batch_compare_cptac_tumor_normal_expression", "batch_analyze_cptac_gene_survival_associations"}:
                 batch_gene_map = parsed_result.get("data")
             elif normalized == "batch_get_drug_target_profiles":
-                batch_gene_map = parsed_result.get("results")
+                batch_gene_map = parsed_result.get("data")
             elif normalized == "batch_analyze_cptac_cis_associations":
                 batch_gene_map = parsed_result.get("data")
 
@@ -4282,11 +4282,11 @@ Please provide a clear, informative response about this gene. Include the key de
             if tool_id.endswith("get_drug_target_profile") or tool_id.endswith("batch_get_drug_target_profiles"):
                 if not isinstance(parsed, dict):
                     continue
-                # batch returns {"results": {"GENE": {"result": {...}}, ...}}
+                # batch returns {"data": {"GENE": {"result": {...}}, ...}}
                 # single returns {"result": {...}}
                 entries: list[tuple[str, dict]] = []
                 if tool_id.endswith("batch_get_drug_target_profiles"):
-                    for g_sym, g_data in (parsed.get("results") or {}).items():
+                    for g_sym, g_data in (parsed.get("data") or {}).items():
                         r = g_data.get("result") if isinstance(g_data, dict) else None
                         if isinstance(r, dict):
                             entries.append((g_sym, r))
