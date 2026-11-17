@@ -170,7 +170,7 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
                 {/* Guest: prompt to sign up */}
                 {!isCollapsed && isGuest && (
                     <div className="p-4 text-xs text-muted-foreground space-y-2">
-                        <p>Chat history is not saved in guest mode.</p>
+                        <p>Chat history is not saved when you're not signed in.</p>
                         <a href="/register" className="text-primary hover:underline block">
                             Sign up →
                         </a>

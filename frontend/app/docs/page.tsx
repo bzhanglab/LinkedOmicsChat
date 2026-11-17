@@ -238,7 +238,7 @@ const FAQS = [
     },
     {
         q: "Is my data private?",
-        a: "Other users cannot see your chats. Signed-in users' chats are saved to their own account, and guest chats are not saved to any account. A chat becomes visible to others only if you create a share link for it. To generate answers, your question and the analysis results are sent to a third-party large language model provider (currently Anthropic). The LinkedOmicsChat team can see usage statistics and short previews of questions in an administrator dashboard, and questions are recorded in server logs for troubleshooting. For guests, IP addresses are recorded for rate limiting and usage statistics.",
+        a: "Other users cannot see your chats. Signed-in users' chats are saved to their own account; chats by visitors who aren't signed in are not saved. A chat becomes visible to others only if you create a share link for it. To generate answers, your question and the analysis results are sent to a third-party large language model provider (currently Anthropic). The LinkedOmicsChat team can see usage statistics and short previews of questions in an administrator dashboard, and questions are recorded in server logs for troubleshooting. For visitors who aren't signed in, IP addresses are recorded for rate limiting and usage statistics.",
     },
     {
         q: "What cancer types are supported?",
@@ -246,7 +246,7 @@ const FAQS = [
     },
     {
         q: "Does LinkedOmicsChat use cookies?",
-        a: "No. LinkedOmicsChat sets no cookies and uses no tracking or analytics services, so there is no cookie banner. For signed-in users, the browser's local storage keeps the sign-in token and the current chat; for guests, a guest-mode flag is kept only until the tab is closed.",
+        a: "No. LinkedOmicsChat sets no cookies and uses no tracking or analytics services, so there is no cookie banner. For signed-in users, the browser's local storage keeps the sign-in token and the current chat; for visitors who aren't signed in, a single flag is kept only until the tab is closed.",
     },
     {
         q: "How should I enter a gene list?",

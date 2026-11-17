@@ -143,13 +143,13 @@ export default function LoginPage() {
                             onClick={handleGuestMode}
                             className="w-full py-3 px-4 rounded-xl border-2 border-teal-500 bg-teal-50 hover:bg-teal-100 text-teal-700 text-sm font-semibold transition-all inline-flex items-center justify-center gap-2"
                         >
-                            Continue as Guest
+                            Continue without signing in
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                             </svg>
                         </button>
                         <p className="text-center text-xs text-slate-400 leading-relaxed">
-                            Guest access is rate-limited and sessions are not saved.{" "}
+                            Without an account, use is rate-limited and chats are not saved.{" "}
                             <Link href="/register" className="underline hover:text-slate-600">
                                 Sign up
                             </Link>{" "}

@@ -78,16 +78,10 @@ export default function WelcomePage() {
                     <Link href="/login" className="text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium">
                         Sign in
                     </Link>
-                    <Link
-                        href="/register"
-                        className="bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors shadow-sm shadow-teal-200"
-                    >
-                        Sign up
-                    </Link>
                 </div>
 
                 {/* Mobile sign-in */}
-                <Link href="/login" className="sm:hidden text-sm font-semibold text-teal-600">
+                <Link href="/login" className="sm:hidden text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium">
                     Sign in
                 </Link>
             </nav>
@@ -132,8 +126,8 @@ export default function WelcomePage() {
                         Ask
                     </button>
                 </form>
-                <p className="mt-2 text-xs text-slate-400">
-                    No account needed · <Link href="/login" className="underline hover:text-slate-600 transition-colors">Sign in</Link> to save your history
+                <p className="mt-2 text-sm text-slate-500">
+                    Free to use · No account needed
                 </p>
 
             </div>
@@ -167,8 +161,6 @@ export default function WelcomePage() {
                 <div className="hidden sm:flex items-center gap-4 text-xs text-slate-400">
                     <Link href="/about" className="hover:text-slate-600 transition-colors">About</Link>
                     <Link href="/docs" className="hover:text-slate-600 transition-colors">Docs</Link>
-                    <Link href="/login" className="hover:text-slate-600 transition-colors">Sign in</Link>
-                    <Link href="/register" className="hover:text-slate-600 transition-colors">Register</Link>
                 </div>
             </div>
         </div>
