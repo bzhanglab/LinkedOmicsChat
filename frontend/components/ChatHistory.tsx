@@ -64,6 +64,8 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
     const [isLoading, setIsLoading] = useState(true) // Initial load only
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editingTitle, setEditingTitle] = useState("")
+    // Enter, Save, and clicking away can each end the same edit; this lets only the first one count
+    const editingIdRef = useRef<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
     const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
     const [isSearching, setIsSearching] = useState(false)
@@ -169,32 +171,38 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
 
     const startEditing = (sessionId: string, currentTitle: string, e: React.MouseEvent) => {
         e.stopPropagation()
+        editingIdRef.current = sessionId
         setEditingId(sessionId)
         setEditingTitle(currentTitle)
     }
 
     const cancelEditing = () => {
+        editingIdRef.current = null
         setEditingId(null)
         setEditingTitle("")
     }
 
     const saveTitle = async (sessionId: string) => {
-        if (!editingTitle.trim()) {
+        if (editingIdRef.current !== sessionId) return
+        editingIdRef.current = null
+        const title = editingTitle.trim()
+        if (!title || title === sessions.find(s => s.session_id === sessionId)?.title) {
             cancelEditing()
             return
         }
 
         try {
-            await chatAPI.updateSessionTitle(sessionId, editingTitle.trim())
+            await chatAPI.updateSessionTitle(sessionId, title)
             // Update local state
             setSessions(sessions.map(s =>
                 s.session_id === sessionId
-                    ? { ...s, title: editingTitle.trim() }
+                    ? { ...s, title }
                     : s
             ))
             cancelEditing()
         } catch (error) {
             console.error("Failed to update title:", error)
+            editingIdRef.current = sessionId  // keep editing so the user can try again
         }
     }
 
@@ -323,8 +331,14 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                 )}
                             >
                                 {editingId === session.session_id ? (
-                                    // Editing Mode - Full width layout
-                                    <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                                    // Editing Mode - Full width layout. Clicking away saves, as Enter does.
+                                    <div
+                                        className="space-y-2"
+                                        onClick={(e) => e.stopPropagation()}
+                                        onBlur={(e) => {
+                                            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) saveTitle(session.session_id)
+                                        }}
+                                    >
                                         <div className="flex items-center gap-2">
                                             <MessageSquare className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                                             <input
@@ -338,7 +352,9 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                             />
                                         </div>
                                         <div className="flex items-center justify-end gap-2 pl-6">
+                                            {/* preventDefault keeps focus in the box, so pressing Cancel (Safari does not focus buttons) is not taken as clicking away */}
                                             <button
+                                                onMouseDown={(e) => e.preventDefault()}
                                                 onClick={cancelEditing}
                                                 className="px-3 py-1 text-xs rounded hover:bg-muted transition-colors flex items-center gap-1"
                                                 title="Cancel"
@@ -347,6 +363,7 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                                 Cancel
                                             </button>
                                             <button
+                                                onMouseDown={(e) => e.preventDefault()}
                                                 onClick={() => saveTitle(session.session_id)}
                                                 className="px-3 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1"
                                                 title="Save"
@@ -363,14 +380,15 @@ export function ChatHistory({ currentSessionId, onSessionSelect, onSearchResultS
                                             ? <Pin className="h-4 w-4 mt-0.5 text-primary flex-shrink-0" />
                                             : <MessageSquare className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />}
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium truncate">
+                                            <p className="text-sm font-medium line-clamp-2 break-words" title={session.title}>
                                                 {session.title}
                                             </p>
-                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                            <p className="text-xs text-muted-foreground mt-0.5 truncate">
                                                 {session.message_count} messages · {formatDate(session.last_updated)}
                                             </p>
                                         </div>
-                                        <div className="opacity-0 group-hover:opacity-100 flex gap-1 flex-shrink-0">
+                                        {/* On desktop the buttons appear over the end of the row on hover, so the title keeps the full width; touch screens have no hover, so they stay visible there */}
+                                        <div className="flex gap-1 flex-shrink-0 md:hidden md:group-hover:flex md:group-focus-within:flex md:absolute md:right-2 md:top-2 md:rounded-md md:bg-accent md:px-1 md:py-0.5">
                                             <button
                                                 onClick={(e) => togglePin(session, e)}
                                                 className="p-1 hover:bg-primary/10 rounded transition-all"
