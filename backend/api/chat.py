@@ -126,6 +126,20 @@ async def get_golden_queries():
         raise HTTPException(status_code=500, detail="Could not load golden query dataset")
 
 
+def _tool_calls_from_raw_results(raw_results: Any) -> list:
+    """List the tool calls behind an answer (tool ID, inputs, status) in the order they ran."""
+    calls = []
+    if not isinstance(raw_results, dict):
+        return calls
+    for key, wrapped in raw_results.items():
+        if not isinstance(wrapped, dict) or "_args" not in wrapped:
+            continue
+        result = wrapped.get("_result")
+        status = wrapped.get("_data_status") or ("error" if isinstance(result, dict) and "error" in result else "ok")
+        calls.append({"tool_id": key.rsplit("#", 1)[0], "arguments": wrapped["_args"], "status": status})
+    return calls
+
+
 def _sanitize_response_for_history(resp: Any) -> Any:
     """Minimize response payload for chat history rendering."""
     try:
@@ -133,6 +147,9 @@ def _sanitize_response_for_history(resp: Any) -> Any:
             return resp
 
         new_resp = dict(resp)
+        # Keep the tool calls (with their inputs) before dropping the heavy results;
+        # the Python script and methods text exports are built from them.
+        new_resp["tool_calls"] = _tool_calls_from_raw_results(resp.get("raw_results"))
         # Always drop heavy fields that UI doesn't need for rendering history.
         new_resp.pop("raw_results", None)
         # Keep lightweight viz metadata (type/id/title) — binary was already stripped
