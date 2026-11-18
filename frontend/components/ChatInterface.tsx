@@ -14,7 +14,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { chatAPI, type ChatMessage, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
+import { chatAPI, toolsAPI, type ChatMessage, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
@@ -22,6 +22,7 @@ import { TargetSearchTable } from "@/components/TargetSearchTable"
 import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
 import { TCGACisResultsTable } from "@/components/TCGACisResultsTable"
 import { useAuth } from "@/components/AuthContext"
+import { buildPythonScript, type CurrentTools } from "@/lib/pythonExport"
 import { EnrichmentRenderer } from "./ToolExplorer"
 import ExecutionTrace from "./ExecutionTrace"
 import axios from "axios"
@@ -1450,6 +1451,7 @@ function mapHistoryItemToMessages(item: { id: number; query: string; response: a
             toolsUsed: typeof resp === "string" ? undefined : (resp?.tools_used?.length ? resp.tools_used : undefined),
             visualizations: typeof resp === "string" ? undefined : stripVizBinary(resp?.visualizations?.length ? resp.visualizations as AnyVisualization[] : undefined),
             executionTrace: typeof resp === "string" ? undefined : (resp?.execution_trace?.length ? resp.execution_trace : undefined),
+            toolCalls: typeof resp === "string" ? undefined : (resp?.tool_calls?.length ? resp.tool_calls : undefined),
         },
     ]
 }
@@ -1995,6 +1997,23 @@ async function downloadSessionExport(messages: ChatMessage[]) {
     URL.revokeObjectURL(url)
 }
 
+async function downloadPythonScript(messages: ChatMessage[]) {
+    const now = new Date()
+    const date = now.toISOString().slice(0, 10)
+    const time = now.toTimeString().slice(0, 8).replace(/:/g, "-")
+    // The current tool list lets the script skip calls to tools renamed or changed since the chat
+    const currentTools = await toolsAPI.list().then((data) => data.tools as CurrentTools).catch(() => undefined)
+    const script = buildPythonScript(messages, `${API_URL || window.location.origin}/api/v1/tools/execute`, now, currentTools)
+
+    const blob = new Blob([script], { type: "text/x-python;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `linkedomicschat-session-${date}-${time}.py`
+    a.click()
+    URL.revokeObjectURL(url)
+}
+
 const ShareSessionControl = memo(function ShareSessionControl({
     sessionId,
     isGuest,
@@ -2148,39 +2167,92 @@ const ShareSessionControl = memo(function ShareSessionControl({
     )
 })
 
+type ExportFormat = "html" | "python"
+
+const EXPORT_FORMATS: { format: ExportFormat; label: string; description: string }[] = [
+    { format: "html", label: "Web page", description: "The whole chat with its plots and tables, as an HTML file to open in a browser." },
+    { format: "python", label: "Python script", description: "Re-runs this chat's analyses with the same inputs through the LinkedOmicsChat API." },
+]
+
 const ExportSessionControl = memo(function ExportSessionControl({
     sessionId,
 }: {
     sessionId: string | null
 }) {
-    const [isExporting, setIsExporting] = useState(false)
+    const [dialogOpen, setDialogOpen] = useState(false)
+    const [exporting, setExporting] = useState<ExportFormat | null>(null)
+    const [exportError, setExportError] = useState<string | null>(null)
 
-    const handleExport = useCallback(async () => {
-        if (!sessionId || isExporting) return
+    const handleExport = useCallback(async (format: ExportFormat) => {
+        if (!sessionId || exporting) return
         try {
-            setIsExporting(true)
+            setExporting(format)
+            setExportError(null)
             const messages = await fetchExportMessages(sessionId)
-            await downloadSessionExport(messages)
+            if (format === "html") {
+                await downloadSessionExport(messages)
+            } else {
+                await downloadPythonScript(messages)
+            }
+            setDialogOpen(false)
         } catch (error) {
             console.error("Failed to export session:", error)
-            alert("Failed to export session.")
+            setExportError("The export failed. Try again in a moment.")
         } finally {
-            setIsExporting(false)
+            setExporting(null)
         }
-    }, [sessionId, isExporting])
+    }, [sessionId, exporting])
 
     return (
-        <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExport}
-            className="gap-2"
-            title="Export session"
-            disabled={!sessionId || isExporting}
-        >
-            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            {isExporting ? "Exporting..." : "Export"}
-        </Button>
+        <>
+            <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                    setExportError(null)
+                    setDialogOpen(true)
+                }}
+                className="gap-2"
+                title="Export session"
+                disabled={!sessionId}
+            >
+                <Download className="w-4 h-4" />
+                Export
+            </Button>
+
+            <AlertDialog open={dialogOpen} onOpenChange={(open) => { if (!exporting) setDialogOpen(open) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Export chat</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {exportError ?? "Choose a format to download."}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="space-y-2">
+                        {EXPORT_FORMATS.map(({ format, label, description }) => (
+                            <button
+                                key={format}
+                                type="button"
+                                onClick={() => handleExport(format)}
+                                disabled={exporting !== null}
+                                className="w-full text-left rounded-lg border border-border px-4 py-3 transition-colors hover:border-teal-500 hover:bg-teal-50/50 dark:hover:bg-teal-950/20 disabled:opacity-60"
+                            >
+                                <div className="flex items-center gap-2 text-sm font-medium">
+                                    {exporting === format && <Loader2 className="w-4 h-4 animate-spin" />}
+                                    {label}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+                            </button>
+                        ))}
+                    </div>
+                    <AlertDialogFooter>
+                        <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={exporting !== null}>
+                            Close
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+        </>
     )
 })
 

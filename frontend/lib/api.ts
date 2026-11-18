@@ -332,6 +332,13 @@ export interface ExecutionTraceStep {
     output_tokens?: number
 }
 
+/** One tool call behind an answer, with the inputs it ran with (sent with chat history). */
+export interface ToolCallRecord {
+    tool_id: string
+    arguments: Record<string, unknown>
+    status: "ok" | "error" | "missing" | "empty"
+}
+
 export interface ChatMessage {
     role: "user" | "assistant" | "system"
     content: string
@@ -355,6 +362,7 @@ export interface ChatMessage {
     toolsUsed?: string[]
     visualizations?: AnyVisualization[]
     executionTrace?: ExecutionTraceStep[]
+    toolCalls?: ToolCallRecord[]  // from chat history only; used by the exports
 }
 
 /** Map a tool name to its human-readable data source with a URL. */
