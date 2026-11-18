@@ -15,6 +15,19 @@ const TABS = [
 
 type TabId = typeof TABS[number]["id"]
 
+// Papers to cite for the resources behind the analyses (PubMed entries confirmed by the lab, 2026-11-18).
+const REFERENCES = [
+    { resource: "LinkedOmics (TCGA analyses)", pmid: "29136207", citation: "Vasaikar SV, Straub P, Wang J, Zhang B. LinkedOmics: analyzing multi-omics data within and across 32 cancer types. Nucleic Acids Res. 2018;46(D1):D956-D963." },
+    { resource: "LinkedOmicsKB (CPTAC analyses)", pmid: "37619559", citation: "Liao Y, Savage SR, Dou Y, et al. A proteogenomics data-driven knowledge base of human cancer. Cell Syst. 2023;14(9):777-787.e5." },
+    { resource: "CPTAC data", pmid: "37582339", citation: "Li Y, Dou Y, Da Veiga Leprevost F, et al. Proteogenomic data and resources for pan-cancer analysis. Cancer Cell. 2023;41(8):1397-1406." },
+    { resource: "TCGA data", pmid: "24071849", citation: "Weinstein JN, Collisson EA, Mills GB, et al. The Cancer Genome Atlas Pan-Cancer analysis project. Nat Genet. 2013;45(10):1113-1120." },
+    { resource: "ClinicalOmicsDB (treatment response)", pmid: "37811874", citation: "Moon CI, Elizarraras JM, Lei JT, Jia B, Zhang B. ClinicalOmicsDB: exploring molecular associations of oncology drug responses in clinical trials. Nucleic Acids Res. 2024;52(D1):D1201-D1209." },
+    { resource: "LinkedOmics Targets (drug targets)", pmid: "38917788", citation: "Savage SR, Yi X, Lei JT, et al. Pan-cancer proteogenomics expands the landscape of therapeutic targets. Cell. 2024;187(16):4389-4407.e15." },
+    { resource: "FunMap (functional network)", pmid: "39663389", citation: "Shi Z, Lei JT, Elizarraras JM, Zhang B. Mapping the functional network of human cancer through machine learning and pan-cancer proteogenomics. Nat Cancer. 2025;6(1):205-222." },
+    { resource: "WebGestalt (pathway enrichment)", pmid: "38808672", citation: "Elizarraras JM, Liao Y, Shi Z, Zhu Q, Pico AR, Zhang B. WebGestalt 2024: faster gene set analysis and new support for metabolomics and multi-omics. Nucleic Acids Res. 2024;52(W1):W415-W421." },
+    { resource: "MyGene.info (gene ID conversion)", pmid: "27154141", citation: "Xin J, Mark A, Afrasiabi C, et al. High-performance web services for querying gene and variant annotation. Genome Biol. 2016;17:91." },
+]
+
 // Example questions are from the golden test set (backend/examples/langgraph_golden_queries.json).
 const ANALYSES = [
     {
@@ -231,13 +244,22 @@ export function AboutContent() {
                         <div>
                             <h2 className="text-xl font-semibold mb-3">Citing</h2>
                             <p className="text-base text-muted-foreground leading-relaxed">
-                                There is no LinkedOmicsChat paper yet. If you use it in published work, please cite
-                                LinkedOmics:
+                                There is no LinkedOmicsChat paper yet. If you use it in published work, please cite the
+                                resources behind the analyses you used:
                             </p>
-                            <p className="mt-3 text-sm text-muted-foreground italic leading-relaxed">
-                                Vasaikar SV, Straub P, Wang J, Zhang B. LinkedOmics: analyzing multi-omics data within and
-                                across 32 cancer types. Nucleic Acids Research, 2018.
-                            </p>
+                            <ul className="mt-4 space-y-3">
+                                {REFERENCES.map((ref) => (
+                                    <li key={ref.pmid} className="text-sm leading-relaxed">
+                                        <span className="font-medium text-foreground">{ref.resource}</span>
+                                        <span className="block text-muted-foreground">
+                                            {ref.citation}{" "}
+                                            <a href={`https://pubmed.ncbi.nlm.nih.gov/${ref.pmid}/`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                                PMID {ref.pmid}
+                                            </a>
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
 
                         <div>
