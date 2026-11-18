@@ -34,6 +34,7 @@ from typing_extensions import Annotated, TypedDict
 from core.config import settings
 from core.llm_factory import LLMFactory
 from services.mcp_aggregator import MCPAggregator
+from services.number_check import check_numbers
 from services.tool_categories import TOOL_SOURCE_KEY as _CANONICAL_SOURCE_KEY
 
 logger = logging.getLogger(__name__)
@@ -4652,6 +4653,9 @@ DIRECT RESPONSE RULES:
             else:
                 rich_message = f"{cap_note}\n\n{rich_message}"
 
+        # The summary is the model's own wording; the rest of the message is built from tool output
+        number_check = check_numbers(display_summary, raw_results_final) if show_summary else None
+
         input_tokens = usage_tracker.get("input_tokens", 0)
         output_tokens = usage_tracker.get("output_tokens", 0)
         model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
@@ -4671,6 +4675,7 @@ DIRECT RESPONSE RULES:
             "no_collapse": is_literature_only,
             "is_general_knowledge": is_general_knowledge,
             "confidence": confidence,
+            "number_check": number_check,
             "execution_trace": execution_trace,
             "_input_tokens": input_tokens,
             "_output_tokens": output_tokens,
