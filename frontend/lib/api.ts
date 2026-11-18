@@ -363,6 +363,7 @@ export interface ChatMessage {
     visualizations?: AnyVisualization[]
     executionTrace?: ExecutionTraceStep[]
     toolCalls?: ToolCallRecord[]  // from chat history only; used by the exports
+    attachedGeneList?: string  // user messages sent with a gene list, e.g. "genes.csv (74 genes)"; not saved
 }
 
 /** Map a tool name to its human-readable data source with a URL. */
@@ -431,6 +432,21 @@ export interface ChatRequest {
     message: string
     session_id?: string
     context?: Record<string, unknown>
+    gene_list?: { name: string; genes: string[] }
+}
+
+/** The result of checking an uploaded or pasted gene list (POST /api/v1/chat/gene-list). */
+export interface GeneListCheck {
+    name: string
+    column: string | null
+    genes: string[]
+    entries: number
+    converted: { from: string; to: string }[]
+    renamed: { from: string; to: string }[]
+    ambiguous: { name: string; matches: string[] }[]
+    unrecognized: string[]
+    truncated: number
+    lookup_failed: boolean
 }
 
 export interface GoldenQueryCase {
@@ -591,6 +607,11 @@ export interface Dataset {
 export const chatAPI = {
     async sendMessage(request: ChatRequest): Promise<ChatResponse> {
         const response = await api.post<ChatResponse>("/api/v1/chat/query", request)
+        return response.data
+    },
+
+    async checkGeneList(text: string, name?: string): Promise<GeneListCheck> {
+        const response = await api.post<GeneListCheck>("/api/v1/chat/gene-list", { text, name })
         return response.data
     },
 

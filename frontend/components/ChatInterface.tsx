@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -14,7 +14,8 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { chatAPI, toolsAPI, type ChatMessage, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
+import { chatAPI, toolsAPI, type ChatMessage, type GeneListCheck, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
+import { GeneListDialog } from "@/components/GeneListDialog"
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
@@ -1230,6 +1231,12 @@ const MessagesPane = memo(function MessagesPane({
                                         </CardContent>
                                     </Card>
                                     )}
+                                    {message.role === "user" && message.attachedGeneList && (
+                                        <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+                                            <FileText className="w-3 h-3" />
+                                            With {message.attachedGeneList}
+                                        </div>
+                                    )}
                                     {message.role === "user" && !isEditingUserMessage && (
                                         <div className={cn("flex items-center gap-1 mt-1 transition-opacity duration-150 opacity-60 md:opacity-0 md:pointer-events-none", hoveredIndex === index ? "md:opacity-100 md:pointer-events-auto" : "")}>
                                             <Button
@@ -2310,6 +2317,9 @@ export const ChatInterface = memo(function ChatInterface({
     const [input, setInput] = useState("")
     const inputRef = useRef("")
     const chatInputRef = useRef<HTMLInputElement>(null)
+    // A checked gene list, sent with every question until removed; kept in this view only
+    const [geneList, setGeneList] = useState<GeneListCheck | null>(null)
+    const [geneListDialogOpen, setGeneListDialogOpen] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
     const [streamStatus, setStreamStatus] = useState<string | null>(null)
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -2397,6 +2407,7 @@ export const ChatInterface = memo(function ChatInterface({
         setIsTruncating(false)
         if (!sessionId) {
             adoptedSessionIdRef.current = null
+            setGeneList(null)
             // New chat - show welcome message and create session
             setMessages([
                 {
@@ -2412,6 +2423,7 @@ export const ChatInterface = memo(function ChatInterface({
                 adoptedSessionIdRef.current = null
                 return
             }
+            setGeneList(null)
             setMessages([])
             setIsHistoryLoading(true)
             // Load session history (guests have no persistent history)
@@ -2943,6 +2955,7 @@ export const ChatInterface = memo(function ChatInterface({
             role: "user",
             content: messageText,
             timestamp: new Date(),
+            attachedGeneList: geneList ? `${geneList.name} (${geneList.genes.length} genes)` : undefined,
         }
 
         setMessages((prev) => [...prev, userMessage])
@@ -2962,6 +2975,7 @@ export const ChatInterface = memo(function ChatInterface({
                 {
                     message: messageText,
                     session_id: sessionId || undefined,
+                    gene_list: geneList ? { name: geneList.name, genes: geneList.genes } : undefined,
                 },
                 (status) => {
                     setStreamStatus(status)
@@ -3111,7 +3125,7 @@ export const ChatInterface = memo(function ChatInterface({
             setIsLoading(false)
             setStreamStatus(null)
         }
-    }, [isLoading, sessionId, scrollToBottom, onSessionChange])
+    }, [isLoading, sessionId, scrollToBottom, onSessionChange, geneList])
 
     const handleSend = useCallback(async (textOverride?: string | any) => {
         // Workaround for browser automation: check DOM value if React state is empty
@@ -3349,10 +3363,44 @@ export const ChatInterface = memo(function ChatInterface({
 
             {/* Input */}
             <div className="border-t border-border p-3 md:p-6">
+                {geneList && (
+                    <div className="max-w-4xl mx-auto mb-2 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/30 px-3 py-1 text-teal-800 dark:text-teal-200">
+                            <FileText className="w-3.5 h-3.5" />
+                            <button type="button" onClick={() => setGeneListDialogOpen(true)} className="font-medium hover:underline" title="Show what the check found">
+                                {geneList.name}
+                            </button>
+                            <span>· {geneList.genes.length} {geneList.genes.length === 1 ? "gene" : "genes"}</span>
+                            <button type="button" onClick={() => setGeneList(null)} className="ml-0.5 rounded-full hover:bg-teal-100 dark:hover:bg-teal-900/40" title="Remove the list" aria-label="Remove the gene list">
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        </span>
+                        <span className="text-muted-foreground">Questions about &quot;my list&quot; use these genes.</span>
+                    </div>
+                )}
                 <div className="max-w-4xl mx-auto flex gap-2 relative">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setGeneListDialogOpen(true)}
+                        disabled={isLoading || isTruncating}
+                        title="Attach a gene list"
+                        aria-label="Attach a gene list"
+                    >
+                        <Paperclip className="w-4 h-4" />
+                    </Button>
+                    <GeneListDialog
+                        open={geneListDialogOpen}
+                        onOpenChange={setGeneListDialogOpen}
+                        attached={geneList}
+                        onAttach={setGeneList}
+                    />
                     <Input
                         ref={chatInputRef}
-                        placeholder="Ask about genes, expression, survival, drug targets, trials, pathways, networks, or literature..."
+                        placeholder={geneList
+                            ? "Ask about your list, e.g. which genes in my list are linked to survival?"
+                            : "Ask about genes, expression, survival, drug targets, trials, pathways, networks, or literature..."}
                         value={input}
                         onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value }}
                         onKeyPress={(e) => e.key === "Enter" && handleSend()}
