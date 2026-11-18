@@ -22,6 +22,7 @@ import { TargetSearchTable } from "@/components/TargetSearchTable"
 import { PredictiveResultsTable } from "@/components/PredictiveResultsTable"
 import { TCGACisResultsTable } from "@/components/TCGACisResultsTable"
 import { useAuth } from "@/components/AuthContext"
+import { buildMethodsText } from "@/lib/methodsExport"
 import { buildPythonScript, type CurrentTools } from "@/lib/pythonExport"
 import { EnrichmentRenderer } from "./ToolExplorer"
 import ExecutionTrace from "./ExecutionTrace"
@@ -1997,21 +1998,28 @@ async function downloadSessionExport(messages: ChatMessage[]) {
     URL.revokeObjectURL(url)
 }
 
-async function downloadPythonScript(messages: ChatMessage[]) {
+function saveTextFile(text: string, extension: string, mimeType: string) {
     const now = new Date()
     const date = now.toISOString().slice(0, 10)
     const time = now.toTimeString().slice(0, 8).replace(/:/g, "-")
-    // The current tool list lets the script skip calls to tools renamed or changed since the chat
-    const currentTools = await toolsAPI.list().then((data) => data.tools as CurrentTools).catch(() => undefined)
-    const script = buildPythonScript(messages, `${API_URL || window.location.origin}/api/v1/tools/execute`, now, currentTools)
-
-    const blob = new Blob([script], { type: "text/x-python;charset=utf-8" })
+    const blob = new Blob([text], { type: `${mimeType};charset=utf-8` })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `linkedomicschat-session-${date}-${time}.py`
+    a.download = `linkedomicschat-session-${date}-${time}.${extension}`
     a.click()
     URL.revokeObjectURL(url)
+}
+
+async function downloadPythonScript(messages: ChatMessage[]) {
+    // The current tool list lets the script skip calls to tools renamed or changed since the chat
+    const currentTools = await toolsAPI.list().then((data) => data.tools as CurrentTools).catch(() => undefined)
+    const script = buildPythonScript(messages, `${API_URL || window.location.origin}/api/v1/tools/execute`, new Date(), currentTools)
+    saveTextFile(script, "py", "text/x-python")
+}
+
+function downloadMethodsText(messages: ChatMessage[]) {
+    saveTextFile(buildMethodsText(messages, window.location.origin), "txt", "text/plain")
 }
 
 const ShareSessionControl = memo(function ShareSessionControl({
@@ -2167,11 +2175,12 @@ const ShareSessionControl = memo(function ShareSessionControl({
     )
 })
 
-type ExportFormat = "html" | "python"
+type ExportFormat = "html" | "python" | "methods"
 
 const EXPORT_FORMATS: { format: ExportFormat; label: string; description: string }[] = [
     { format: "html", label: "Web page", description: "The whole chat with its plots and tables, as an HTML file to open in a browser." },
     { format: "python", label: "Python script", description: "Re-runs this chat's analyses with the same inputs through the LinkedOmicsChat API." },
+    { format: "methods", label: "Methods text", description: "A methods paragraph and reference list for this chat's analyses, to paste into a paper." },
 ]
 
 const ExportSessionControl = memo(function ExportSessionControl({
@@ -2191,8 +2200,10 @@ const ExportSessionControl = memo(function ExportSessionControl({
             const messages = await fetchExportMessages(sessionId)
             if (format === "html") {
                 await downloadSessionExport(messages)
-            } else {
+            } else if (format === "python") {
                 await downloadPythonScript(messages)
+            } else {
+                downloadMethodsText(messages)
             }
             setDialogOpen(false)
         } catch (error) {
