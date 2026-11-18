@@ -51,8 +51,9 @@ means, and how to read the result. Then:
    model sees the compacted version. Everything over 100,000 characters is trimmed regardless.
 3. For a table or plot in the chat, add a renderer in `_format_linkedomics_results` in
    `services/mcp_orchestrator.py`.
-4. Add an example input to `TOOL_EXAMPLE_ARGS` in `frontend/components/ToolExplorer.tsx` (used by the Tools
-   view and by `admin/check_tools.py`), and a data-source entry in `frontend/lib/toolCategories.ts`.
+4. In `frontend/components/ToolExplorer.tsx`, add an example input to `TOOL_EXAMPLE_ARGS` (used by the Tools
+   view and by `admin/check_tools.py`) and a plain name and one-line summary to `TOOL_DISPLAY` (without one, the
+   Tools view shows the function name). Add a data-source entry in `frontend/lib/toolCategories.ts`.
 
 Each server also runs on its own (`venv/bin/python mcp_servers/literature_server.py`), but it then just waits
 for an MCP client on stdin. In practice it is easier to try a tool through the app's Tools view or

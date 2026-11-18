@@ -22,16 +22,9 @@ import {
     Zap,
     Package,
     FileText,
-    Dna,
-    BarChart2,
-    HeartPulse,
-    Pill,
     Network,
-    FlaskConical,
-    Library,
     Copy,
     Check,
-    ClipboardList,
 } from "lucide-react"
 import { ToolCategoryGuide, getToolCategoryGuideKeyFromLabel, getGuideKeyForTool } from "@/components/ToolCategoryGuide"
 import { CATEGORY_META, categoryForToolId, type CategoryKey } from "@/lib/toolCategories"
@@ -832,57 +825,74 @@ const ResultRenderer = ({ result }: { result: any }) => {
     )
 }
 
-const ToolCard = ({ id, toolName, schema, Icon, color, onSelect }: {
+// Plain names and one-line summaries for the Tools list (the docstrings are written for the model). The order
+// here is the order within each data source; a tool missing from it shows its function name and docstring summary.
+const TOOL_DISPLAY: Record<string, { label: string; summary: string }> = {
+    compare_cptac_tumor_normal_expression: { label: "Tumor vs normal expression", summary: "RNA and protein in tumors vs adjacent normal tissue, across CPTAC cohorts." },
+    batch_compare_cptac_tumor_normal_expression: { label: "Tumor vs normal, gene list", summary: "The same comparison for several genes at once." },
+    analyze_cptac_gene_survival_associations: { label: "Survival association", summary: "RNA and protein abundance vs overall survival, per CPTAC cohort." },
+    batch_analyze_cptac_gene_survival_associations: { label: "Survival association, gene list", summary: "The same survival analysis for several genes at once." },
+    analyze_cptac_cis_associations: { label: "Cis-associations", summary: "How a gene's RNA, protein, methylation, and copy number relate to each other." },
+    batch_analyze_cptac_cis_associations: { label: "Cis-associations, gene list", summary: "The same cis-analysis for several genes at once." },
+    analyze_tcga_survival_associations: { label: "Survival association", summary: "Methylation, RNA, protein (RPPA), or copy number vs overall survival in TCGA." },
+    analyze_tcga_cis_associations: { label: "Cis-associations", summary: "Relationships between a gene's molecular layers in TCGA cohorts." },
+    search_gene_response_trials: { label: "Treatment response by gene", summary: "Drugs and cancers where a gene's expression goes with response or resistance." },
+    batch_search_gene_response_trials: { label: "Treatment response, gene list", summary: "The same search for several genes at once." },
+    search_gene_set_response_trials: { label: "Treatment response by pathway", summary: "Drugs and cancers where a gene set's activity goes with response or resistance." },
+    search_trial_studies: { label: "Find clinical studies", summary: "Trial-linked expression studies by drug, treatment class, or cancer type." },
+    get_trial_study_details: { label: "Study details", summary: "Abstract, cancer type, and treatment of one study, by GSE ID." },
+    rank_study_response_genes: { label: "Top response genes in a study", summary: "Genes most associated with response within one study." },
+    rank_study_response_gene_sets: { label: "Top response pathways in a study", summary: "Gene sets most associated with response within one study." },
+    meta_analyze_response_genes: { label: "Response genes across studies", summary: "Meta-analysis ranking genes consistently linked to response." },
+    meta_analyze_response_gene_sets: { label: "Response pathways across studies", summary: "Meta-analysis ranking gene sets consistently linked to response." },
+    get_drug_target_profile: { label: "Drug-target profile", summary: "Oncology tier, drugs, and target evidence for one gene." },
+    batch_get_drug_target_profiles: { label: "Drug-target profiles, gene list", summary: "The same profile for several genes at once." },
+    search_drug_target_index: { label: "Search the target index", summary: "Filter about 19,700 genes by tier, protein family, or antigen class." },
+    rank_drug_targets: { label: "Rank drug targets", summary: "Rank candidate targets by a composite evidence score." },
+    get_funmap_functional_neighborhood: { label: "Functional neighbors", summary: "A gene's top 50 neighbors in the FunMap network." },
+    run_webgestalt_go_enrichment: { label: "GO enrichment", summary: "Gene Ontology biological-process over-representation for a gene list." },
+    search_pubmed_articles: { label: "Search PubMed", summary: "Articles matching a PubMed query, with title, authors, and journal." },
+    get_pubmed_article_details: { label: "Article details", summary: "Abstract and citation for one PMID." },
+    resolve_gene_identifier: { label: "Convert gene IDs", summary: "Ensembl gene IDs or UniProt accessions to HGNC symbols." },
+}
+
+const TOOL_DISPLAY_ORDER = Object.keys(TOOL_DISPLAY)
+const displayRank = (toolId: string) => {
+    const i = TOOL_DISPLAY_ORDER.indexOf(toolId.split("::").pop() || toolId)
+    return i === -1 ? TOOL_DISPLAY_ORDER.length : i
+}
+
+const ToolCard = ({ id, toolName, schema, onSelect }: {
     id: string
     toolName: string
     schema: ToolSchema
-    Icon: React.ElementType
-    color: string
     onSelect: (id: string) => void
-}) => (
-    <button
-        onClick={() => onSelect(id)}
-        className="group flex flex-col items-start text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50/50 dark:hover:bg-teal-900/20 hover:shadow-md transition-all duration-200"
-    >
-        <div className="flex items-center gap-3 w-full mb-2">
-            <div className={`h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
-                <Icon className="h-4.5 w-4.5" />
-            </div>
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate text-sm">
-                {toolName}
-            </h3>
-        </div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-            {stripMarkdown(parseDocstring(schema.description).summary) || stripMarkdown(schema.description)}
-        </p>
-    </button>
-)
+}) => {
+    const display = TOOL_DISPLAY[toolName]
+    return (
+        <button
+            onClick={() => onSelect(id)}
+            className="text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:shadow-sm transition"
+        >
+            <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">{display?.label ?? toolName}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
+                {display?.summary ?? (stripMarkdown(parseDocstring(schema.description).summary) || stripMarkdown(schema.description))}
+            </p>
+            {display && <code className="block bg-transparent p-0 text-[11px] text-gray-400 font-mono mt-2">{toolName}</code>}
+        </button>
+    )
+}
 
 interface CategoryDef {
     key: CategoryKey     // canonical MCP-server key
     label: string        // friendly display label
-    server: string       // raw MCP server name (shown as subtitle/badge)
-    icon: React.ElementType
-    color: string        // Tailwind classes for icon bg + text
-    borderColor: string  // active pill border
+    server: string       // raw MCP server name
 }
 
-// Presentational config per MCP-server category. Tool membership, friendly
-// labels, and server names come from the canonical taxonomy (toolCategories).
-const CATEGORY_STYLE: Record<CategoryKey, { icon: React.ElementType; color: string; borderColor: string }> = {
-    "ClinicalOmicsDB": { icon: ClipboardList, color: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400", borderColor: "border-rose-400 dark:border-rose-500" },
-    "LinkedOmics Targets": { icon: Pill, color: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400", borderColor: "border-amber-400 dark:border-amber-500" },
-    "LinkedOmicsKB": { icon: BarChart2, color: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400", borderColor: "border-teal-400 dark:border-teal-500" },
-    "LinkedOmics": { icon: HeartPulse, color: "bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400", borderColor: "border-cyan-400 dark:border-cyan-500" },
-    "FunMap": { icon: Network, color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400", borderColor: "border-blue-400 dark:border-blue-500" },
-    "WebGestalt": { icon: FlaskConical, color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400", borderColor: "border-emerald-400 dark:border-emerald-500" },
-    "PubMed": { icon: Library, color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400", borderColor: "border-indigo-400 dark:border-indigo-500" },
-    "MyGene": { icon: Dna, color: "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400", borderColor: "border-violet-400 dark:border-violet-500" },
-}
-
-// Display order of the category pills/sections.
+// Display order of the category filters and sections. Labels and server names
+// come from the canonical taxonomy (toolCategories).
 const CATEGORY_ORDER: CategoryKey[] = [
-    "ClinicalOmicsDB", "LinkedOmics Targets", "LinkedOmicsKB", "LinkedOmics",
+    "LinkedOmicsKB", "LinkedOmics", "ClinicalOmicsDB", "LinkedOmics Targets",
     "FunMap", "WebGestalt", "PubMed", "MyGene",
 ]
 
@@ -890,7 +900,6 @@ const CATEGORIES: CategoryDef[] = CATEGORY_ORDER.map((key) => ({
     key,
     label: CATEGORY_META[key].label,
     server: CATEGORY_META[key].server,
-    ...CATEGORY_STYLE[key],
 }))
 
 function getCategoryForTool(toolId: string): CategoryDef | null {
@@ -1352,6 +1361,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
     const [searchQuery, setSearchQuery] = useState("")
     const [activeCategory, setActiveCategory] = useState<string | null>(null)
     const selectedCategory = selectedToolId ? getCategoryForTool(selectedToolId) : null
+    const selectedToolName = selectedToolId?.split("::").pop() ?? ""
     // Category-list banner: only the categories that map cleanly to one functional guide.
     const activeGuideKey = getToolCategoryGuideKeyFromLabel(activeCategory)
     // Selected-tool guide: resolved per tool, since MCP-server categories cross-cut guides.
@@ -1542,14 +1552,15 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
 
     return (
         <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 ${className}`}>
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
-                <Beaker className="h-5 w-5 text-teal-500" />
-                <h2 className="font-semibold text-gray-900 dark:text-white">Tool Explorer</h2>
-            </div>
-
-            {/* Sticky search + pills — only shown on list view */}
+            {/* Sticky title, search, and filters — only shown on list view */}
             {!selectedToolId && (
-                <div className="shrink-0 px-4 pt-4 pb-3 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 space-y-3">
+                <div className="shrink-0 px-6 pt-8 pb-4 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 space-y-3">
+                    <div className="mb-6">
+                        <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">Tools</h1>
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                            {tools ? `The ${Object.keys(tools).length} tools` : "The tools"} the chat calls, grouped by data source. Open one to run it directly with your own inputs.
+                        </p>
+                    </div>
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                         <input
@@ -1561,10 +1572,10 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                         />
                     </div>
                     {!searchQuery && (
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5">
                             <button
                                 onClick={() => setActiveCategory(null)}
-                                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                                     activeCategory === null
                                         ? "bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-800 dark:border-gray-100"
                                         : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
@@ -1576,19 +1587,17 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                                 if (!tools) return false
                                 return Object.keys(tools).some(id => getCategoryForTool(id)?.label === cat.label)
                             }).map(cat => {
-                                const Icon = cat.icon
                                 const isActive = activeCategory === cat.label
                                 return (
                                     <button
                                         key={cat.label}
                                         onClick={() => setActiveCategory(isActive ? null : cat.label)}
-                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                        className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                                             isActive
-                                                ? `${cat.color} ${cat.borderColor}`
+                                                ? "bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-800 dark:border-gray-100"
                                                 : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
                                         }`}
                                     >
-                                        <Icon className="h-3 w-3" />
                                         {cat.label}
                                     </button>
                                 )
@@ -1598,7 +1607,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                 </div>
             )}
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
                 {error && (
                     <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-md text-sm flex items-center gap-2">
                         <AlertCircle className="h-4 w-4" />
@@ -1619,21 +1628,15 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                         const matchesCategory = !activeCategory ||
                             getCategoryForTool(id)?.label === activeCategory
                         return matchesSearch && matchesCategory
-                    })
+                    }).sort(([a], [b]) => displayRank(a) - displayRank(b))
 
                     // When searching or a category is active, show flat grid
                     if (searchQuery || activeCategory) {
                         return (
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                                {filtered.map(([id, schema]) => {
-                                    const toolName = id.split("::").pop() || id
-                                    const cat = getCategoryForTool(id)
-                                    const Icon = cat?.icon ?? Beaker
-                                    const color = cat?.color ?? "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400"
-                                    return (
-                                        <ToolCard key={id} id={id} toolName={toolName} schema={schema} Icon={Icon} color={color} onSelect={handleToolSelect} />
-                                    )
-                                })}
+                                {filtered.map(([id, schema]) => (
+                                    <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} onSelect={handleToolSelect} />
+                                ))}
                                 {filtered.length === 0 && (
                                     <p className="col-span-2 text-sm text-gray-400 text-center py-8">No tools match your search.</p>
                                 )}
@@ -1654,40 +1657,23 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                     }
 
                     return (
-                        <div className="space-y-6">
-                            {grouped.map(({ cat, entries }) => {
-                                const Icon = cat.icon
-                                return (
-                                    <div key={cat.label}>
-                                        <div className="flex items-center gap-2 mb-3">
-                                            <div className={`h-6 w-6 rounded-md flex items-center justify-center ${cat.color}`}>
-                                                <Icon className="h-3.5 w-3.5" />
-                                            </div>
-                                            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{cat.label}</h3>
-                                            <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">{cat.server}</span>
-                                            <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
-                                            <span className="text-xs text-gray-400">{entries.length}</span>
-                                        </div>
-                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                                            {entries.map(([id, schema]) => {
-                                                const toolName = id.split("::").pop() || id
-                                                return (
-                                                    <ToolCard key={id} id={id} toolName={toolName} schema={schema} Icon={Icon} color={cat.color} onSelect={handleToolSelect} />
-                                                )
-                                            })}
-                                        </div>
+                        <div className="space-y-7">
+                            {grouped.map(({ cat, entries }) => (
+                                <div key={cat.label}>
+                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">{cat.label}</h3>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                        {entries.map(([id, schema]) => (
+                                            <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} onSelect={handleToolSelect} />
+                                        ))}
                                     </div>
-                                )
-                            })}
+                                </div>
+                            ))}
                             {uncategorized.length > 0 && (
                                 <div>
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Other</h3>
-                                        <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
-                                    </div>
+                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">Other</h3>
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                                         {uncategorized.map(([id, schema]) => (
-                                            <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} Icon={Beaker} color="bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400" onSelect={handleToolSelect} />
+                                            <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} onSelect={handleToolSelect} />
                                         ))}
                                     </div>
                                 </div>
@@ -1717,13 +1703,14 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                                     <Beaker className="h-5 w-5 text-teal-600 dark:text-teal-400" />
                                 </div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-gray-900 dark:text-white font-mono">
-                                        {selectedToolId.split("::").pop()}
+                                    <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                                        {TOOL_DISPLAY[selectedToolName]?.label ?? selectedToolName}
                                     </h3>
                                     <p className="text-xs text-gray-400 dark:text-gray-500">
+                                        <code className="bg-transparent p-0 font-mono">{selectedToolName}</code>
                                         {selectedCategory
-                                            ? `${selectedCategory.label} · ${selectedCategory.server}`
-                                            : "MCP Tool"}
+                                            ? ` · ${selectedCategory.label} · ${selectedCategory.server}`
+                                            : " · MCP Tool"}
                                     </p>
                                 </div>
                             </div>
