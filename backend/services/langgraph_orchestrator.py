@@ -1166,6 +1166,88 @@ def _is_gene_list_placeholder(value: Any) -> bool:
     if isinstance(value, list) and len(value) == 1:
         value = value[0]
     return isinstance(value, str) and value.strip().upper() == _GENE_LIST_PLACEHOLDER
+
+
+# A gene report runs the same analyses for one gene every time, without the model choosing tools:
+# "Report on ERBB2", "Gene report for ERBB2", "Gene report: ERBB2", or "ERBB2 gene report"
+_GENE_REPORT_RE = re.compile(
+    r"^\s*(?:(?:gene\s+)?report\s+(?:on|for|about)\s+(?P<a>[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?)"
+    r"|gene\s+report\s*:\s*(?P<b>[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?)"
+    r"|(?P<c>[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?)\s+gene\s+report)\s*[.?!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_gene_report_request(query: str) -> Optional[str]:
+    """The gene symbol a report request names, or None when the query is not one."""
+    match = _GENE_REPORT_RE.match(query or "")
+    gene = next((g for g in (match.groups() if match else ()) if g), None)
+    return gene.upper() if gene and gene.upper() in _VALID_GENES else None
+
+
+def _gene_report_calls(gene: str) -> List[tuple[str, Dict[str, Any]]]:
+    """The report's analyses, in the order its sections appear."""
+    return [
+        ("linkedomics::compare_cptac_tumor_normal_expression", {"protein": gene}),
+        ("linkedomics::analyze_cptac_gene_survival_associations", {"protein": gene}),
+        ("linkedomics::analyze_tcga_survival_associations", {"gene": gene, "omics": "RNAseq"}),
+        ("linkedomics::get_drug_target_profile", {"protein": gene}),
+        ("linkedomics::search_gene_response_trials", {"protein": gene}),
+        ("linkedomics::get_funmap_functional_neighborhood", {"protein": gene}),
+        ("literature::search_pubmed_articles", {"query": f"{gene} cancer", "max_results": 5}),
+    ]
+
+
+def _gene_report_literature_section(raw_results: Dict[str, Any]) -> str:
+    """A gene report's PubMed results as a short list of articles with links."""
+    lines: List[str] = []
+    for key, wrapped in raw_results.items():
+        if not key.startswith("literature::search_pubmed_articles") or not isinstance(wrapped, dict):
+            continue
+        for article in ((wrapped.get("_result") or {}).get("articles") or [])[:5]:
+            title = str(article.get("title") or "").strip().rstrip(".")
+            if not title:
+                continue
+            where = ", ".join(str(part) for part in (article.get("journal"), article.get("year")) if part)
+            link = f" [PubMed]({article['pubmed_url']})" if article.get("pubmed_url") else ""
+            lines.append(f"- {title}{f' ({where})' if where else ''}.{link}")
+    if not lines:
+        return ""
+    return "## Recent literature\n\n" + "\n".join(lines) + "\n\n> **Source:** [PubMed](#source:pubmed)\n"
+
+
+# Report sections in reading order, by the start of their headings
+_GENE_REPORT_SECTION_ORDER = (
+    "cancer expression", "overall survival", "tcga survival", "drug target",
+    "clinical trial", "funmap", "recent literature",
+)
+
+
+def _order_gene_report_sections(message: str) -> str:
+    """Put a report's "## " sections in the report's order; text before the first heading stays first."""
+    parts = re.split(r"(?m)^(?=## )", message)
+    head, sections = (parts[0], parts[1:]) if parts and not parts[0].startswith("## ") else ("", parts)
+
+    def rank(section: str) -> int:
+        heading = section[3:].lower()
+        return next((i for i, prefix in enumerate(_GENE_REPORT_SECTION_ORDER) if heading.startswith(prefix)), len(_GENE_REPORT_SECTION_ORDER))
+
+    ordered = sorted(sections, key=rank)  # stable: sections of one kind keep their order
+    return (head + "".join(s.rstrip() + "\n\n" for s in ordered)).strip()
+
+
+def _gene_report_summary_query(gene: str) -> str:
+    """What the summary step is asked to write for a gene report, in place of the user's short request.
+
+    Avoids "versus", "vs", "compare", and "rank": the summary step reads those as a multi-gene
+    comparison and then demands a longer summary naming each gene it found in this text. Avoids
+    words that are also gene symbols ("an" is AN), which would get empty "Data unavailable" sections.
+    """
+    return (
+        f"Gene report for {gene}: summarize what these analyses show about {gene}: expression in "
+        "tumors and adjacent normal tissue and survival in CPTAC cohorts, survival across TCGA cohorts, its "
+        "drug-target profile, treatment response in clinical trial cohorts, its FunMap functional neighbors, and recent literature."
+    )
 _RESULT_EMPTY_STATUS = {"error", "unavailable", "missing", "not_found", "no_studies", "no_data"}
 _EMPTY_TEXT_MARKERS = (
     "data unavailable",
@@ -4525,14 +4607,28 @@ DIRECT RESPONSE RULES:
         rich_message = llm_summary
         suggestions: List[str] = []
 
+        is_report = final_state.get("workflow") == "gene_report"
+
         async def _format():
             if asks_clarification:
                 return llm_summary, llm_summary, tools_used, raw_results, []
             if raw_results and self._parent is not None:
                 try:
-                    formatted = await self._parent._generate_response(
-                        effective_query, raw_results, session, intent="research", usage_tracker=usage_tracker
+                    # Mixed LinkedOmics and literature results are formatted on the assumption that the
+                    # agent's own text covers the literature. A gene report has no agent text, so its
+                    # literature is listed separately and the rest is formatted as for any answer.
+                    format_results = (
+                        {k: v for k, v in raw_results.items() if not k.startswith("literature::")} if is_report else raw_results
                     )
+                    formatted = await self._parent._generate_response(
+                        effective_query, format_results, session, intent="research", usage_tracker=usage_tracker
+                    )
+                    if is_report:
+                        # Keep every call, literature included, in the saved answer for the exports
+                        formatted = {**formatted, "raw_results": raw_results}
+                        literature = _gene_report_literature_section(raw_results)
+                        sections = f"{(formatted.get('message') or '').rstrip()}\n\n{literature}" if literature else formatted.get("message") or ""
+                        formatted["message"] = _order_gene_report_sections(sections)
                     _msg = formatted.get("message") or ""
                     _summary = formatted.get("summary") or ""
                     _placeholder = {"", "No LinkedOmics results.", "No response generated."}
@@ -4581,7 +4677,11 @@ DIRECT RESPONSE RULES:
         display_summary = _normalize_duplicate_markdown_headings(display_summary)
         rich_message = _ensure_webgestalt_enrichment_summary(rich_message, raw_results_final, section=True)
         display_summary = _ensure_webgestalt_enrichment_summary(display_summary, raw_results_final)
-        display_summary = _ensure_tool_result_coverage_summary(display_summary, raw_results_final, effective_query)
+        # A report lists its literature in its own section, so the summary need not mention it
+        coverage_results = (
+            {k: v for k, v in raw_results_final.items() if not k.startswith("literature::")} if is_report else raw_results_final
+        )
+        display_summary = _ensure_tool_result_coverage_summary(display_summary, coverage_results, effective_query)
         if include_stream_metadata:
             clarification_options = clarification_options_from_llm
             rich_message = _inlineize_source_blockquotes(rich_message)
@@ -4693,6 +4793,59 @@ DIRECT RESPONSE RULES:
 
         return formatted_response
 
+    async def _run_gene_report_tools(self, gene: str, *, log_prefix: str) -> AgentState:
+        """Run a gene report's analyses at once and return them as a finished agent state.
+
+        The state has no model message, so the response builder writes the summary and lays out
+        the plots and tables from these results as it does for any answer.
+        """
+        available_tools = self.mcp_aggregator.list_tools()
+        calls = [(tool_id, args) for tool_id, args in _gene_report_calls(gene) if tool_id in available_tools]
+
+        async def _run(tool_id: str, args: Dict[str, Any]) -> tuple[str, Dict[str, Any], Any, int]:
+            tool_started = time.perf_counter()
+            try:
+                raw = await self.mcp_aggregator.call_tool(tool_id, args)
+            except Exception as exc:
+                logger.warning("%s Gene report call %s failed: %s", log_prefix, tool_id, exc)
+                raw = {"error": str(exc)}
+            return tool_id, args, raw, int((time.perf_counter() - tool_started) * 1000)
+
+        started = time.perf_counter()
+        outcomes = await asyncio.gather(*(_run(tool_id, args) for tool_id, args in calls))
+        tool_results: Dict[str, Any] = {}
+        trace_metrics: List[Dict[str, Any]] = []
+        for tool_id, args, raw, latency_ms in outcomes:
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except Exception:
+                    raw = {"raw": raw}
+            result_dict = raw if isinstance(raw, dict) else {"raw": raw}
+            data_status = _classify_tool_result_payload(tool_id.replace("::", "__"), result_dict)
+            tool_results[f"{tool_id}#0"] = {"_gene": gene, "_args": args, "_result": result_dict, "_data_status": data_status}
+            trace_metrics.append({"tool": tool_id, "latency_ms": latency_ms, "status": data_status})
+
+        return {
+            "messages": [],
+            "tool_results": tool_results,
+            "active_gene": gene,
+            "steps": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "execution_trace": [{
+                "node": "tools", "step": 0, "latency_ms": int((time.perf_counter() - started) * 1000), "tool_calls": trace_metrics,
+            }],
+            "requested_genes": [gene],
+            "requested_identifiers": [gene],
+            "allow_active_gene_reference": False,
+            "tool_scope": "full",
+            "workflow": "gene_report",
+            "query_plan": None,
+            "gene_list": [],
+        }
+
     # ── Main entry point ───────────────────────────────────────────────────────
 
     async def process_query(
@@ -4762,6 +4915,67 @@ DIRECT RESPONSE RULES:
                 "query": query,
             }
 
+    async def _stream_formatted_response(
+        self,
+        *,
+        query: str,
+        effective_query: str,
+        session: Dict[str, Any],
+        active_gene: str,
+        final_state: AgentState,
+        log_prefix: str,
+        expand_details: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """Format the final state, stream its message and summary, save the turn, and send the final event."""
+        yield f"data: {json.dumps({'type': 'status', 'content': 'Formatting response...'})}\n\n"
+        formatted_response = await self._build_response_from_final_state(
+            query=query,
+            effective_query=effective_query,
+            session=session,
+            active_gene=active_gene,
+            final_state=final_state,
+            log_prefix=log_prefix,
+            include_stream_metadata=True,
+        )
+        if expand_details:
+            # A gene report is read section by section, so its plots and tables are shown open
+            formatted_response["no_collapse"] = True
+
+        # Stream the final formatted message content (rich_message).
+        # This always matches what ends up in the final event, so the user
+        # never sees a jarring replacement after streaming completes.
+        # Use 30 ms between chunks so the typewriter effect is clearly
+        # visible (≈ 1–3 s for a typical response).
+        rich_text = (formatted_response.get("message") or "").strip()
+        if rich_text:
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
+            rich_chunks = _iter_stream_chunks(rich_text)
+            for idx, text_chunk in enumerate(rich_chunks):
+                yield f"data: {json.dumps({'type': 'text_delta', 'content': text_chunk})}\n\n"
+                if idx < len(rich_chunks) - 1:
+                    await asyncio.sleep(0.030)
+
+        # Stream the summary separately so it populates the summary box
+        # incrementally without conflicting with the main message content.
+        display_summary = (formatted_response.get("summary") or "").strip()
+        if display_summary:
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Generating summary...'})}\n\n"
+            summary_chunks = _iter_stream_chunks(display_summary)
+            for idx, chunk in enumerate(summary_chunks):
+                yield f"data: {json.dumps({'type': 'summary_delta', 'content': chunk})}\n\n"
+                if idx < len(summary_chunks) - 1:
+                    await asyncio.sleep(0.030)
+
+        turn_id = await self._save_query(session, query, formatted_response)
+
+        payload = {
+            **formatted_response,
+            "session_id": session["id"],
+            "turn_id": turn_id,
+        }
+
+        yield f"data: {json.dumps({'type': 'final', 'content': payload})}\n\n"
+
     async def process_query_stream(
         self,
         query: str,
@@ -4780,6 +4994,26 @@ DIRECT RESPONSE RULES:
         try:
             logger.info(f"[LangGraph Stream] Processing query: {query}")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Initializing session...'})}\n\n"
+
+            report_gene = _parse_gene_report_request(query)
+            if report_gene:
+                session = await self._get_session(session_id, user_id, client_ip=client_ip)
+                ctx = session.setdefault("context", {})
+                if not ctx.get("session_goal"):
+                    ctx["session_goal"] = query.strip()[:200]
+                yield f"data: {json.dumps({'type': 'status', 'content': f'Running the gene report analyses for {report_gene}...'})}\n\n"
+                final_state = await self._run_gene_report_tools(report_gene, log_prefix="[Gene report]")
+                async for chunk in self._stream_formatted_response(
+                    query=query,
+                    effective_query=_gene_report_summary_query(report_gene),
+                    session=session,
+                    active_gene=ctx.get("active_gene", "unknown"),
+                    final_state=final_state,
+                    log_prefix="[Gene report]",
+                    expand_details=True,
+                ):
+                    yield chunk
+                return
 
             session, effective_query, active_gene, initial_state, query_plan = await self._prepare_execution_context(
                 query,
@@ -4840,51 +5074,15 @@ DIRECT RESPONSE RULES:
                 return
 
             # --- POST-PROCESSING (Same as process_query) ---
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Formatting response...'})}\n\n"
-            formatted_response = await self._build_response_from_final_state(
+            async for chunk in self._stream_formatted_response(
                 query=query,
                 effective_query=effective_query,
                 session=session,
                 active_gene=active_gene,
                 final_state=final_state,
                 log_prefix="[LangGraph Stream]",
-                include_stream_metadata=True,
-            )
-
-            # Stream the final formatted message content (rich_message).
-            # This always matches what ends up in the final event, so the user
-            # never sees a jarring replacement after streaming completes.
-            # Use 30 ms between chunks so the typewriter effect is clearly
-            # visible (≈ 1–3 s for a typical response).
-            rich_text = (formatted_response.get("message") or "").strip()
-            if rich_text:
-                yield f"data: {json.dumps({'type': 'status', 'content': 'Drafting final analysis...'})}\n\n"
-                rich_chunks = _iter_stream_chunks(rich_text)
-                for idx, text_chunk in enumerate(rich_chunks):
-                    yield f"data: {json.dumps({'type': 'text_delta', 'content': text_chunk})}\n\n"
-                    if idx < len(rich_chunks) - 1:
-                        await asyncio.sleep(0.030)
-
-            # Stream the summary separately so it populates the summary box
-            # incrementally without conflicting with the main message content.
-            display_summary = (formatted_response.get("summary") or "").strip()
-            if display_summary:
-                yield f"data: {json.dumps({'type': 'status', 'content': 'Generating summary...'})}\n\n"
-                summary_chunks = _iter_stream_chunks(display_summary)
-                for idx, chunk in enumerate(summary_chunks):
-                    yield f"data: {json.dumps({'type': 'summary_delta', 'content': chunk})}\n\n"
-                    if idx < len(summary_chunks) - 1:
-                        await asyncio.sleep(0.030)
-
-            turn_id = await self._save_query(session, query, formatted_response)
-            
-            payload = {
-                **formatted_response,
-                "session_id": session["id"],
-                "turn_id": turn_id,
-            }
-            
-            yield f"data: {json.dumps({'type': 'final', 'content': payload})}\n\n"
+            ):
+                yield chunk
 
         except Exception as e:
             logger.error(f"[LangGraph Stream] Error: {e}", exc_info=True)
