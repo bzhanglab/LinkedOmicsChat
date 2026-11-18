@@ -669,6 +669,133 @@ def _generate_enrichment_static(rows: list, title: str) -> Optional[dict]:
         return None
 
 
+def _parse_tile_entry(msg: str, is_survival: bool) -> tuple[int, Optional[float], bool]:
+    """Read one cohort's CPTAC message as (direction, p-value, significant)."""
+    import re
+    if not msg or msg in ("Data unavailable", "-", ""):
+        return 0, None, False
+    m = re.search(r'p=([\d.e+\-]+)', msg, re.IGNORECASE)
+    pval = abs(float(m.group(1))) if m else None
+    msg_l = msg.lower()
+    if is_survival:
+        if "higher expression associated with poor" in msg_l:
+            return 1, pval, True
+        if "lower expression associated with poor" in msg_l:
+            return -1, pval, True
+    else:
+        if "significantly higher" in msg_l:
+            return 1, pval, True
+        if "significantly lower" in msg_l:
+            return -1, pval, True
+    return 0, pval, False
+
+
+# Batches with more genes than this (typically an uploaded list) get one combined heatmap
+# instead of one tile plot per gene.
+_COMBINED_TILE_MIN_GENES = 11
+
+# Other per-gene plots for long batches stop after this many genes; the written answer still
+# covers every gene.
+_BATCH_PLOT_GENE_LIMIT = 10
+
+
+def _batch_plot_note(total: int) -> str:
+    return (
+        f"_Plots are shown for the first {_BATCH_PLOT_GENE_LIMIT} of {total} genes; the written answer "
+        "covers all of them. Ask about a single gene to see its plot._\n"
+    )
+
+
+def _generate_gene_list_tile_static(batch_data: dict, is_survival: bool = False) -> Optional[dict]:
+    """Generate one gene × cohort heatmap (RNA and protein panels) for a multi-gene CPTAC batch.
+
+    Uses the same colors as the single-gene tile: red for higher in tumor (or higher expression
+    with poor survival), blue for the opposite, grey for not significant or no data.
+    """
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Patch
+
+        genes = [g for g, v in batch_data.items() if isinstance(v, dict) and ("protein_level" in v or "RNA_level" in v)]
+        if not genes:
+            return None
+        layer_keys = [("RNA", "RNA_level"), ("Protein", "protein_level")]
+        cancers = sorted({c for g in genes for _, key in layer_keys for c in ((batch_data[g].get(key) or {}).get("data") or {})})
+        if not cancers:
+            return None
+
+        cells, csv_rows, sig_scores = {}, [], []
+        for g in genes:
+            for layer, key in layer_keys:
+                layer_data = (batch_data[g].get(key) or {}).get("data") or {}
+                for cancer in cancers:
+                    msg = layer_data.get(cancer, "Data unavailable")
+                    direction, pval, sig = _parse_tile_entry(msg, is_survival)
+                    cells[(g, layer, cancer)] = (direction, pval, sig)
+                    if sig and pval and pval > 0:
+                        sig_scores.append(-math.log10(pval))
+                    csv_rows.append([g, layer, cancer, msg, {1: "up", -1: "down", 0: "NS"}[direction],
+                                     f"{pval:.4e}" if pval is not None else "", "yes" if sig else "no"])
+        max_neglog_p = max(max(sig_scores) if sig_scores else 6.0, 1.5)
+
+        fig, axes = plt.subplots(1, 2, figsize=(max(9, len(cancers) * 1.3 + 2), 1.4 + 0.24 * len(genes)), sharey=True)
+        fig.patch.set_facecolor("white")
+        for ax, (layer, _) in zip(axes, layer_keys):
+            for ri, g in enumerate(genes):
+                for ci, cancer in enumerate(cancers):
+                    direction, pval, sig = cells[(g, layer, cancer)]
+                    if sig and pval and pval > 0:
+                        intensity = min(1.0, -math.log10(pval) / max_neglog_p)
+                        fade = 1.0 - intensity * 0.75
+                        color = (1.0, fade, fade) if direction > 0 else (fade, fade, 1.0)
+                    else:
+                        color = (0.88, 0.88, 0.88)
+                    ax.add_patch(plt.Rectangle([ci - 0.46, ri - 0.46], 0.92, 0.92, facecolor=color, edgecolor="#cccccc", linewidth=0.5))
+            ax.set_xlim(-0.55, len(cancers) - 0.45)
+            ax.set_ylim(len(genes) - 0.45, -0.55)
+            ax.set_xticks(range(len(cancers)))
+            ax.set_xticklabels(cancers, fontsize=8, rotation=45, ha="left")
+            ax.xaxis.tick_top()
+            ax.set_yticks(range(len(genes)))
+            ax.set_yticklabels(genes, fontsize=7.5)
+            ax.tick_params(length=0)
+            ax.set_title(layer, fontsize=10, pad=28)
+            for sp in ax.spines.values():
+                sp.set_visible(False)
+
+        labels = (["Higher expr → poor survival", "Lower expr → poor survival"] if is_survival
+                  else ["Higher in tumor", "Lower in tumor"])
+        fig.legend(handles=[Patch(facecolor="#c0392b", label=labels[0]), Patch(facecolor="#2980b9", label=labels[1]),
+                            Patch(facecolor="#dddddd", label="Not significant or no data")],
+                   loc="lower center", fontsize=8, ncol=3, frameon=False)
+        title = f"{len(genes)} genes: {'Survival Association' if is_survival else 'Tumor vs. Normal'} — CPTAC"
+        fig.suptitle(title, fontsize=11)
+        fig.tight_layout(rect=[0, 0.4 / (1.4 + 0.24 * len(genes)) + 0.02, 1, 0.97])
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["gene", "layer", "cancer", "full_message", "direction", "pvalue", "significant"])
+        writer.writerows(csv_rows)
+        return {
+            "png_b64": base64.b64encode(png_buf.getvalue()).decode(),
+            "svg": svg_buf.getvalue().decode(),
+            "csv": csv_buf.getvalue(),
+            "title": title,
+        }
+    except Exception as e:
+        logger.warning(f"[Gene list tile] Failed to generate: {e}")
+        return None
+
+
 def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = False) -> Optional[dict]:
     """Generate a 2-row × N-col color tile matrix for expression or survival data.
 
@@ -693,22 +820,7 @@ def _generate_expression_tile_static(data: dict, gene: str, is_survival: bool = 
             return None
 
         def _parse_entry(msg: str):
-            if not msg or msg in ("Data unavailable", "-", ""):
-                return 0, None, False
-            m = re.search(r'p=([\d.e+\-]+)', msg, re.IGNORECASE)
-            pval = abs(float(m.group(1))) if m else None
-            msg_l = msg.lower()
-            if is_survival:
-                if "higher expression associated with poor" in msg_l:
-                    return 1, pval, True
-                if "lower expression associated with poor" in msg_l:
-                    return -1, pval, True
-            else:
-                if "significantly higher" in msg_l:
-                    return 1, pval, True
-                if "significantly lower" in msg_l:
-                    return -1, pval, True
-            return 0, pval, False
+            return _parse_tile_entry(msg, is_survival)
 
         layers = [("Protein", p_data), ("RNA", r_data)]
         n_cols = len(cancers)
@@ -2326,6 +2438,7 @@ class MCPOrchestrator:
         user_id: str,
         session_id: Optional[str] = None,
         client_ip: Optional[str] = None,
+        gene_list: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Stream the execution progress using Server-Sent Events (SSE).
@@ -2333,7 +2446,9 @@ class MCPOrchestrator:
         """
         if self._langgraph_orch:
             # We must use 'async for' to yield chunks from the delegated generator
-            async for chunk in self._langgraph_orch.process_query_stream(query, user_id, session_id, client_ip=client_ip):
+            async for chunk in self._langgraph_orch.process_query_stream(
+                query, user_id, session_id, client_ip=client_ip, gene_list=gene_list
+            ):
                 yield chunk
         else:
             import json
@@ -2992,6 +3107,33 @@ Classify this query. Return JSON only."""
             }
             return _rewrap_payload(v, compact_payload)
 
+        _TARGET_SUMMARY_FIELDS = (
+            "tier", "Family", "antigen", "cell_line_dependency", "tumor_increase_summary", "tumor_overexpression",
+            "cnv_driver", "mutation_cis_effect", "methylation_driver", "tsg_dependency", "tumor_associated_antigen",
+        )
+
+        def _compact_large_target_batch_payload(v: Any) -> Any:
+            # A full profile is ~30 KB, mostly display tables, so 50 of them would be cut off
+            # after a few genes; long batches keep only the fields an answer needs.
+            _, payload = _parsed_payload(v)
+            profiles = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(profiles, dict) or len(profiles) < _COMBINED_TILE_MIN_GENES:
+                return v
+            compact_data: Dict[str, Any] = {}
+            for gene, entry in profiles.items():
+                profile = entry.get("result") if isinstance(entry, dict) else None
+                if not isinstance(profile, dict):
+                    compact_data[gene] = entry
+                    continue
+                compact = {k: profile[k] for k in _TARGET_SUMMARY_FIELDS if k in profile}
+                drugs = [d.strip() for d in str(profile.get("drugs") or "").split(";") if d.strip()]
+                tiers = [t.strip() for t in str(profile.get("drug_tiers") or "").split(";")]
+                if drugs:
+                    compact["drug_count"] = len(drugs)
+                    compact["drugs_with_tiers"] = [f"{d} ({t})" if t else d for d, t in zip(drugs, tiers + [""] * len(drugs))][:12]
+                compact_data[gene] = {"result": compact}
+            return _rewrap_payload(v, {**payload, "data": compact_data})
+
         def _apply_tool_specific_compaction(bare_tool_id: str, value: Any) -> Any:
             if bare_tool_id.endswith("analyze_tcga_cis_associations"):
                 return _compact_tcga_cis_mode4_payload(value)
@@ -3003,6 +3145,8 @@ Classify this query. Return JSON only."""
                 return _compact_meta_analysis_tool_payload(value, item_key="top_gene_sets", label_key="gene_set")
             if bare_tool_id.endswith("get_funmap_functional_neighborhood"):
                 return _compact_funmap_payload(value)
+            if bare_tool_id.endswith("batch_get_drug_target_profiles"):
+                return _compact_large_target_batch_payload(value)
             return value
 
         compact: Dict[str, Any] = {}
@@ -4283,7 +4427,23 @@ Please provide a clear, informative response about this gene. Include the key de
                     ls.append(f"> **Source:** [LinkedOmics](#source:linkedomics) · {s_desc}")
                     return "\n".join(ls) + "\n"
 
-                if batch_data:
+                combined_fig = (
+                    _generate_gene_list_tile_static(batch_data, is_survival=is_surv)
+                    if batch_data and len(batch_data) >= _COMBINED_TILE_MIN_GENES else None
+                )
+                if combined_fig:
+                    viz_id = _uuid.uuid4().hex
+                    _visualizations.append({
+                        "type": "static_plot",
+                        "id": viz_id,
+                        "title": combined_fig["title"],
+                        **{k: combined_fig[k] for k in ("png_b64", "svg", "csv")},
+                    })
+                    sections.append(
+                        f"## {base_title} - {len(batch_data)} genes{subtitle}\n\n[PLOT:{viz_id}]\n\n"
+                        f"> **Source:** [LinkedOmics](#source:linkedomics) · {source_desc}\n"
+                    )
+                elif batch_data:
                     for g, g_result in batch_data.items():
                         if isinstance(g_result, dict) and ("protein_level" in g_result or "RNA_level" in g_result):
                             sec = _render_single_gene_section(g, g_result, base_title, subtitle, source_desc, col_rna, col_prot)
@@ -4336,7 +4496,9 @@ Please provide a clear, informative response about this gene. Include the key de
                         return {e["cohort"] for e in val if isinstance(e, dict) and "cohort" in e}
                     return {c for c in _GRID_COHORTS if _re2.search(rf'\b{_re2.escape(c)}\b', str(val))}
 
-                for g_sym, r in entries:
+                if len(entries) > _BATCH_PLOT_GENE_LIMIT:
+                    sections.append(_batch_plot_note(len(entries)))
+                for g_sym, r in entries[:_BATCH_PLOT_GENE_LIMIT]:
                     title = f"Drug target profile — {g_sym}"
                     md = [f"## {title}", ""]
 
@@ -4540,7 +4702,9 @@ Please provide a clear, informative response about this gene. Include the key de
                     else:
                         md.extend(_trial_scope_lines("the requested genes", signal_label="expression", batch=True))
                         md.append("")
-                        for protein, result in raw_data.items():
+                        if len(raw_data) > _BATCH_PLOT_GENE_LIMIT:
+                            md.append(_batch_plot_note(len(raw_data)))
+                        for protein, result in list(raw_data.items())[:_BATCH_PLOT_GENE_LIMIT]:
                             if not isinstance(result, dict):
                                 continue
                             if result.get("status") != "available":
@@ -4970,7 +5134,9 @@ Please provide a clear, informative response about this gene. Include the key de
                     fallback_applied_pairs = parsed.get("applied_pairs") or []
                     fallback_applied_cancers = parsed.get("applied_cancers") or []
                     if isinstance(batch_data, dict) and batch_data:
-                        for batch_gene, batch_payload in batch_data.items():
+                        if len(batch_data) > _BATCH_PLOT_GENE_LIMIT:
+                            sections.append(_batch_plot_note(len(batch_data)))
+                        for batch_gene, batch_payload in list(batch_data.items())[:_BATCH_PLOT_GENE_LIMIT]:
                             sec = _render_single_cis_section(
                                 batch_gene,
                                 batch_payload,

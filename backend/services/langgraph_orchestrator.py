@@ -71,6 +71,8 @@ class AgentState(TypedDict):
     workflow: str
     # Planner decision: intent, approach, and optional clarification request
     query_plan: Optional[Dict[str, Any]]
+    # Genes from a list the user attached to this question (checked symbols, in the list's order)
+    gene_list: List[str]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1150,6 +1152,19 @@ _AUTO_BATCH_SINGLE_TOOL_MAP: Dict[str, str] = {
     "linkedomics__clinical_trial_information": "linkedomics__batch_clinical_trial_information",
 }
 _AUTO_BATCH_SCOPES = {"expression", "survival", "targets", "trials", "correlation"}
+
+# An attached gene list reaches the tools through this placeholder, so the model never has to
+# copy hundreds of genes into a tool call. Enrichment gets the whole list; the per-gene batch
+# tools, which take about 0.3-0.9 s per gene, get the first 50.
+_GENE_LIST_PLACEHOLDER = "MY_LIST"
+_GENE_LIST_PER_GENE_LIMIT = 50
+
+
+def _is_gene_list_placeholder(value: Any) -> bool:
+    """True for the gene list placeholder, sent as a string or as a one-item list."""
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    return isinstance(value, str) and value.strip().upper() == _GENE_LIST_PLACEHOLDER
 _RESULT_EMPTY_STATUS = {"error", "unavailable", "missing", "not_found", "no_studies", "no_data"}
 _EMPTY_TEXT_MARKERS = (
     "data unavailable",
@@ -1900,6 +1915,7 @@ def _make_tool_node(tools: List[BaseTool]):
         requested_identifiers = list(state.get("requested_identifiers") or [])
         allow_active_gene_reference = bool(state.get("allow_active_gene_reference"))
         tool_scope = state.get("tool_scope", "full")
+        gene_list = list(state.get("gene_list") or [])
         call_counts: Dict[str, int] = {}
         for existing_key in new_results:
             base_key, sep, suffix = existing_key.rpartition("#")
@@ -1945,7 +1961,13 @@ def _make_tool_node(tools: List[BaseTool]):
                 args = {"proteins": requested_genes}
                 call_id = f"{call_id}-batch"
 
-            validation_error = _validate_tool_identifier_integrity(
+            filled_from_list = bool(gene_list) and _is_gene_list_placeholder(args.get("proteins"))
+            if filled_from_list:
+                is_enrichment = _bare_tool_name(original_tool_name) == "run_webgestalt_go_enrichment"
+                args["proteins"] = list(gene_list) if is_enrichment else gene_list[:_GENE_LIST_PER_GENE_LIMIT]
+
+            # The guard stops genes the model invented; genes from the user's own list skip it
+            validation_error = None if filled_from_list else _validate_tool_identifier_integrity(
                 tool_name=original_tool_name,
                 args=args,
                 requested_identifiers=requested_identifiers,
@@ -3624,6 +3646,8 @@ DIRECT RESPONSE RULES:
         session_goal: Optional[str] = None,
         force_identifier_resolution: bool = False,
         pre_resolved_identifiers: Optional[Dict[str, str]] = None,
+        gene_list_name: Optional[str] = None,
+        gene_list: Optional[List[str]] = None,
     ) -> str:
         """Build a scope-aware system prompt."""
         workflow_constraint = self._build_workflow_constraint(
@@ -3662,6 +3686,20 @@ DIRECT RESPONSE RULES:
                 "single-gene tools repeatedly. A single batch call is preferred over "
                 "multiple sequential single-gene calls.\n"
             )
+        if gene_list:
+            per_gene = min(len(gene_list), _GENE_LIST_PER_GENE_LIMIT)
+            prompt += (
+                f"\nUPLOADED GENE LIST: The user attached a gene list, \"{gene_list_name}\", with {len(gene_list)} "
+                f"genes; it starts {', '.join(gene_list[:10])}. When the question is about their list "
+                "(\"my list\", \"my genes\", \"these genes\", \"the uploaded genes\"), pass the single value "
+                f"\"{_GENE_LIST_PLACEHOLDER}\" as the `proteins` argument of a batch tool or of "
+                "`run_webgestalt_go_enrichment`, and never type out genes from the list yourself. "
+                f"The app fills in the genes: all {len(gene_list)} for enrichment and the first {per_gene} "
+                "for the per-gene batch tools."
+            )
+            if len(gene_list) > per_gene:
+                prompt += f" When you report per-gene results, say they cover the first {per_gene} genes of the list."
+            prompt += " Questions that name specific genes are answered for those genes as usual.\n"
         return prompt
 
     def _rebuild_graph(
@@ -3675,6 +3713,8 @@ DIRECT RESPONSE RULES:
         session_goal: Optional[str] = None,
         force_identifier_resolution: bool = False,
         pre_resolved_identifiers: Optional[Dict[str, str]] = None,
+        gene_list_name: Optional[str] = None,
+        gene_list: Optional[List[str]] = None,
     ):
         """(Re)build the compiled LangGraph with current MCP tools."""
         if not self.llm:
@@ -3689,6 +3729,7 @@ DIRECT RESPONSE RULES:
             active_cancer_type=active_cancer_type, session_goal=session_goal,
             force_identifier_resolution=force_identifier_resolution,
             pre_resolved_identifiers=pre_resolved_identifiers,
+            gene_list_name=gene_list_name, gene_list=gene_list,
         )
         self._graph = build_graph(self.llm, self._tools, system_prompt)
         logger.info(
@@ -3974,6 +4015,7 @@ DIRECT RESPONSE RULES:
         client_ip: Optional[str],
         *,
         log_prefix: str,
+        gene_list: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], str, str, Optional[AgentState], Optional[QueryPlan]]:
         """Load session context, rebuild the graph, and prepare the initial state."""
         session = await self._get_session(session_id, user_id, client_ip=client_ip)
@@ -4072,12 +4114,21 @@ DIRECT RESPONSE RULES:
             for token in requested_identifiers
         )
 
+        # An attached list comes from the browser, so its genes are checked again here
+        list_genes = list(dict.fromkeys(
+            str(gene).strip().upper() for gene in (gene_list or {}).get("genes") or []
+            if str(gene).strip().upper() in _VALID_GENES
+        ))
+        list_name = re.sub(r"\s+", " ", str((gene_list or {}).get("name") or "Pasted list")).strip()[:100]
+
         self._rebuild_graph(
             active_gene=effective_active_gene, tool_scope=tool_scope, workflow=workflow, multi_gene=multi_gene,
             active_cancer_type=active_cancer_type,
             session_goal=session_goal or None,
             force_identifier_resolution=force_identifier_resolution,
             pre_resolved_identifiers=pre_resolved_identifiers or None,
+            gene_list_name=list_name if list_genes else None,
+            gene_list=list_genes or None,
         )
 
         history_limit = self._history_limit_for_scope(tool_scope)
@@ -4098,6 +4149,7 @@ DIRECT RESPONSE RULES:
             "tool_scope": tool_scope,
             "workflow": workflow,
             "query_plan": query_plan.model_dump() if query_plan else None,
+            "gene_list": list_genes,
         }
         return session, effective_query, active_gene, initial_state, query_plan
 
@@ -4586,6 +4638,20 @@ DIRECT RESPONSE RULES:
             and display_summary.strip()
             and rich_message.strip() != display_summary.strip()
         )
+        # The written summary comes from a separate model call that does not know about the cap,
+        # so the app states it whenever a per-gene tool got only part of the user's list
+        list_genes = final_state.get("gene_list") or []
+        capped_list = list_genes[:_GENE_LIST_PER_GENE_LIMIT]
+        if len(list_genes) > _GENE_LIST_PER_GENE_LIMIT and any(
+            isinstance(v, dict) and (v.get("_args") or {}).get("proteins") == capped_list
+            for v in raw_results_final.values()
+        ):
+            cap_note = f"_Per-gene results cover the first {len(capped_list)} of the {len(list_genes)} genes in your list._"
+            if show_summary:
+                display_summary = f"{display_summary}\n\n{cap_note}"
+            else:
+                rich_message = f"{cap_note}\n\n{rich_message}"
+
         input_tokens = usage_tracker.get("input_tokens", 0)
         output_tokens = usage_tracker.get("output_tokens", 0)
         model_name = usage_tracker.get("model") or settings.DEFAULT_LLM_MODEL
@@ -4697,6 +4763,7 @@ DIRECT RESPONSE RULES:
         user_id: str,
         session_id: Optional[str] = None,
         client_ip: Optional[str] = None,
+        gene_list: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Process a query and yield execution status chunks for Server-Sent Events (SSE).
@@ -4715,6 +4782,7 @@ DIRECT RESPONSE RULES:
                 session_id,
                 client_ip,
                 log_prefix="[LangGraph Stream]",
+                gene_list=gene_list,
             )
 
             # Planner requested clarification — emit final event and exit

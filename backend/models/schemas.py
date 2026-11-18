@@ -34,11 +34,24 @@ class ChatMessage(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class AttachedGeneList(BaseModel):
+    """A checked gene list the user attached to a chat question"""
+    name: str = Field(..., max_length=200)
+    genes: List[str] = Field(..., max_length=2000)
+
+
+class GeneListCheckRequest(BaseModel):
+    """Request schema for checking an uploaded or pasted gene list"""
+    text: str
+    name: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     """Request schema for chat endpoint"""
     message: str
     session_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
+    gene_list: Optional[AttachedGeneList] = None
 
 
 class PinRequest(BaseModel):

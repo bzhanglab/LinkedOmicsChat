@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional, Any, Dict
 from collections import defaultdict, deque
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -13,9 +14,10 @@ import time
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, cast, Text as SAText
-from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest, PinRequest
+from models.schemas import ChatRequest, ChatResponse, TurnTruncateRequest, FeedbackRequest, PinRequest, GeneListCheckRequest
 from models.database import User, ChatSession, ChatMessage as DBChatMessage, MessageFeedback
 from services.mcp_orchestrator import MCPOrchestrator
+from services.gene_list import MAX_TEXT_CHARS as MAX_GENE_LIST_TEXT_CHARS, parse_gene_list
 from core.config import settings
 from core.database import SessionLocal
 from core.dependencies import get_current_user, get_current_user_optional
@@ -333,6 +335,7 @@ async def chat_stream(
                     user_id=user_id,
                     session_id=request.session_id,
                     client_ip=client_ip,
+                    gene_list=request.gene_list.model_dump() if request.gene_list else None,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -366,6 +369,23 @@ async def chat_stream(
     except Exception as e:
         logger.error(f"Error starting chat stream: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/gene-list")
+async def check_gene_list(
+    request: GeneListCheckRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Check an uploaded or pasted gene list and return the genes a chat question would use."""
+    if not settings.GUEST_MODE_ENABLED and current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if len(request.text) > MAX_GENE_LIST_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="The list is too large; the limit is 5 MB of text.")
+    try:
+        # Runs in a thread because the MyGene.info lookup is a blocking request
+        return await asyncio.to_thread(parse_gene_list, request.text, request.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/sessions")
