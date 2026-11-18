@@ -74,7 +74,7 @@ export function Sidebar({ currentView, onViewChange, currentSessionId, onSession
             mobileOpen ? "translate-x-0" : "-translate-x-full",
             // Desktop: inline in layout, overrides mobile fixed positioning
             "md:relative md:inset-auto md:z-10 md:translate-x-0 md:transition-all md:duration-300",
-            isCollapsed ? "md:w-16" : "md:w-64"
+            isCollapsed ? "md:w-16" : "md:w-72"
         )}>
             {/* Toggle Button — desktop only */}
             <button
