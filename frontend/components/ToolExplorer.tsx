@@ -872,9 +872,9 @@ const ToolCard = ({ id, toolName, schema, onSelect }: {
     return (
         <button
             onClick={() => onSelect(id)}
-            className="text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:shadow-sm transition"
+            className="group text-left p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-teal-300 dark:hover:border-teal-700 hover:shadow-sm transition"
         >
-            <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100">{display?.label ?? toolName}</p>
+            <p className="text-[15px] font-medium text-gray-900 dark:text-gray-100 group-hover:text-teal-700 dark:group-hover:text-teal-400 transition-colors">{display?.label ?? toolName}</p>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
                 {display?.summary ?? (stripMarkdown(parseDocstring(schema.description).summary) || stripMarkdown(schema.description))}
             </p>
@@ -1660,7 +1660,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                         <div className="space-y-7">
                             {grouped.map(({ cat, entries }) => (
                                 <div key={cat.label}>
-                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">{cat.label}</h3>
+                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-400 mb-2">{cat.label}</h3>
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                                         {entries.map(([id, schema]) => (
                                             <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} onSelect={handleToolSelect} />
@@ -1670,7 +1670,7 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                             ))}
                             {uncategorized.length > 0 && (
                                 <div>
-                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">Other</h3>
+                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-400 mb-2">Other</h3>
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                                         {uncategorized.map(([id, schema]) => (
                                             <ToolCard key={id} id={id} toolName={id.split("::").pop() || id} schema={schema} onSelect={handleToolSelect} />

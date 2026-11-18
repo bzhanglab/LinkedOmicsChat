@@ -73,7 +73,7 @@ export function UseCasesPanel({ onStartChat }: UseCasesPanelProps) {
                 <div className="columns-1 lg:columns-2 2xl:columns-3 gap-4">
                     {TOPICS.map((topic) => (
                         <section key={topic.title} className="break-inside-avoid mb-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-5">
-                            <h2 className="font-semibold text-gray-900 dark:text-gray-100">{topic.title}</h2>
+                            <h2 className="font-semibold text-teal-700 dark:text-teal-400">{topic.title}</h2>
                             <p className="text-xs text-gray-400 mt-0.5">{topic.sources}</p>
                             <ul className="mt-3 space-y-0.5">
                                 {USE_CASES.filter((uc) => uc.topic === topic.title).map((uc) => (
