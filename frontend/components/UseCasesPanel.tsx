@@ -3,6 +3,7 @@
 import { ArrowRight } from "lucide-react"
 
 type Topic =
+    | "Gene report"
     | "Expression and cis-associations"
     | "Survival"
     | "Drug targets"
@@ -13,6 +14,7 @@ type Topic =
 
 // Display order of the tiles, with the data sources each topic draws on.
 const TOPICS: { title: Topic; sources: string }[] = [
+    { title: "Gene report", sources: "Seven analyses of one gene at once" },
     { title: "Expression and cis-associations", sources: "CPTAC · TCGA" },
     { title: "Survival", sources: "CPTAC · TCGA" },
     { title: "Drug targets", sources: "LinkedOmics Targets" },
@@ -24,6 +26,8 @@ const TOPICS: { title: Topic; sources: string }[] = [
 
 // The `exampleQuery` key is what backend/admin/check_prepopulated_genes.py looks for.
 const USE_CASES: { topic: Topic; exampleQuery: string }[] = [
+    { topic: "Gene report", exampleQuery: "Report on ERBB2" },
+    { topic: "Gene report", exampleQuery: "Gene report for CDK4" },
     { topic: "Expression and cis-associations", exampleQuery: "How is EGFR expressed tumor vs normal in LUAD?" },
     { topic: "Expression and cis-associations", exampleQuery: "Show cis-correlations for BRCA1 across CPTAC cohorts." },
     { topic: "Expression and cis-associations", exampleQuery: "Show cis associations for TP53 in BRCA across available omics pairs." },

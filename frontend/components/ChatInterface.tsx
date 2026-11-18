@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { chatAPI, toolsAPI, type ChatMessage, type CheckedNumber, type GeneListCheck, type NumberCheck, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
 import { GeneListDialog } from "@/components/GeneListDialog"
+import { GeneReportDialog } from "@/components/GeneReportDialog"
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
@@ -2374,6 +2375,7 @@ export const ChatInterface = memo(function ChatInterface({
     // A checked gene list, sent with every question until removed; kept in this view only
     const [geneList, setGeneList] = useState<GeneListCheck | null>(null)
     const [geneListDialogOpen, setGeneListDialogOpen] = useState(false)
+    const [geneReportDialogOpen, setGeneReportDialogOpen] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
     const [streamStatus, setStreamStatus] = useState<string | null>(null)
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -3450,6 +3452,22 @@ export const ChatInterface = memo(function ChatInterface({
                         onOpenChange={setGeneListDialogOpen}
                         attached={geneList}
                         onAttach={setGeneList}
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setGeneReportDialogOpen(true)}
+                        disabled={isLoading || isTruncating}
+                        title="Gene report"
+                        aria-label="Gene report"
+                    >
+                        <FileBarChart className="w-4 h-4" />
+                    </Button>
+                    <GeneReportDialog
+                        open={geneReportDialogOpen}
+                        onOpenChange={setGeneReportDialogOpen}
+                        onRun={(gene) => void sendMessageText(`Report on ${gene}`)}
                     />
                     <Input
                         ref={chatInputRef}
