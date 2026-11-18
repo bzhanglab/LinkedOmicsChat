@@ -90,5 +90,7 @@ Production is an AWS EC2 host. `setup_ec2.sh` bootstraps a fresh instance once; 
 syncs the working tree and rebuilds the containers (`docker compose build && docker compose up -d`). It reads
 `LINKEDOMICSCHAT_AWS_HOST`, `LINKEDOMICSCHAT_AWS_KEY`, and `LINKEDOMICSCHAT_REMOTE_PATH` (see
 `deploy_config.sh.example`), skips git-ignored files and all `.env` files, and with `LINKEDOMICSCHAT_DRY_RUN=true`
-only lists what it would sync. Tagging the running images before a deploy
+only lists what it would sync. Because it copies the working tree as it is, a real deploy stops unless you are on
+`main`, nothing is uncommitted or untracked, and `main` has been pushed; dry runs only warn, and
+`LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH=true` skips the check for emergencies. Tagging the running images before a deploy
 (`docker tag <image> linkedomicschat-backend:rollback-<date>`) makes rolling back a one-liner.

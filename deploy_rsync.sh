@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # Rsync-based deployment script for LinkedOmicsChat
-# Syncs local changes (including uncommitted) to AWS EC2 instance
-# Faster than git pull - no need to commit everything
+# Syncs the local working tree to the AWS EC2 instance (faster than git pull on the server)
 #
 # SAFETY FEATURES:
+# - Deploy guard: a real deploy runs only from main, with nothing uncommitted, and main pushed
+#   (LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH=true skips it, for emergencies; dry runs only warn)
 # - By default, does NOT delete files on server (safe mode)
 # - Preserves server-specific files (.env, databases, logs)
 # - Use LINKEDOMICSCHAT_DRY_RUN=true to preview changes before syncing
@@ -29,6 +30,7 @@ LINKEDOMICSCHAT_SYNC_GIT="${LINKEDOMICSCHAT_SYNC_GIT:-${LINKEDOMICSAI_SYNC_GIT:-
 LINKEDOMICSCHAT_DRY_RUN="${LINKEDOMICSCHAT_DRY_RUN:-${LINKEDOMICSAI_DRY_RUN:-${LINKEDOMICS_DRY_RUN:-${CPGAGENT_DRY_RUN:-false}}}}"
 LINKEDOMICSCHAT_USE_DELETE="${LINKEDOMICSCHAT_USE_DELETE:-${LINKEDOMICSAI_USE_DELETE:-${LINKEDOMICS_USE_DELETE:-${CPGAGENT_USE_DELETE:-false}}}}"
 LINKEDOMICSCHAT_SERVER_FILES="${LINKEDOMICSCHAT_SERVER_FILES:-${LINKEDOMICSAI_SERVER_FILES:-${LINKEDOMICS_SERVER_FILES:-${CPGAGENT_SERVER_FILES:-}}}}"
+LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH="${LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH:-false}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -63,7 +65,58 @@ echo "Options:"
 echo "   - LINKEDOMICSCHAT_DRY_RUN=true (preview changes)"
 echo "   - LINKEDOMICSCHAT_USE_DELETE=true (enable deletion - dangerous!)"
 echo "   - LINKEDOMICSCHAT_SERVER_FILES='file1,file2' (protect custom files)"
+echo "   - LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH=true (skip the deploy guard - emergencies only)"
 echo ""
+
+# Deploy guard: the sync copies the working tree as it is, so deploying from another branch,
+# with uncommitted edits, or with stray files would put them live. Production should always be
+# a commit on main that is also on GitHub.
+GUARD_PROBLEMS=()
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+    if [[ "$CURRENT_BRANCH" != "main" ]]; then
+        GUARD_PROBLEMS+=("Not on main (on $CURRENT_BRANCH). Switch with: git checkout main")
+    fi
+    DIRTY_COUNT="$(git status --porcelain | wc -l | tr -d ' ')"
+    if [ "$DIRTY_COUNT" -gt 0 ]; then
+        DIRTY_FILES="$(git status --porcelain | head -5 | cut -c4- | paste -sd, - | sed 's/,/, /g')"
+        GUARD_PROBLEMS+=("$DIRTY_COUNT uncommitted or untracked file(s): $DIRTY_FILES (git status lists them all)")
+    fi
+    # Compares with the last known state of GitHub's main, which git push updates; no network needed
+    if git rev-parse --verify --quiet origin/main > /dev/null; then
+        UNPUSHED="$(git rev-list --count origin/main..main)"
+        if [ "$UNPUSHED" -gt 0 ]; then
+            GUARD_PROBLEMS+=("main has $UNPUSHED commit(s) not pushed to GitHub. Push with: git push origin main")
+        fi
+        BEHIND="$(git rev-list --count main..origin/main)"
+        if [ "$BEHIND" -gt 0 ]; then
+            echo -e "${YELLOW}⚠️  GitHub's main has $BEHIND commit(s) that local main does not (deploying local main anyway)${NC}"
+        fi
+    else
+        GUARD_PROBLEMS+=("No origin/main to compare with. Push main to GitHub first")
+    fi
+else
+    GUARD_PROBLEMS+=("Not in a git work tree, so the branch and push checks cannot run")
+fi
+
+if [ ${#GUARD_PROBLEMS[@]} -gt 0 ]; then
+    if [[ "${LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH}" == "true" ]]; then
+        echo -e "${YELLOW}⚠️  Deploy guard skipped (LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH=true):${NC}"
+    elif [[ "${LINKEDOMICSCHAT_DRY_RUN}" == "true" ]]; then
+        echo -e "${YELLOW}⚠️  Deploy guard: a real deploy would stop here (dry run continues):${NC}"
+    else
+        echo -e "${RED}❌ Deploy stopped: production should be a pushed commit on main${NC}"
+    fi
+    printf '   - %s\n' "${GUARD_PROBLEMS[@]}"
+    echo ""
+    if [[ "${LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH}" != "true" && "${LINKEDOMICSCHAT_DRY_RUN}" != "true" ]]; then
+        echo "   To deploy anyway (emergencies only): LINKEDOMICSCHAT_DEPLOY_ANY_BRANCH=true ./deploy_rsync.sh"
+        exit 1
+    fi
+else
+    echo -e "${GREEN}✓  Deploy guard: on main, nothing uncommitted, main pushed${NC}"
+    echo ""
+fi
 
 # Check if LINKEDOMICSCHAT_AWS_HOST is set
 if [[ "$LINKEDOMICSCHAT_AWS_HOST" == "ec2-user@your-instance-ip" ]]; then
