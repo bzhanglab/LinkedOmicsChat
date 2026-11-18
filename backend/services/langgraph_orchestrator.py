@@ -4463,12 +4463,17 @@ DIRECT RESPONSE RULES:
         clarification_options_from_llm = _parse_clarification_options(llm_summary)
         if clarification_options_from_llm:
             llm_summary = _strip_options_line(llm_summary)
+        # Options after tools returned data are follow-up offers, not a clarification question,
+        # so the results are still formatted (plots and tables) and the options become buttons
+        asks_clarification = bool(clarification_options_from_llm) and not any(
+            isinstance(v, dict) and v.get("_data_status") == "ok" for v in raw_results.values()
+        )
 
         rich_message = llm_summary
         suggestions: List[str] = []
 
         async def _format():
-            if clarification_options_from_llm:
+            if asks_clarification:
                 return llm_summary, llm_summary, tools_used, raw_results, []
             if raw_results and self._parent is not None:
                 try:
@@ -4549,7 +4554,7 @@ DIRECT RESPONSE RULES:
         no_data_only = bool(raw_results_final) and results_with_data == 0
 
         # Confidence: measure how much data the tools actually returned
-        if clarification_options_from_llm:
+        if asks_clarification:
             confidence = "clarification"
         elif is_general_knowledge:
             confidence = "general_knowledge"
