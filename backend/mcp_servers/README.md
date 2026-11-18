@@ -54,6 +54,8 @@ means, and how to read the result. Then:
 4. In `frontend/components/ToolExplorer.tsx`, add an example input to `TOOL_EXAMPLE_ARGS` (used by the Tools
    view and by `admin/check_tools.py`) and a plain name and one-line summary to `TOOL_DISPLAY` (without one, the
    Tools view shows the function name). Add a data-source entry in `frontend/lib/toolCategories.ts`.
+5. Add a sentence for it to `SENTENCES` in `frontend/lib/methodsExport.ts`, naming the resource it cites; without
+   one, the methods text export describes it only as "also used".
 
 Each server also runs on its own (`venv/bin/python mcp_servers/literature_server.py`), but it then just waits
 for an MCP client on stdin. In practice it is easier to try a tool through the app's Tools view or

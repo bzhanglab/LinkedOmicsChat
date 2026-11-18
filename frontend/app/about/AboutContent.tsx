@@ -28,8 +28,20 @@ const REFERENCES = [
     { resource: "MyGene.info (gene ID conversion)", pmid: "27154141", citation: "Xin J, Mark A, Afrasiabi C, et al. High-performance web services for querying gene and variant annotation. Genome Biol. 2016;17:91." },
 ]
 
-// Example questions are from the golden test set (backend/examples/langgraph_golden_queries.json).
+// Example questions are from the golden test set (backend/examples/langgraph_golden_queries.json),
+// except the gene report and gene list examples.
 const ANALYSES = [
+    {
+        name: "Gene report",
+        desc: "Seven analyses of one gene at once: tumor vs. normal and survival in CPTAC, survival across TCGA cohorts, the drug-target profile, treatment response in trials, FunMap neighbors, and recent PubMed articles, with a written overview. Ask for one or use the report button next to the chat box.",
+        example: "Report on ERBB2",
+    },
+    {
+        name: "Your own gene list",
+        desc: "Attach a list with the paperclip next to the chat box, as a text, CSV, or TSV file or pasted genes. Ensembl and UniProt IDs and old gene names are converted to current symbols. Questions about \"my list\" then run enrichment on the whole list, up to 2,000 genes, and per-gene analyses on its first 50.",
+        // No example link: a question about "my list" needs a list attached first
+        example: "",
+    },
     {
         name: "Survival",
         desc: "CPTAC survival by RNA or protein in 10 cohorts, and TCGA survival by RNA, methylation, RPPA, copy number, or miRNA in 35 cohorts. TCGA also supports pan-cancer comparisons and genome-wide scans within a cohort. TCGA results include Kaplan-Meier plots with at-risk tables; in pan-cancer comparisons, for up to five cohorts with p < 0.05.",
@@ -210,7 +222,7 @@ export function AboutContent() {
                         <div>
                             <h2 className="text-xl font-semibold mb-2">Analyses</h2>
                             <p className="text-base text-muted-foreground mb-4">
-                                One example question per analysis; clicking one opens a new chat with the question filled in, ready to send.
+                                Each analysis with an example question; clicking one opens a new chat with the question filled in, ready to send.
                             </p>
                             <dl className="divide-y divide-border rounded-lg border border-border bg-white/70 dark:bg-transparent">
                                 {ANALYSES.map((a) => (
@@ -218,7 +230,7 @@ export function AboutContent() {
                                         <dt className="font-semibold text-base">{a.name}</dt>
                                         <dd className="mt-1 sm:mt-0 text-sm text-muted-foreground leading-relaxed">
                                             {a.desc}
-                                            <span className="block mt-1.5"><QuestionLink q={a.example} /></span>
+                                            {a.example && <span className="block mt-1.5"><QuestionLink q={a.example} /></span>}
                                         </dd>
                                     </div>
                                 ))}

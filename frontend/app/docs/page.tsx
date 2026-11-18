@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle } from "lucide-react"
+import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download } from "lucide-react"
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -56,6 +56,7 @@ const SECTIONS = [
     { id: "examples", title: "Asking questions" },
     { id: "example-outputs", title: "Example results" },
     { id: "interpret", title: "Reading the results" },
+    { id: "export", title: "Exporting a chat" },
     { id: "data-sources", title: "Data sources" },
     { id: "architecture", title: "How it works" },
     { id: "faq", title: "FAQ" },
@@ -127,6 +128,20 @@ const INTERPRETATION = [
     },
 ]
 
+const EXPORTS = [
+    {
+        term: "Web page",
+        text: "The whole chat with its plots and tables, as an HTML file to open in a browser or share.",
+    },
+    {
+        term: "Python script",
+        text: "Repeats each analysis in the chat with the same inputs through the LinkedOmicsChat tool API, so you can check the results or take them further in code. It needs the requests package. The data may have been updated since the chat, so results can differ. Analyses that failed or were blocked in the chat, or whose tools have changed since, are listed as comments instead of being repeated.",
+    },
+    {
+        term: "Methods text",
+        text: "A paragraph describing each analysis in the chat (data source, cohort, what was analyzed, and the date it ran) with numbered references to the resources behind it, to adapt for a paper. Check it against the chat before using it.",
+    },
+]
 const DATA_SOURCES = [
     { name: "LinkedOmics", url: "https://www.linkedomics.org", text: "TCGA analyses across 35 cohorts: survival by RNA, methylation, RPPA protein, copy number, or miRNA, and same-gene correlations between methylation, RNA, RPPA, and copy number." },
     { name: "LinkedOmicsKB", url: "https://kb.linkedomics.org", text: "CPTAC proteogenomics for 10 cohorts: tumor-vs-normal RNA and protein, survival, and same-gene correlations." },
@@ -154,6 +169,14 @@ const FAQS = [
     {
         term: "Which cancer types are covered?",
         text: "TCGA analyses support 35 cohort codes, including the combined cohorts COADREAD, GBMLGG, KIPAN, and STES. CPTAC analyses cover 10 cohorts: BRCA, COAD, CCRCC, GBM, HNSCC, LSCC, LUAD, OV, PDAC, and UCEC.",
+    },
+    {
+        term: "Can I analyze my own genes?",
+        text: "Yes. Type a few genes into your question, or attach a longer list with the paperclip next to the chat box (a text, CSV, or TSV file, or pasted genes, up to 2,000) and then ask about \"my list\".",
+    },
+    {
+        term: "Can I repeat an analysis outside the chat?",
+        text: "Yes. Signed-in users can export a chat as a Python script that runs the same analyses with the same inputs through the LinkedOmicsChat tool API. The Tools view also runs any single analysis with your own inputs.",
     },
 ]
 
@@ -206,10 +229,22 @@ export default function DocsPage() {
                 <DefList items={EXAMPLES} />
                 <div className="mt-5" />
                 <P>
-                    You can also analyze your own gene list. Paste gene symbols separated by commas, spaces, or one per
-                    line, in upper or lower case. For pathway enrichment, 10–50 genes works best. Ensembl and UniProt IDs
-                    are converted to gene symbols with MyGene.info before the analysis runs, but for long lists symbols
-                    are faster. To try it, click &ldquo;Pathway enrichment for a sample gene list&rdquo; on the welcome page.
+                    You can also analyze your own gene list. A few genes can go straight into the question. For a longer
+                    list, click the paperclip next to the chat box and upload a text, CSV, or TSV file or paste the genes.
+                    The app finds the gene column, converts Ensembl and UniProt IDs and old gene names to current symbols
+                    with MyGene.info, and shows anything it left out, such as a name that could be several genes. Then
+                    ask about &ldquo;my list&rdquo;: pathway enrichment uses the whole list, up to 2,000 genes, and
+                    per-gene analyses such as survival or drug targets use the first 50. The list stays attached until
+                    you remove it or open another chat. To try enrichment on a sample, click &ldquo;Pathway enrichment
+                    for a sample gene list&rdquo; on the welcome page.
+                </P>
+                <P>
+                    For an overview of one gene, ask for a gene report, such as &ldquo;Report on ERBB2&rdquo;, or click
+                    the report button next to the chat box. It runs seven analyses at once (tumor vs. normal expression
+                    and survival in CPTAC, survival across TCGA cohorts, the drug-target profile, treatment response in
+                    trials, FunMap neighbors, and recent PubMed articles) and shows them all with a written overview. A
+                    link such as <code className="text-[13px]">chat.linkedomics.org/?q=Report%20on%20ERBB2</code> opens
+                    the chat with the request filled in.
                 </P>
                 <P>
                     If a question is too vague to act on, such as a gene with no cancer type or analysis, the app asks
@@ -258,6 +293,24 @@ export default function DocsPage() {
                     evidence of cause and effect.
                 </P>
                 <DefList items={INTERPRETATION} />
+                <div className="mt-5" />
+                <P>
+                    Under each written summary, the number check shows how its numbers compare with the analysis
+                    output. A number with a dotted underline was found there; hold the pointer over it to see which
+                    result it came from. A highlighted number was not found, so check it before you use it. Counts the
+                    summary works out itself, such as &ldquo;9 of 50 genes&rdquo;, and thresholds such as p &lt; 0.05
+                    are not checked. &ldquo;Found&rdquo; means a value that rounds to the number is recorded next to the
+                    gene, cohort, or term the sentence names. It does not confirm that the sentence reads the value
+                    correctly, and when one sentence names several results, swapped values are not caught.
+                </P>
+
+                <BackToTop />
+
+                <H2 id="export" icon={Download}>Exporting a chat</H2>
+                <P>
+                    Signed-in users can export a chat with the Export button at the top right of the chat, in three formats:
+                </P>
+                <DefList items={EXPORTS} />
 
                 <BackToTop />
 
@@ -289,7 +342,10 @@ export default function DocsPage() {
                 <P>
                     The server builds the plots and tables from the tool output: static plots with matplotlib, and
                     interactive tables, drug-target grids, and network views in the browser. The written summary comes
-                    from the model, working from the same results. The backend is FastAPI with LangGraph and FastMCP, and the
+                    from the model, working from the same results. After the summary is written, the server looks for each
+                    of its numbers in the tool output, allowing for rounding, which is what the number check shows. A gene
+                    report skips the model&rsquo;s choice of tools: its seven analyses run at once, and the model writes
+                    only the summary. The backend is FastAPI with LangGraph and FastMCP, and the
                     frontend is Next.js; the source is on{" "}
                     <ExtLink href="https://github.com/bzhanglab/LinkedOmicsChat">GitHub</ExtLink>.
                 </P>

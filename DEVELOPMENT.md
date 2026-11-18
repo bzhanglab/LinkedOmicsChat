@@ -19,6 +19,21 @@ returned earlier in the same answer; calls on any other gene are blocked. Plots 
 tool output by `backend/services/mcp_orchestrator.py` (static plots with matplotlib, interactive tables,
 grids, and networks in the frontend), and the written summary is a separate model call over the same results.
 
+Some features work around the agent. An attached gene list is checked by `backend/services/gene_list.py`
+(`POST /api/v1/chat/gene-list`: it finds the gene column, checks symbols against `valid_genes.txt`, converts IDs
+and old names in one batched MyGene.info request, and keeps at most 2,000 genes) and is sent with each question.
+The model passes the placeholder `MY_LIST`, and the tool step swaps in the whole list for WebGestalt and the first
+50 genes for the per-gene batch tools; long batches get one combined heatmap or plots for their first 10 genes. A
+gene report ("Report on <gene>", matched by `_parse_gene_report_request` in `langgraph_orchestrator.py`) runs the
+seven calls in `_gene_report_calls` at once and builds the answer from them without the agent. After every
+summary, `backend/services/number_check.py` looks for each of its numbers in the tool results and returns the
+summary with the numbers marked for the frontend.
+
+The chat history sent to the browser includes each answer's tool calls and their inputs (`tool_calls`), which
+the Python script and methods text exports are built from (`frontend/lib/pythonExport.ts` and
+`frontend/lib/methodsExport.ts`). The references the methods text cites are `REFERENCES` in `methodsExport.ts`;
+the About page keeps its own copy.
+
 The LLM is chosen from `DEFAULT_LLM_MODEL` in `backend/core/llm_factory.py`: a name containing `claude` uses
 Anthropic and one containing `gemini` uses Google; anything else goes to OpenAI. `USE_OLLAMA=true` switches to a
 local Ollama model and `MOCK_LLM=true` returns canned responses. Production runs `claude-haiku-5-5`. No
