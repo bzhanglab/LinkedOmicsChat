@@ -14,7 +14,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { chatAPI, toolsAPI, type ChatMessage, type GeneListCheck, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
+import { chatAPI, toolsAPI, type ChatMessage, type CheckedNumber, type GeneListCheck, type NumberCheck, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
 import { GeneListDialog } from "@/components/GeneListDialog"
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
@@ -25,7 +25,8 @@ import { TCGACisResultsTable } from "@/components/TCGACisResultsTable"
 import { useAuth } from "@/components/AuthContext"
 import { buildMethodsText } from "@/lib/methodsExport"
 import { buildPythonScript, type CurrentTools } from "@/lib/pythonExport"
-import { EnrichmentRenderer } from "./ToolExplorer"
+import { EnrichmentRenderer, TOOL_DISPLAY } from "./ToolExplorer"
+import { bareToolName, categoryForToolName } from "@/lib/toolCategories"
 import ExecutionTrace from "./ExecutionTrace"
 import axios from "axios"
 import { cn } from "@/lib/utils"
@@ -203,7 +204,7 @@ function resolveInlineSourceUrl(key: string, toolSources?: Record<string, string
     return fallbackUrl
 }
 
-export const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[] }) {
+export const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCopyTable, toolSources, visualizations, numberCheck }: { content: string; onCopyTable?: (content: string) => void; toolSources?: Record<string, string>; visualizations?: AnyVisualization[]; numberCheck?: NumberCheck }) {
     const handleCopyTable = useCallback((tableContent: string) => {
         if (onCopyTable) {
             onCopyTable(tableContent)
@@ -240,7 +241,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ content, onCo
     }, [processedContent])
 
     const geneColorMap = useMemo(() => createGeneColorMap(processedContent), [processedContent])
-    const enhancedComponents = useMemo(() => createEnhancedMarkdownComponents(handleCopyTable, geneColorMap, toolSources), [handleCopyTable, geneColorMap, toolSources])
+    const enhancedComponents = useMemo(() => createEnhancedMarkdownComponents(handleCopyTable, geneColorMap, toolSources, numberCheck), [handleCopyTable, geneColorMap, toolSources, numberCheck])
 
     const vizMap = useMemo(() => {
         const m: Record<string, AnyVisualization> = {}
@@ -534,7 +535,54 @@ function SortableTable({ node, children, onCopyTable }: { node: any; children?: 
 }
 
 // Enhanced markdown components with copy table functionality
-function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void, geneColorMap?: Map<string, number>, toolSources?: Record<string, string>) {
+function checkedNumberTitle(entry: CheckedNumber): string {
+    if (entry.status === "found" && entry.source) {
+        const tool = bareToolName(entry.source.tool)
+        // Labels repeat across data sources ("Survival association" for CPTAC and TCGA), so name the source
+        const category = categoryForToolName(tool)
+        const label = `${category ? `${category} ` : ""}${(TOOL_DISPLAY[tool]?.label ?? tool).toLowerCase()}`
+        const where = `${label}${entry.source.path ? ` › ${entry.source.path}` : ""}: ${entry.source.value}`
+        return entry.anchored
+            ? `Found in the tool results. ${where}`
+            : `A value that rounds to this is in the tool results, but the sentence names no gene or term that ties it to one result. ${where}`
+    }
+    if (entry.status === "not_found") {
+        return "Not found in the tool results. It may be rounded differently, worked out by the model, or wrong, so check it before using it."
+    }
+    return entry.kind === "threshold"
+        ? "Not checked: a threshold, such as p < 0.05, rather than a result."
+        : "Not checked: a count or share the model worked out, which no tool returns."
+}
+
+/** A number in the written summary, marked by what the number check found. */
+function CheckedNumberMark({ entry, children }: { entry: CheckedNumber; children: React.ReactNode }) {
+    const style = entry.status === "not_found"
+        ? "rounded-sm bg-amber-100 dark:bg-amber-900/40 border-b border-amber-500 px-0.5"
+        : entry.status === "found"
+        ? "border-b border-dotted border-teal-500/70"
+        : ""
+    return <span className={cn("cursor-help", style)} title={checkedNumberTitle(entry)}>{children}</span>
+}
+
+/** One line under the summary: how many of its numbers were found in the tool results. */
+function NumberCheckLine({ check }: { check: NumberCheck }) {
+    const { found, not_found: notFound, not_checked: notChecked } = check.counts
+    return (
+        <div
+            className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground"
+            title="Each number in the summary was looked up in this answer's tool results. Hover over a number to see where it came from."
+        >
+            <span className="font-medium">Number check</span>
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 border-b border-dotted border-teal-500" />{found} found in the tool results</span>
+            {notFound > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-400"><span className="inline-block w-4 border-b-2 border-amber-500" />{notFound} not found</span>
+            )}
+            {notChecked > 0 && <span>{notChecked} not checked (counts and thresholds)</span>}
+        </div>
+    )
+}
+
+function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void, geneColorMap?: Map<string, number>, toolSources?: Record<string, string>, numberCheck?: NumberCheck) {
     return {
         img: ({ node, ...props }: any) => {
             return (
@@ -588,6 +636,10 @@ function createEnhancedMarkdownComponents(onCopyTable: (content: string) => void
             return <blockquote {...props}>{children}</blockquote>
         },
         a: ({ href, children, ...props }: any) => {
+            if (href?.startsWith("#num:")) {
+                const entry = numberCheck?.numbers[Number(href.slice("#num:".length))]
+                return entry ? <CheckedNumberMark entry={entry}>{children}</CheckedNumberMark> : <>{children}</>
+            }
             if (href?.startsWith("#source:")) {
                 const key = href.replace("#source:", "")
                 const src = INLINE_SOURCE_MAP[key]
@@ -918,8 +970,9 @@ const MessagesPane = memo(function MessagesPane({
                                             {message.role === "assistant" && message.summary && message.summary.trim().length > 0 && message.summary !== message.content && (
                                                 <div className="mb-4 pb-4 border-b border-border">
                                                     <div className="rounded-md border border-border bg-muted/40 p-3">
-                                                        <AssistantMarkdown content={message.summary} />
+                                                        <AssistantMarkdown content={message.numberCheck?.marked ?? message.summary} numberCheck={message.numberCheck} />
                                                     </div>
+                                                    {message.numberCheck && <NumberCheckLine check={message.numberCheck} />}
                                                 </div>
                                             )}
 
@@ -1460,6 +1513,7 @@ function mapHistoryItemToMessages(item: { id: number; query: string; response: a
             visualizations: typeof resp === "string" ? undefined : stripVizBinary(resp?.visualizations?.length ? resp.visualizations as AnyVisualization[] : undefined),
             executionTrace: typeof resp === "string" ? undefined : (resp?.execution_trace?.length ? resp.execution_trace : undefined),
             toolCalls: typeof resp === "string" ? undefined : (resp?.tool_calls?.length ? resp.tool_calls : undefined),
+            numberCheck: typeof resp === "string" ? undefined : (resp?.number_check || undefined),
         },
     ]
 }
@@ -3066,6 +3120,7 @@ export const ChatInterface = memo(function ChatInterface({
                 confidence: response.confidence,
                 visualizations: (response.visualizations || []) as unknown as AnyVisualization[],
                 executionTrace: response.execution_trace?.length ? response.execution_trace : undefined,
+                numberCheck: response.number_check || undefined,
             }
 
             setMessages((prev) => {

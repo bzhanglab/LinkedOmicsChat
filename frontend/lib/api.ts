@@ -364,6 +364,7 @@ export interface ChatMessage {
     executionTrace?: ExecutionTraceStep[]
     toolCalls?: ToolCallRecord[]  // from chat history only; used by the exports
     attachedGeneList?: string  // user messages sent with a gene list, e.g. "genes.csv (74 genes)"; not saved
+    numberCheck?: NumberCheck
 }
 
 /** Map a tool name to its human-readable data source with a URL. */
@@ -481,7 +482,23 @@ export interface ChatResponse {
     is_general_knowledge?: boolean
     confidence?: "high" | "partial" | "low" | "general_knowledge" | "clarification"
     execution_trace?: ExecutionTraceStep[]
+    number_check?: NumberCheck | null
     metadata?: Record<string, unknown>
+}
+
+/** One number in an answer's written summary, checked against the tool results (backend services/number_check.py). */
+export interface CheckedNumber {
+    text: string
+    status: "found" | "not_found" | "not_checked"
+    kind?: "count" | "threshold"
+    anchored?: boolean  // matched next to a gene or term the sentence names
+    source?: { tool: string; path: string; value: string }
+}
+
+export interface NumberCheck {
+    marked: string  // the summary with each number written as [text](#num:index)
+    numbers: CheckedNumber[]
+    counts: { found: number; not_found: number; not_checked: number }
 }
 
 export interface AdminOverview {

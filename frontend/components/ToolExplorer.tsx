@@ -827,7 +827,7 @@ const ResultRenderer = ({ result }: { result: any }) => {
 
 // Plain names and one-line summaries for the Tools list (the docstrings are written for the model). The order
 // here is the order within each data source; a tool missing from it shows its function name and docstring summary.
-const TOOL_DISPLAY: Record<string, { label: string; summary: string }> = {
+export const TOOL_DISPLAY: Record<string, { label: string; summary: string }> = {
     compare_cptac_tumor_normal_expression: { label: "Tumor vs normal expression", summary: "RNA and protein in tumors vs adjacent normal tissue, across CPTAC cohorts." },
     batch_compare_cptac_tumor_normal_expression: { label: "Tumor vs normal, gene list", summary: "The same comparison for several genes at once." },
     analyze_cptac_gene_survival_associations: { label: "Survival association", summary: "RNA and protein abundance vs overall survival, per CPTAC cohort." },
