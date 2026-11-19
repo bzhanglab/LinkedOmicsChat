@@ -255,6 +255,7 @@ const TOOL_GUIDE_KEY: Record<string, ToolCategoryGuideKey> = {
     meta_analyze_response_gene_sets: "clinical-trials",
     get_trial_study_details: "clinical-trials",
     rank_study_response_genes: "clinical-trials",
+    match_signature_to_treatment_response: "clinical-trials",
     rank_study_response_gene_sets: "clinical-trials",
     get_funmap_functional_neighborhood: "functional-networks",
     run_webgestalt_go_enrichment: "pathway-enrichment",

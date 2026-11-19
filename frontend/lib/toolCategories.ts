@@ -50,6 +50,7 @@ export const TOOL_CATEGORY: Record<string, CategoryKey> = {
     meta_analyze_response_gene_sets: "ClinicalOmicsDB",
     get_trial_study_details: "ClinicalOmicsDB",
     rank_study_response_genes: "ClinicalOmicsDB",
+    match_signature_to_treatment_response: "ClinicalOmicsDB",
     rank_study_response_gene_sets: "ClinicalOmicsDB",
     // LinkedOmics Targets — drug target index
     get_drug_target_profile: "LinkedOmics Targets",

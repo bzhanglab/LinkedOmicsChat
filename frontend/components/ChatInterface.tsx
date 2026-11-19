@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat, Pill } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -3452,6 +3452,18 @@ export const ChatInterface = memo(function ChatInterface({
                             </button>
                         </span>
                         <span className="text-muted-foreground">Questions about &quot;my list&quot; use these genes.</span>
+                        {geneList.genes.length >= 5 && (
+                            <button
+                                type="button"
+                                onClick={() => void sendMessageText("Which treatments does my list predict response to?")}
+                                disabled={isLoading}
+                                className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-foreground hover:bg-muted disabled:opacity-50"
+                                title="Test the list against treatment response in every ClinicalOmicsDB trial study"
+                            >
+                                <Pill className="w-3.5 h-3.5" />
+                                Match to treatments
+                            </button>
+                        )}
                     </div>
                 )}
                 <div className="max-w-4xl mx-auto flex gap-2 relative">

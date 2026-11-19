@@ -116,6 +116,7 @@ const SENTENCES: Record<string, (args: Args) => Sentence | null> = {
     meta_analyze_response_genes: (a) => ({ text: `Genes consistently associated with response${trialFilter(a, "to")} were ranked by a meta-analysis of trial-linked studies in ClinicalOmicsDB`, sources: ["clinicalomicsdb"] }),
     meta_analyze_response_gene_sets: (a) => ({ text: `Gene sets consistently associated with response${trialFilter(a, "to")} were ranked by a meta-analysis of trial-linked studies in ClinicalOmicsDB`, sources: ["clinicalomicsdb"] }),
     rank_study_response_genes: (a) => ({ text: `Genes associated with treatment response in study ${a.study_id} were ranked with ClinicalOmicsDB`, sources: ["clinicalomicsdb"] }),
+    match_signature_to_treatment_response: (a) => ({ text: `A signature of ${genes(a)} was tested against treatment response in trial-linked gene-expression studies from ClinicalOmicsDB: in each study, the signature genes' response AUROCs were compared with those of all other measured genes, with significance judged on the study's patients as well as its genes and false discovery rates across studies`, sources: ["clinicalomicsdb"] }),
     rank_study_response_gene_sets: (a) => ({ text: `Gene sets associated with treatment response in study ${a.study_id} were ranked with ClinicalOmicsDB`, sources: ["clinicalomicsdb"] }),
     // Plain symbols are only checked, so only converted Ensembl or UniProt IDs need a sentence
     resolve_gene_identifier: (a) => {

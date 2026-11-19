@@ -842,6 +842,7 @@ export const TOOL_DISPLAY: Record<string, { label: string; summary: string }> = 
     search_trial_studies: { label: "Find clinical studies", summary: "Trial-linked expression studies by drug, treatment class, or cancer type." },
     get_trial_study_details: { label: "Study details", summary: "Abstract, cancer type, and treatment of one study, by GSE ID." },
     rank_study_response_genes: { label: "Top response genes in a study", summary: "Genes most associated with response within one study." },
+    match_signature_to_treatment_response: { label: "Treatment response matching", summary: "Your gene list or signature, tested against treatment response in every trial study." },
     rank_study_response_gene_sets: { label: "Top response pathways in a study", summary: "Gene sets most associated with response within one study." },
     meta_analyze_response_genes: { label: "Response genes across studies", summary: "Meta-analysis ranking genes consistently linked to response." },
     meta_analyze_response_gene_sets: { label: "Response pathways across studies", summary: "Meta-analysis ranking gene sets consistently linked to response." },
@@ -1039,6 +1040,7 @@ const TOOL_EXAMPLE_ARGS: Record<string, Record<string, any>> = {
     meta_analyze_response_gene_sets: { drugs: "paclitaxel" },
     get_trial_study_details: { study_id: "GSE25066" },
     rank_study_response_genes: { study_id: "GSE25066" },
+    match_signature_to_treatment_response: { proteins: "CXCL9, CXCL10, IDO1, GZMB, CD8A, STAT1, LAG3, PDCD1LG2" },
     rank_study_response_gene_sets: { study_id: "GSE25066" },
     // Pathway enrichment
     run_webgestalt_go_enrichment: { proteins: "EGFR, ERBB2, MET, ALK, RET, KRAS, BRAF, PIK3CA, AKT1, MTOR" },
