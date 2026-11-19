@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -14,9 +14,11 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { chatAPI, toolsAPI, type ChatMessage, type CheckedNumber, type GeneListCheck, type NumberCheck, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
+import { chatAPI, toolsAPI, type ChatMessage, type ChatRequest, type CheckedNumber, type GeneListCheck, type NumberCheck, type ToolCallRecord, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
 import { GeneListDialog } from "@/components/GeneListDialog"
 import { GeneReportDialog } from "@/components/GeneReportDialog"
+import { RepeatDialog } from "@/components/RepeatDialog"
+import { repeatableCalls } from "@/lib/repeat"
 import { StaticPlot } from "@/components/StaticPlot"
 import { NetworkPlot } from "@/components/NetworkPlot"
 import { DrugTargetGrid } from "@/components/DrugTargetGrid"
@@ -788,6 +790,7 @@ const MessagesPane = memo(function MessagesPane({
     onRequestResubmitEdit,
     isEditingBusy,
     onSend,
+    onRepeat,
     lastUserQuery,
     streamStatus,
     searchTerm,
@@ -816,6 +819,7 @@ const MessagesPane = memo(function MessagesPane({
     onRequestResubmitEdit: () => void
     isEditingBusy: boolean
     onSend: (text: string) => void
+    onRepeat?: (message: ChatMessage) => void
     lastUserQuery: string
     streamStatus: string | null
     searchTerm: string
@@ -1336,6 +1340,17 @@ const MessagesPane = memo(function MessagesPane({
                                                     <Copy className="w-3.5 h-3.5" />
                                                 )}
                                             </button>
+                                            {onRepeat && !isLoading && repeatableCalls(message.toolCalls).length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onRepeat(message)}
+                                                    className="flex items-center gap-1 px-1.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                                                    title="Run this answer's analyses again for other genes"
+                                                >
+                                                    <Repeat className="w-3.5 h-3.5" />
+                                                    Repeat for other genes
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -2376,6 +2391,9 @@ export const ChatInterface = memo(function ChatInterface({
     const [geneList, setGeneList] = useState<GeneListCheck | null>(null)
     const [geneListDialogOpen, setGeneListDialogOpen] = useState(false)
     const [geneReportDialogOpen, setGeneReportDialogOpen] = useState(false)
+    // The tool calls of the answer being repeated for other genes; the dialog is open while set
+    const [repeatCalls, setRepeatCalls] = useState<ToolCallRecord[] | null>(null)
+    const handleRepeat = useCallback((message: ChatMessage) => setRepeatCalls(message.toolCalls ?? null), [])
     const [isLoading, setIsLoading] = useState(false)
     const [streamStatus, setStreamStatus] = useState<string | null>(null)
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -3000,7 +3018,7 @@ export const ChatInterface = memo(function ChatInterface({
         })
     }, [messages, onContextUpdate])
 
-    const sendMessageText = useCallback(async (messageText: string) => {
+    const sendMessageText = useCallback(async (messageText: string, extra?: Pick<ChatRequest, "repeat">) => {
         if (!messageText || isLoading) {
             return
         }
@@ -3032,6 +3050,7 @@ export const ChatInterface = memo(function ChatInterface({
                     message: messageText,
                     session_id: sessionId || undefined,
                     gene_list: geneList ? { name: geneList.name, genes: geneList.genes } : undefined,
+                    ...extra,
                 },
                 (status) => {
                     setStreamStatus(status)
@@ -3123,6 +3142,7 @@ export const ChatInterface = memo(function ChatInterface({
                 visualizations: (response.visualizations || []) as unknown as AnyVisualization[],
                 executionTrace: response.execution_trace?.length ? response.execution_trace : undefined,
                 numberCheck: response.number_check || undefined,
+                toolCalls: response.tool_calls?.length ? response.tool_calls : undefined,
             }
 
             setMessages((prev) => {
@@ -3389,6 +3409,7 @@ export const ChatInterface = memo(function ChatInterface({
                 onRequestResubmitEdit={handleRequestResubmitEdit}
                 isEditingBusy={isLoading || isTruncating}
                 onSend={handleSend}
+                onRepeat={handleRepeat}
                 lastUserQuery={lastUserQueryRef.current}
                 streamStatus={streamStatus}
                 searchTerm={searchTerm}
@@ -3468,6 +3489,14 @@ export const ChatInterface = memo(function ChatInterface({
                         open={geneReportDialogOpen}
                         onOpenChange={setGeneReportDialogOpen}
                         onRun={(gene) => void sendMessageText(`Report on ${gene}`)}
+                    />
+                    <RepeatDialog
+                        calls={repeatCalls}
+                        attachedList={geneList}
+                        onOpenChange={(open) => { if (!open) setRepeatCalls(null) }}
+                        onRun={(genes, description) => {
+                            if (repeatCalls) void sendMessageText(`Repeat the analyses for ${description}`, { repeat: { tool_calls: repeatCalls, genes } })
+                        }}
                     />
                     <Input
                         ref={chatInputRef}

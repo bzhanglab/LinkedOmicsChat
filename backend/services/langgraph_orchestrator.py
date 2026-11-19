@@ -35,6 +35,12 @@ from core.config import settings
 from core.llm_factory import LLMFactory
 from services.mcp_aggregator import MCPAggregator
 from services.number_check import check_numbers
+from services.repeat_workflow import (
+    MAX_REPEAT_GENES,
+    combined_table as repeat_combined_table,
+    detail_results as repeat_detail_results,
+    plan_repeat,
+)
 from services.tool_categories import TOOL_SOURCE_KEY as _CANONICAL_SOURCE_KEY
 
 logger = logging.getLogger(__name__)
@@ -74,6 +80,8 @@ class AgentState(TypedDict):
     query_plan: Optional[Dict[str, Any]]
     # Genes from a list the user attached to this question (checked symbols, in the list's order)
     gene_list: List[str]
+    # For a repeat of an earlier answer: its steps, genes, and calls (services/repeat_workflow.plan_repeat)
+    repeat_plan: Optional[Dict[str, Any]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1178,11 +1186,28 @@ _GENE_REPORT_RE = re.compile(
 )
 
 
+def tool_calls_from_raw_results(raw_results: Any) -> List[Dict[str, Any]]:
+    """List the tool calls behind an answer (tool ID, inputs, status) in the order they ran."""
+    calls: List[Dict[str, Any]] = []
+    if not isinstance(raw_results, dict):
+        return calls
+    for key, wrapped in raw_results.items():
+        if not isinstance(wrapped, dict) or "_args" not in wrapped:
+            continue
+        result = wrapped.get("_result")
+        status = wrapped.get("_data_status") or ("error" if isinstance(result, dict) and "error" in result else "ok")
+        calls.append({"tool_id": key.rsplit("#", 1)[0], "arguments": wrapped["_args"], "status": status})
+    return calls
+
+
 def _parse_gene_report_request(query: str) -> Optional[str]:
     """The gene symbol a report request names, or None when the query is not one."""
     match = _GENE_REPORT_RE.match(query or "")
     gene = next((g for g in (match.groups() if match else ()) if g), None)
     return gene.upper() if gene and gene.upper() in _VALID_GENES else None
+
+
+_TCGA_TOOLS = ("linkedomics::analyze_tcga_survival_associations", "linkedomics::analyze_tcga_cis_associations")
 
 
 def _gene_report_calls(gene: str) -> List[tuple[str, Dict[str, Any]]]:
@@ -4608,6 +4633,7 @@ DIRECT RESPONSE RULES:
         suggestions: List[str] = []
 
         is_report = final_state.get("workflow") == "gene_report"
+        repeat_plan = final_state.get("repeat_plan") if final_state.get("workflow") == "repeat" else None
 
         async def _format():
             if asks_clarification:
@@ -4618,11 +4644,21 @@ DIRECT RESPONSE RULES:
                     # agent's own text covers the literature. A gene report has no agent text, so its
                     # literature is listed separately and the rest is formatted as for any answer.
                     format_results = (
-                        {k: v for k, v in raw_results.items() if not k.startswith("literature::")} if is_report else raw_results
+                        {k: v for k, v in raw_results.items() if not k.startswith("literature::")} if is_report
+                        else repeat_detail_results(repeat_plan, raw_results) if repeat_plan
+                        else raw_results
                     )
                     formatted = await self._parent._generate_response(
-                        effective_query, format_results, session, intent="research", usage_tracker=usage_tracker
+                        effective_query, format_results, session, intent="research", usage_tracker=usage_tracker,
+                        # A repeat has no written answer, and draws each multi-gene step as one heatmap
+                        summarize=not repeat_plan, combined_min_genes=2 if repeat_plan else None,
                     )
+                    if repeat_plan:
+                        # Keep every call in the saved answer; the combined table is added after the
+                        # source lines are placed, so none of them attaches to its notes. Details
+                        # follow the report's order, as the table's columns do.
+                        formatted = {**formatted, "raw_results": raw_results}
+                        formatted["message"] = _order_gene_report_sections(formatted.get("message") or "")
                     if is_report:
                         # Keep every call, literature included, in the saved answer for the exports
                         formatted = {**formatted, "raw_results": raw_results}
@@ -4677,9 +4713,12 @@ DIRECT RESPONSE RULES:
         display_summary = _normalize_duplicate_markdown_headings(display_summary)
         rich_message = _ensure_webgestalt_enrichment_summary(rich_message, raw_results_final, section=True)
         display_summary = _ensure_webgestalt_enrichment_summary(display_summary, raw_results_final)
-        # A report lists its literature in its own section, so the summary need not mention it
+        # A report lists its literature in its own section, so the summary need not mention it;
+        # a repeat has no summary at all, its combined table covers every step
         coverage_results = (
-            {k: v for k, v in raw_results_final.items() if not k.startswith("literature::")} if is_report else raw_results_final
+            {} if repeat_plan
+            else {k: v for k, v in raw_results_final.items() if not k.startswith("literature::")} if is_report
+            else raw_results_final
         )
         display_summary = _ensure_tool_result_coverage_summary(display_summary, coverage_results, effective_query)
         if include_stream_metadata:
@@ -4688,6 +4727,9 @@ DIRECT RESPONSE RULES:
             rich_message = _strip_invalid_source_citations(rich_message, tools_used_final)
             rich_message = _ensure_inline_source_citations(rich_message, tools_used_final)
             tool_sources = _build_tool_sources(raw_results_final)
+        if repeat_plan:
+            # A repeat is run without the model: the combined table, then the usual sections
+            rich_message = f"{repeat_combined_table(repeat_plan, raw_results_final)}\n\n{rich_message.strip()}".strip()
 
         is_literature_only = bool(tools_used_final) and all(
             t.startswith("literature::") for t in tools_used_final
@@ -4776,6 +4818,8 @@ DIRECT RESPONSE RULES:
             "is_general_knowledge": is_general_knowledge,
             "confidence": confidence,
             "number_check": number_check,
+            # Sent with live answers too, so an answer can be repeated or exported without a reload
+            "tool_calls": tool_calls_from_raw_results(raw_results_final),
             "execution_trace": execution_trace,
             "_input_tokens": input_tokens,
             "_output_tokens": output_tokens,
@@ -4793,43 +4837,72 @@ DIRECT RESPONSE RULES:
 
         return formatted_response
 
-    async def _run_gene_report_tools(self, gene: str, *, log_prefix: str) -> AgentState:
-        """Run a gene report's analyses at once and return them as a finished agent state.
+    async def _run_direct_tool_calls(
+        self,
+        calls: List[tuple[str, Dict[str, Any]]],
+        *,
+        genes: List[str],
+        workflow: str,
+        log_prefix: str,
+        max_parallel: int = 8,
+    ) -> AgentState:
+        """Run tool calls without the model, in parallel, and return them as a finished agent state.
 
-        The state has no model message, so the response builder writes the summary and lays out
-        the plots and tables from these results as it does for any answer.
+        The state has no model message, so the response builder lays out the plots and tables from
+        these results (and writes the summary, unless the workflow skips it) as it does for any answer.
         """
         available_tools = self.mcp_aggregator.list_tools()
-        calls = [(tool_id, args) for tool_id, args in _gene_report_calls(gene) if tool_id in available_tools]
+        calls = [(tool_id, args) for tool_id, args in calls if tool_id in available_tools]
+        limit = asyncio.Semaphore(max_parallel)
+        # The TCGA service fails (HTTP 500, closed connections) with more than a couple of these
+        # cross-cohort queries at once, so they get their own lower limit
+        tool_limits = {tool_id: asyncio.Semaphore(2) for tool_id in _TCGA_TOOLS}
 
         async def _run(tool_id: str, args: Dict[str, Any]) -> tuple[str, Dict[str, Any], Any, int]:
-            tool_started = time.perf_counter()
-            try:
-                raw = await self.mcp_aggregator.call_tool(tool_id, args)
-            except Exception as exc:
-                logger.warning("%s Gene report call %s failed: %s", log_prefix, tool_id, exc)
-                raw = {"error": str(exc)}
-            return tool_id, args, raw, int((time.perf_counter() - tool_started) * 1000)
+            async with tool_limits.get(tool_id, limit):
+                tool_started = time.perf_counter()
+                try:
+                    raw = await self.mcp_aggregator.call_tool(tool_id, args)
+                except Exception as exc:
+                    logger.warning("%s Call %s failed: %s", log_prefix, tool_id, exc)
+                    raw = {"error": str(exc)}
+                return tool_id, args, raw, int((time.perf_counter() - tool_started) * 1000)
 
-        started = time.perf_counter()
-        outcomes = await asyncio.gather(*(_run(tool_id, args) for tool_id, args in calls))
-        tool_results: Dict[str, Any] = {}
-        trace_metrics: List[Dict[str, Any]] = []
-        for tool_id, args, raw, latency_ms in outcomes:
+        def _as_dict(raw: Any) -> Dict[str, Any]:
             if isinstance(raw, str):
                 try:
                     raw = json.loads(raw)
                 except Exception:
                     raw = {"raw": raw}
-            result_dict = raw if isinstance(raw, dict) else {"raw": raw}
+            return raw if isinstance(raw, dict) else {"raw": raw}
+
+        def _failed(raw: Any) -> bool:
+            result = _as_dict(raw)
+            return bool(result.get("error")) or result.get("status") == "error"
+
+        started = time.perf_counter()
+        outcomes = list(await asyncio.gather(*(_run(tool_id, args) for tool_id, args in calls)))
+        # Under load the services sometimes fail a call that works on its own ("read of closed
+        # file", HTTP 500), so failed calls get one more try, one at a time
+        for i, (tool_id, args, raw, _) in enumerate(outcomes):
+            if _failed(raw):
+                outcomes[i] = await _run(tool_id, args)
+        tool_results: Dict[str, Any] = {}
+        call_counts: Dict[str, int] = {}
+        trace_metrics: List[Dict[str, Any]] = []
+        for tool_id, args, raw, latency_ms in outcomes:
+            result_dict = _as_dict(raw)
             data_status = _classify_tool_result_payload(tool_id.replace("::", "__"), result_dict)
-            tool_results[f"{tool_id}#0"] = {"_gene": gene, "_args": args, "_result": result_dict, "_data_status": data_status}
+            count = call_counts.get(tool_id, 0)
+            call_counts[tool_id] = count + 1
+            gene = args.get("protein") or args.get("gene")
+            tool_results[f"{tool_id}#{count}"] = {"_gene": gene, "_args": args, "_result": result_dict, "_data_status": data_status}
             trace_metrics.append({"tool": tool_id, "latency_ms": latency_ms, "status": data_status})
 
         return {
             "messages": [],
             "tool_results": tool_results,
-            "active_gene": gene,
+            "active_gene": genes[0] if genes else None,
             "steps": 0,
             "input_tokens": 0,
             "output_tokens": 0,
@@ -4837,14 +4910,20 @@ DIRECT RESPONSE RULES:
             "execution_trace": [{
                 "node": "tools", "step": 0, "latency_ms": int((time.perf_counter() - started) * 1000), "tool_calls": trace_metrics,
             }],
-            "requested_genes": [gene],
-            "requested_identifiers": [gene],
+            "requested_genes": list(genes),
+            "requested_identifiers": list(genes),
             "allow_active_gene_reference": False,
             "tool_scope": "full",
-            "workflow": "gene_report",
+            "workflow": workflow,
             "query_plan": None,
             "gene_list": [],
         }
+
+    async def _run_gene_report_tools(self, gene: str, *, log_prefix: str) -> AgentState:
+        """Run a gene report's analyses at once and return them as a finished agent state."""
+        return await self._run_direct_tool_calls(
+            _gene_report_calls(gene), genes=[gene], workflow="gene_report", log_prefix=log_prefix,
+        )
 
     # ── Main entry point ───────────────────────────────────────────────────────
 
@@ -4983,6 +5062,7 @@ DIRECT RESPONSE RULES:
         session_id: Optional[str] = None,
         client_ip: Optional[str] = None,
         gene_list: Optional[Dict[str, Any]] = None,
+        repeat: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Process a query and yield execution status chunks for Server-Sent Events (SSE).
@@ -4994,6 +5074,43 @@ DIRECT RESPONSE RULES:
         try:
             logger.info(f"[LangGraph Stream] Processing query: {query}")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Initializing session...'})}\n\n"
+
+            if repeat:
+                # Repeat an earlier answer's analyses for other genes, without the model. The genes come
+                # from the browser, so they are checked again here.
+                genes = list(dict.fromkeys(
+                    str(g).strip().upper() for g in repeat.get("genes") or [] if str(g).strip().upper() in _VALID_GENES
+                ))[:MAX_REPEAT_GENES]
+                plan = plan_repeat(list(repeat.get("tool_calls") or []), genes)
+                session = await self._get_session(session_id, user_id, client_ip=client_ip)
+                if not genes or not plan["steps"]:
+                    message = (
+                        "None of the genes could be used for a repeat." if not genes
+                        else "None of this answer's analyses are about a single gene, so there is nothing to repeat."
+                    )
+                    yield f"data: {json.dumps({'type': 'final', 'content': {'success': True, 'message': message, 'query': query, 'session_id': session['id']}})}\n\n"
+                    return
+                ctx = session.setdefault("context", {})
+                if not ctx.get("session_goal"):
+                    ctx["session_goal"] = query.strip()[:200]
+                steps = f"{len(plan['steps'])} {'analysis' if len(plan['steps']) == 1 else 'analyses'}"
+                status = f"Repeating {steps} for {len(genes)} {'gene' if len(genes) == 1 else 'genes'}..."
+                yield f"data: {json.dumps({'type': 'status', 'content': status})}\n\n"
+                final_state = await self._run_direct_tool_calls(
+                    plan["calls"], genes=genes, workflow="repeat", log_prefix="[Repeat]", max_parallel=6,
+                )
+                final_state["repeat_plan"] = plan
+                async for chunk in self._stream_formatted_response(
+                    query=query,
+                    effective_query=query,
+                    session=session,
+                    active_gene=ctx.get("active_gene", "unknown"),
+                    final_state=final_state,
+                    log_prefix="[Repeat]",
+                    expand_details=True,
+                ):
+                    yield chunk
+                return
 
             report_gene = _parse_gene_report_request(query)
             if report_gene:

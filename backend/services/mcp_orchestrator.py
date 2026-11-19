@@ -741,7 +741,10 @@ def _generate_gene_list_tile_static(batch_data: dict, is_survival: bool = False)
                                      f"{pval:.4e}" if pval is not None else "", "yes" if sig else "no"])
         max_neglog_p = max(max(sig_scores) if sig_scores else 6.0, 1.5)
 
-        fig, axes = plt.subplots(1, 2, figsize=(max(9, len(cancers) * 1.3 + 2), 1.4 + 0.24 * len(genes)), sharey=True)
+        # About 2 in for the title, cohort labels and legend, plus the rows, so rows keep their
+        # size from 2 genes to 50
+        height = 2.0 + 0.22 * len(genes)
+        fig, axes = plt.subplots(1, 2, figsize=(max(9, len(cancers) * 1.3 + 2), height), sharey=True)
         fig.patch.set_facecolor("white")
         for ax, (layer, _) in zip(axes, layer_keys):
             for ri, g in enumerate(genes):
@@ -773,7 +776,8 @@ def _generate_gene_list_tile_static(batch_data: dict, is_survival: bool = False)
                    loc="lower center", fontsize=8, ncol=3, frameon=False)
         title = f"{len(genes)} genes: {'Survival Association' if is_survival else 'Tumor vs. Normal'} — CPTAC"
         fig.suptitle(title, fontsize=11)
-        fig.tight_layout(rect=[0, 0.4 / (1.4 + 0.24 * len(genes)) + 0.02, 1, 0.97])
+        # tight_layout makes room for the suptitle itself; the top margin only keeps a small gap under it
+        fig.tight_layout(rect=[0, 0.4 / height + 0.02, 1, 1 - 0.12 / height])
 
         png_buf = io.BytesIO()
         fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
@@ -2439,6 +2443,7 @@ class MCPOrchestrator:
         session_id: Optional[str] = None,
         client_ip: Optional[str] = None,
         gene_list: Optional[Dict[str, Any]] = None,
+        repeat: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Stream the execution progress using Server-Sent Events (SSE).
@@ -2447,7 +2452,7 @@ class MCPOrchestrator:
         if self._langgraph_orch:
             # We must use 'async for' to yield chunks from the delegated generator
             async for chunk in self._langgraph_orch.process_query_stream(
-                query, user_id, session_id, client_ip=client_ip, gene_list=gene_list
+                query, user_id, session_id, client_ip=client_ip, gene_list=gene_list, repeat=repeat
             ):
                 yield chunk
         else:
@@ -3753,8 +3758,14 @@ Do NOT suggest questions about: protein structure, sequence alignment, GWAS, som
         session: Dict[str, Any],
         intent: str = "general",
         usage_tracker: Optional[Dict[str, Any]] = None,
+        summarize: bool = True,
+        combined_min_genes: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Generate final response from tool results"""
+        """Generate final response from tool results; summarize=False skips the summary model call.
+
+        combined_min_genes: the smallest gene-list batch drawn as one combined heatmap instead of a
+        plot per gene (default _COMBINED_TILE_MIN_GENES).
+        """
         if not results:
             # Use LLM to generate a natural response for conversational queries
             try:
@@ -3857,7 +3868,9 @@ Please provide a helpful, natural, and professional response. If they are just g
         # If LinkedOmics tools were used, format them nicely as markdown
         if has_linkedomics_results:
             try:
-                fmt = self._format_linkedomics_results(results, query, session_id=session.get("id", ""))
+                fmt = self._format_linkedomics_results(
+                    results, query, session_id=session.get("id", ""), combined_min_genes=combined_min_genes,
+                )
                 message = fmt["message"]
                 visualizations = fmt.get("visualizations", [])
                 rendered_ids = fmt.get("rendered_tool_ids", set())
@@ -3873,7 +3886,7 @@ Please provide a helpful, natural, and professional response. If they are just g
                     ]
                 else:
                     tools_used = list(results.keys())
-                summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
+                summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker) if summarize else ""
                 # Mixed LinkedOmics + literature responses should keep the
                 # LangGraph-authored narrative while still attaching the
                 # visualization objects produced by the LinkedOmics formatter.
@@ -4031,7 +4044,7 @@ Please provide a clear, informative response about this gene. Include the key de
                 else:
                     formatted_results.append(f"**{tool_id}**:\n{display_result}")
             message = f"I found the following information:\n\n" + "\n\n".join(formatted_results)
-        summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker)
+        summary = await self._llm_summarize_tool_results(query, results, usage_tracker=usage_tracker) if summarize else ""
         return {
             "success": True,
             "summary": summary or "",
@@ -4041,7 +4054,9 @@ Please provide a clear, informative response about this gene. Include the key de
             "raw_results": results
         }
 
-    def _format_linkedomics_results(self, results: Dict[str, Any], query: str = "", session_id: str = "") -> Dict[str, Any]:
+    def _format_linkedomics_results(
+        self, results: Dict[str, Any], query: str = "", session_id: str = "", combined_min_genes: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Format LinkedOmics MCP tool outputs into nice markdown for chat UI.
 
         Returns a dict with keys:
@@ -4429,7 +4444,7 @@ Please provide a clear, informative response about this gene. Include the key de
 
                 combined_fig = (
                     _generate_gene_list_tile_static(batch_data, is_survival=is_surv)
-                    if batch_data and len(batch_data) >= _COMBINED_TILE_MIN_GENES else None
+                    if batch_data and len(batch_data) >= (combined_min_genes or _COMBINED_TILE_MIN_GENES) else None
                 )
                 if combined_fig:
                     viz_id = _uuid.uuid4().hex

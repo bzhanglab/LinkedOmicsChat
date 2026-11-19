@@ -362,7 +362,7 @@ export interface ChatMessage {
     toolsUsed?: string[]
     visualizations?: AnyVisualization[]
     executionTrace?: ExecutionTraceStep[]
-    toolCalls?: ToolCallRecord[]  // from chat history only; used by the exports
+    toolCalls?: ToolCallRecord[]  // used by the exports and by "Repeat for other genes"
     attachedGeneList?: string  // user messages sent with a gene list, e.g. "genes.csv (74 genes)"; not saved
     numberCheck?: NumberCheck
 }
@@ -434,6 +434,8 @@ export interface ChatRequest {
     session_id?: string
     context?: Record<string, unknown>
     gene_list?: { name: string; genes: string[] }
+    // Repeat an earlier answer's tool calls for these genes, without the model
+    repeat?: { tool_calls: ToolCallRecord[]; genes: string[] }
 }
 
 /** The result of checking an uploaded or pasted gene list (POST /api/v1/chat/gene-list). */
@@ -483,6 +485,7 @@ export interface ChatResponse {
     confidence?: "high" | "partial" | "low" | "general_knowledge" | "clarification"
     execution_trace?: ExecutionTraceStep[]
     number_check?: NumberCheck | null
+    tool_calls?: ToolCallRecord[]
     metadata?: Record<string, unknown>
 }
 

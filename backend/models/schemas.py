@@ -40,6 +40,12 @@ class AttachedGeneList(BaseModel):
     genes: List[str] = Field(..., max_length=2000)
 
 
+class RepeatRequest(BaseModel):
+    """An earlier answer's tool calls, to be run again for other genes without the model"""
+    tool_calls: List[Dict[str, Any]] = Field(..., max_length=30)
+    genes: List[str] = Field(..., max_length=10)
+
+
 class GeneListCheckRequest(BaseModel):
     """Request schema for checking an uploaded or pasted gene list"""
     text: str
@@ -52,6 +58,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     gene_list: Optional[AttachedGeneList] = None
+    repeat: Optional[RepeatRequest] = None
 
 
 class PinRequest(BaseModel):
