@@ -2307,7 +2307,11 @@ def _inlineize_source_blockquotes(text: str) -> str:
             stripped = output[idx].strip()
             if not stripped:
                 continue
-            if stripped.startswith(("#", ">", "|", "[PLOT:", "[NETWORK:", "[TABLE:", "```")):
+            if stripped.startswith("#"):
+                # A section with only plots or tables keeps its source on its own line, rather than
+                # passing it to the previous section's text
+                break
+            if stripped.startswith((">", "|", "[PLOT:", "[NETWORK:", "[TABLE:", "```")):
                 continue
             if "#source:" not in stripped:
                 output[idx] = output[idx].rstrip() + f" {source_markup}"

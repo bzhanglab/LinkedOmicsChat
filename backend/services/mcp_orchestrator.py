@@ -4439,7 +4439,7 @@ Please provide a clear, informative response about this gene. Include the key de
                         for c in cancers_:
                             ls.append(f"| {c} | {rd_.get(c,'-')} | {pd_.get(c,'-')} |")
                         ls.append("")
-                    ls.append(f"> **Source:** [LinkedOmics](#source:linkedomics) · {s_desc}")
+                    ls.append(f"> **Source:** [LinkedOmicsKB](#source:cptac) · {s_desc}")
                     return "\n".join(ls) + "\n"
 
                 combined_fig = (
@@ -4456,7 +4456,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     })
                     sections.append(
                         f"## {base_title} - {len(batch_data)} genes{subtitle}\n\n[PLOT:{viz_id}]\n\n"
-                        f"> **Source:** [LinkedOmics](#source:linkedomics) · {source_desc}\n"
+                        f"> **Source:** [LinkedOmicsKB](#source:cptac) · {source_desc}\n"
                     )
                 elif batch_data:
                     for g, g_result in batch_data.items():
@@ -5141,7 +5141,7 @@ Please provide a clear, informative response about this gene. Include the key de
                                 else:
                                     md.append("_No records._")
 
-                    md.append("\n> **Source:** [LinkedOmics](#source:linkedomics)")
+                    md.append("\n> **Source:** [LinkedOmicsKB](#source:cptac)")
                     return "\n".join(md) + "\n"
 
                 if tool_id.endswith("batch_analyze_cptac_cis_associations"):
@@ -5293,7 +5293,7 @@ Please provide a clear, informative response about this gene. Include the key de
                                 md.append(f"_(showing 20 of {len(results_list)} results)_")
                             md.append("")
 
-                md.append("> **Source:** [LinkedOmics TCGA](#source:linkedomics)")
+                md.append("> **Source:** [LinkedOmics](#source:tcga)")
                 sections.append("\n".join(md) + "\n")
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
@@ -5452,7 +5452,7 @@ Please provide a clear, informative response about this gene. Include the key de
                     else:
                         md.append("_No significant associations found at FDR < 0.05._")
                     md.append("")
-                    md.append(f"> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                    md.append(f"> **Source:** [LinkedOmics](#source:tcga) · TCGA dataset")
                 elif mode == 3 and not cohort_key_k:
                     omics_label = _OMICS_LABEL_PRE.get(omics_query, omics_query)
                     section_title = f"TCGA Survival Analysis — {g} ({omics_label}, all cohorts)"
@@ -5485,7 +5485,7 @@ Please provide a clear, informative response about this gene. Include the key de
                             md.append(f"| {c} | {c_full} | {f'{hr:.4f}' if hr is not None else '—'} | {f'{pval:.4e}' if pval is not None else '—'} | {n_tot if n_tot is not None else '—'} | {'✓' if pval is not None and pval < 0.05 else ''} |")
                     else:
                         sorted_results = sorted(all_results, key=lambda r: float(r.get("pvalue") or 1.0))
-                    md.append("\n> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                    md.append("\n> **Source:** [LinkedOmics](#source:tcga) · TCGA dataset")
                     # KM plots for significant cohorts when samples are available
                     for res in [r for r in sorted_results if (r.get("pvalue") or 1.0) < 0.05][:5]:
                         c = res.get("cohort", "")
@@ -5533,7 +5533,7 @@ Please provide a clear, informative response about this gene. Include the key de
                             if pval is not None: stats.append(f"p={pval:.4f}")
                             if n_tot is not None: stats.append(f"n={n_tot}")
                             md.append(f"\n**{omics_label}**: " + (", ".join(stats) if stats else "no data"))
-                    md.append("\n> **Source:** [LinkedOmics](#source:linkedomics) · TCGA dataset")
+                    md.append("\n> **Source:** [LinkedOmics](#source:tcga) · TCGA dataset")
                 sections.append("\n".join(md) + "\n")
                 if len(sections) > _sections_before:
                     _rendered_tool_ids.add(tool_id)
