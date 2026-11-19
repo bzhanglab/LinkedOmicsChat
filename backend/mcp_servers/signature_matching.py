@@ -166,6 +166,138 @@ def load_rankings() -> Optional[Rankings]:
                         built_at=float(meta.get("built_at") or 0))
 
 
+MIN_SIGNATURE_GENES = 5
+SMALL_GROUP = 10  # studies with fewer responders or non-responders than this are flagged
+DRIVING_GENES = 5
+# How a signature's score translates to the AUROC a patient-level signature score would have:
+# 0.5 - AUC ~ 0.172 * tanh(3.32 * score). Fitted on the 50 Hallmark sets in all 67 studies
+# against ClinicalOmicsDB's own patient-level gene-set AUROCs (2026-11-19; Spearman 0.73).
+_AUC_SCALE = 0.172
+_AUC_STEEPNESS = 3.32
+
+
+def _benjamini_hochberg(p: np.ndarray) -> np.ndarray:
+    order = np.argsort(p)
+    ranked = p[order] * len(p) / np.arange(1, len(p) + 1)
+    adjusted = np.minimum.accumulate(ranked[::-1])[::-1]
+    out = np.empty_like(adjusted)
+    out[order] = np.minimum(adjusted, 1.0)
+    return out
+
+
+def _size(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _patient_level_p(score: float, responders: int, non_responders: int) -> float:
+    """Two-sided p for the AUROC the score implies, given the study's patient counts
+    (normal approximation to the Mann-Whitney test across patients)."""
+    from scipy.stats import norm
+
+    if responders < 1 or non_responders < 1:
+        return 1.0
+    implied = _AUC_SCALE * np.tanh(_AUC_STEEPNESS * score)
+    se = np.sqrt((responders + non_responders + 1) / (12.0 * responders * non_responders))
+    return float(2 * norm.sf(abs(implied) / se))
+
+
+def match_signature(
+    genes: list[str],
+    rankings: Rankings,
+    cancers: Optional[list[str]] = None,
+    treatment: Optional[str] = None,
+) -> dict[str, Any]:
+    """Test a gene signature against treatment response in every cached study.
+
+    In each study, the signature genes' AUROCs are compared with those of all other measured
+    genes (two-sided Mann-Whitney). The score is the rank-biserial correlation, from -1 (every
+    signature gene ranks toward non-responders) to +1 (every one toward responders).
+
+    That gene-level p-value alone is far too optimistic, because a signature's genes are
+    usually co-expressed: on the Hallmark sets it called 54% of study tests significant where
+    ClinicalOmicsDB's patient-level tests called 16%. The p-value used is therefore the larger
+    of the gene-level p and a patient-level p (from the AUROC the score implies and the
+    study's numbers of responders and non-responders), and FDR is Benjamini-Hochberg across
+    the studies tested. Checked 2026-11-19: random gene sets of 5-100 genes reach FDR < 0.05
+    in under 0.01% of study tests; on held-out Hallmark sets, 55% of FDR < 0.05 calls are also
+    significant in the patient-level data, always in the same direction.
+    """
+    from scipy.stats import mannwhitneyu
+
+    wanted = list(dict.fromkeys(str(g).strip().upper() for g in genes if str(g).strip()))
+    rows = rankings.gene_rows(wanted)
+    cancer_filter = {c.strip().lower() for c in cancers or [] if c.strip()}
+    treatment_filter = (treatment or "").strip().lower()
+
+    tested: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    p_values: list[float] = []
+    for column, study in enumerate(rankings.studies):
+        if cancer_filter and study["disease"].lower() not in cancer_filter:
+            continue
+        if treatment_filter and treatment_filter not in study["treatment"].lower():
+            continue
+        auc = rankings.auc[:, column]
+        measured = ~np.isnan(auc)
+        in_signature = np.zeros(len(auc), dtype=bool)
+        in_signature[list(rows.values())] = True
+        signature = measured & in_signature
+        n_signature = int(signature.sum())
+        if n_signature < MIN_SIGNATURE_GENES:
+            skipped.append({"study_id": study["study_id"], "genes_measured": n_signature})
+            continue
+        toward_responders = 0.5 - auc  # positive: higher in responders
+        sig_values, other_values = toward_responders[signature], toward_responders[measured & ~in_signature]
+        u, gene_level_p = mannwhitneyu(sig_values, other_values, alternative="two-sided")
+        score = 2.0 * u / (len(sig_values) * len(other_values)) - 1.0
+        fdr = rankings.fdr[:, column]
+        significant = signature & (np.abs(fdr) < 0.05)
+        sig_genes = rankings.genes[signature]
+        order = np.argsort(-sig_values if score >= 0 else sig_values)[:DRIVING_GENES]
+        responders, non_responders = _size(study["responder_size"]), _size(study["non_responder_size"])
+        p = max(float(gene_level_p), _patient_level_p(score, responders, non_responders))
+        tested.append({
+            "study_id": study["study_id"].removesuffix(".csv"),
+            "series": study["series"] or study["study_id"].removesuffix(".csv"),
+            "cancer": study["disease"],
+            "subtype": study["subtype"],
+            "treatment": study["treatment"],
+            "response": study["response_eval"],
+            "responders": responders,
+            "non_responders": non_responders,
+            "small_study": min(responders, non_responders) < SMALL_GROUP,
+            "genes_measured": n_signature,
+            "higher_in": "responders" if score > 0 else "non-responders",
+            "score": round(float(score), 3),
+            "p_value": float(p),
+            "genes_significant_responders": int((significant & (auc < 0.5)).sum()),
+            "genes_significant_non_responders": int((significant & (auc > 0.5)).sum()),
+            "driving_genes": [
+                {"gene": str(sig_genes[i]), "auc": round(float(0.5 - sig_values[i]), 3)} for i in order
+            ],
+            "clinical_trial_id": study["clinical_trial_id"],
+            "pubmed_id": study["pub_med_id"],
+        })
+        p_values.append(float(p))
+
+    if tested:
+        for row, q in zip(tested, _benjamini_hochberg(np.array(p_values))):
+            row["fdr"] = float(q)
+        tested.sort(key=lambda r: (r["fdr"], -abs(r["score"])))
+    found = set(rows)
+    return {
+        "genes_given": len(wanted),
+        "genes_in_studies": len(found),
+        "genes_not_in_any_study": [g for g in wanted if g not in found],
+        "studies_tested": len(tested),
+        "studies_skipped": skipped,
+        "results": tested,
+    }
+
+
 if __name__ == "__main__":
     if "--refresh" in sys.argv:
         refresh_cache()
