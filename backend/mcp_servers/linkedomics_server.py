@@ -190,7 +190,7 @@ def _filter_cis_correlation_data(
             if not isinstance(record, dict):
                 continue
             pair_label = _canonicalize_cis_pair(record.get("x"), record.get("y"))
-            if pair_label in pair_filters:
+            if pair_filters is None or pair_label in pair_filters:
                 kept_records.append(record)
         if kept_records:
             filtered[cohort] = kept_records
