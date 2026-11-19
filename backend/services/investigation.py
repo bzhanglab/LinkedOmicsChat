@@ -87,8 +87,15 @@ def _no_data(line: str, source: str, layer: str, cancer: str, gap_key: Optional[
     return _line(line, source, layer, "no_data", note=reason if cancer in cancers else "No data for this gene")
 
 
-def _failed(line: str, source: str, layer: str, result: Dict[str, Any]) -> Dict[str, Any]:
-    return _line(line, source, layer, "failed", note=str(result.get("error"))[:200])
+def _is_error(result: Optional[Dict[str, Any]]) -> bool:
+    """A call that failed: not run, raised, or answered with status "error" (the TCGA service's
+    "read of closed file" under load comes back this way)."""
+    return result is None or "error" in result or result.get("status") == "error"
+
+
+def _failed(line: str, source: str, layer: str, result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    result = result or {"error": "not run"}
+    return _line(line, source, layer, "failed", note=str(result.get("error") or result.get("message"))[:200])
 
 
 def _find(tool_results: Dict[str, Any], tool_id: str, **args: Any) -> Optional[Dict[str, Any]]:
@@ -122,8 +129,8 @@ def _cptac_lines(line: str, result: Optional[Dict[str, Any]], cancer: str) -> Li
     """Tumor vs normal or survival from the CPTAC tools' per-cancer sentences."""
     out = []
     for key, layer in (("protein_level", "protein"), ("RNA_level", "RNA")):
-        if result is None or "error" in result:
-            out.append(_failed(line, "CPTAC", layer, result or {"error": "not run"}))
+        if _is_error(result):
+            out.append(_failed(line, "CPTAC", layer, result))
             continue
         text = ((result.get(key) or {}).get("data") or {}).get(cancer)
         if not text or text == "Data unavailable":
@@ -143,8 +150,8 @@ def _cptac_copy_number(result: Optional[Dict[str, Any]], cancer: str) -> List[Di
     out = []
     records = ((result or {}).get("data") or {}).get(cancer) or []
     for layer in ("protein", "RNA"):
-        if result is None or "error" in result:
-            out.append(_failed("copy_number", "CPTAC", layer, result or {"error": "not run"}))
+        if _is_error(result):
+            out.append(_failed("copy_number", "CPTAC", layer, result))
             continue
         record = next((r for r in records if {r.get("x"), r.get("y")} == {"SCNV", layer}), None)
         if record is None:
@@ -157,8 +164,8 @@ def _cptac_copy_number(result: Optional[Dict[str, Any]], cancer: str) -> List[Di
 
 
 def _tcga_copy_number(result: Optional[Dict[str, Any]], layer: str) -> Dict[str, Any]:
-    if result is None or "error" in result:
-        return _failed("copy_number", "TCGA", layer, result or {"error": "not run"})
+    if _is_error(result):
+        return _failed("copy_number", "TCGA", layer, result)
     rows = result.get("results") or []
     if not rows:
         return _line("copy_number", "TCGA", layer, "no_data", note="No data for this gene")
@@ -169,8 +176,8 @@ def _tcga_copy_number(result: Optional[Dict[str, Any]], layer: str) -> Dict[str,
 
 def _tcga_survival(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """One line per TCGA layer; RNA and protein (RPPA) are always listed, as no data when missing."""
-    if result is None or "error" in result:
-        return [_failed("survival", "TCGA", layer, result or {"error": "not run"}) for layer in ("RNA", "protein (RPPA)")]
+    if _is_error(result):
+        return [_failed("survival", "TCGA", layer, result) for layer in ("RNA", "protein (RPPA)")]
     by_layer = {_TCGA_LAYERS[r["omics"]]: r for r in result.get("results") or [] if r.get("omics") in _TCGA_LAYERS}
     out = []
     for layer in _TCGA_LAYERS.values():
@@ -178,6 +185,12 @@ def _tcga_survival(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if row is None:
             if layer in ("RNA", "protein (RPPA)"):
                 out.append(_line("survival", "TCGA", layer, "no_data", note="No data for this gene"))
+            continue
+        if row.get("error"):
+            # One layer can fail inside a good result, most often for too few samples (ovarian methylation)
+            enough = "Too few samples" not in str(row["error"])
+            out.append(_line("survival", "TCGA", layer, "failed" if enough else "no_data",
+                             note=str(row["error"])[-200:] if enough else "Too few samples for this layer"))
             continue
         hr, p = float(row["hr"]), float(row["pvalue"])
         # HR > 1: the higher group has poorer survival
@@ -187,14 +200,35 @@ def _tcga_survival(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _dependency(profile: Optional[Dict[str, Any]], cancer: str) -> Dict[str, Any]:
-    if profile is None or "error" in profile:
-        return _failed("dependency", "LinkedOmics Targets", "cell lines", profile or {"error": "not run"})
+    if _is_error(profile):
+        return _failed("dependency", "LinkedOmics Targets", "cell lines", profile)
     if cancer in SOURCE_GAPS[("dependency", "cell lines")][0]:
         return _no_data("dependency", "LinkedOmics Targets", "cell lines", cancer)
     text = (profile.get("result") or profile).get("cell_line_dependency") or ""
     dependent = [c.strip() for c in text.split(":", 1)[1].split(",")] if text.startswith("Dependent cell lines:") else []
     return _line("dependency", "LinkedOmics Targets", "cell lines", "tested", direction=1 if cancer in dependent else None,
                  note=f"Dependent in {len(dependent)} of {_DEPENDENCY_COHORTS} cancers with cell-line data")
+
+
+def _targets_calls(profile: Optional[Dict[str, Any]], cancer: str) -> List[Dict[str, Any]]:
+    """LinkedOmics Targets' own calls for this cancer (Savage et al., Cell 2024): protein overexpressed
+    in tumors (tumor vs normal Wilcoxon test), and copy-number driver (amplified by GISTIC2, and copy
+    number correlating with both protein and mRNA, Spearman p < 0.01)."""
+    calls = (("tumor_vs_normal", "overexpressed (call)", "tumor_overexpression", "Overexpressed in "),
+             ("copy_number", "driver (call)", "cnv_driver", "CNV driver in: "))
+    if _is_error(profile):
+        return [_failed(line, "LinkedOmics Targets", layer, profile) for line, layer, _, _ in calls]
+    info = profile.get("result") or profile
+    out = []
+    for line, layer, field, prefix in calls:
+        if line == "tumor_vs_normal" and cancer in SOURCE_GAPS[("tumor_vs_normal", "protein")][0]:
+            out.append(_no_data(line, "LinkedOmics Targets", layer, cancer, ("tumor_vs_normal", "protein")))
+            continue
+        text = str(info.get(field) or "")
+        listed = [c.strip() for c in text[len(prefix):].split(",")] if text.startswith(prefix) else []
+        out.append(_line(line, "LinkedOmics Targets", layer, "tested", direction=1 if cancer in listed else None,
+                         note=text))
+    return out
 
 
 def _trial_studies(trials_cancer: Optional[str]) -> List[Dict[str, Any]]:
@@ -216,8 +250,8 @@ def _treatment_response(result: Optional[Dict[str, Any]], cancer: str, studies: 
     if trials_cancer is None:
         return [_line("treatment_response", "LinkedOmics Trials", "RNA", "no_data",
                       note="No trial-linked study for this cancer")]
-    if result is None or "error" in result:
-        return [_failed("treatment_response", "LinkedOmics Trials", "RNA", result or {"error": "not run"})]
+    if _is_error(result):
+        return [_failed("treatment_response", "LinkedOmics Trials", "RNA", result)]
     data = result.get("data") or {}
     out = []
     for side, direction in (("sensitive", 1), ("resistant", -1)):
@@ -234,6 +268,113 @@ def _treatment_response(result: Optional[Dict[str, Any]], cancer: str, studies: 
     return out
 
 
+# The lines a question's verdict rests on; cell-line dependency and treatment response are context
+RATED_LINES = {"target": ("tumor_vs_normal", "copy_number", "survival"), "prognostic": ("survival",)}
+# Layers measuring the gene's own level count; survival by methylation or copy number is shown, not rated
+_RATED_LAYERS = {"protein", "RNA", "protein (RPPA)"}
+_PROTEIN_LAYERS = {"protein", "protein (RPPA)"}
+
+
+def rate_line(lines: List[Dict[str, Any]], line: str, question: str) -> Dict[str, Any]:
+    """Rate survival (or any line without a LinkedOmics Targets call) from its layers' significant results.
+
+    strong: significant in the same direction in both CPTAC and TCGA; moderate: p < 0.01 in one
+    source only; weak: p < 0.05 in one source only; against: significant only in the opposite
+    direction; mixed: both. For a prognostic marker either direction is a marker, so significant
+    results in opposite directions make the line mixed. For a target, only higher levels with
+    poorer survival count; better survival is no argument against a target, since patients whose
+    tumors carry an established one are often treated for it (HER2-positive breast cancer).
+    """
+    layers = [l for l in lines if l["line"] == line and l["layer"] in _RATED_LAYERS]
+    tested = [l for l in layers if l["status"] == "tested"]
+    rating: Dict[str, Any] = {"line": line, "direction": None, "sources": [], "protein": False, "best_p": None}
+    if not tested:
+        return {**rating, "rating": "failed" if any(l["status"] == "failed" for l in layers) else "no_data"}
+    significant = [l for l in tested if l["significant"] and l["direction"]]
+    if question == "target":
+        significant = [l for l in significant if l["direction"] == 1]
+    if not significant:
+        return {**rating, "rating": "no_association"}
+    if question == "prognostic" and len({l["direction"] for l in significant}) > 1:
+        return {**rating, "rating": "mixed"}
+    support = [l for l in significant if question == "prognostic" or l["direction"] == 1]
+    if len(support) < len(significant):
+        return {**rating, "rating": "mixed" if support else "against"}
+    sources = sorted({l["source"] for l in support})
+    best_p = min(l["p"] for l in support)
+    if len(sources) >= 2:
+        value = "strong"
+    else:
+        value = "moderate" if best_p < 0.01 else "weak"
+    return {**rating, "rating": value, "direction": support[0]["direction"], "sources": sources,
+            "protein": any(l["layer"] in _PROTEIN_LAYERS for l in support), "best_p": best_p}
+
+
+def _rate_called_line(lines: List[Dict[str, Any]], line: str) -> Dict[str, Any]:
+    """Tumor vs normal or copy number for a target, led by LinkedOmics Targets' call. In cohorts this
+    size most genes reach p < 0.05 on both: on 2026-11-19 copy number alone rated strong for 7 of 20
+    random genes, while 0 of the 20 were called copy-number drivers and 1 was called overexpressed.
+
+    strong: the call, confirmed by an independent test (CPTAC RNA higher in tumor; TCGA copy number
+    raising RNA); moderate: the call alone; weak: tumor vs normal significant without the call (copy
+    number moves most genes' levels, so it counts only with the call); against: protein
+    significantly lower in tumor.
+    """
+    rating: Dict[str, Any] = {"line": line, "direction": None, "sources": [], "protein": False, "best_p": None}
+    group = [l for l in lines if l["line"] == line]
+    call = next((l for l in group if l["source"] == "LinkedOmics Targets"), None)
+    tests = [l for l in group if l["source"] != "LinkedOmics Targets" and l["status"] == "tested"]
+    up = [l for l in tests if l["significant"] and l["direction"] == 1]
+    if line == "tumor_vs_normal" and any(l["layer"] == "protein" and l["significant"] and l["direction"] == -1 for l in tests):
+        return {**rating, "rating": "against"}
+    if call is not None and call["status"] == "failed":
+        return {**rating, "rating": "failed"}
+    if call is not None and call["status"] == "tested" and call["direction"] == 1:
+        confirm = ("CPTAC", "RNA") if line == "tumor_vs_normal" else ("TCGA", "RNA")
+        confirmed = [l for l in up if (l["source"], l["layer"]) == confirm]
+        return {**rating, "rating": "strong" if confirmed else "moderate", "direction": 1,
+                "sources": ["LinkedOmics Targets"] + [l["source"] for l in confirmed], "protein": True,
+                "best_p": min((l["p"] for l in up), default=None)}
+    if line == "tumor_vs_normal" and up:
+        return {**rating, "rating": "weak", "direction": 1, "sources": sorted({l["source"] for l in up}),
+                "protein": any(l["layer"] in _PROTEIN_LAYERS for l in up), "best_p": min(l["p"] for l in up)}
+    if (call is None or call["status"] != "tested") and not tests:
+        return {**rating, "rating": "failed" if any(l["status"] == "failed" for l in group) else "no_data"}
+    return {**rating, "rating": "no_association"}
+
+
+def verdict(ratings: List[Dict[str, Any]], question: str) -> str:
+    """The report's verdict from its rated lines: strong, moderate, limited, mixed, against, none,
+    or insufficient_data. A target needs data on at least two of its three lines."""
+    values = [r["rating"] for r in ratings]
+    if question == "prognostic":
+        return {"strong": "strong", "moderate": "moderate", "weak": "limited", "mixed": "mixed",
+                "no_association": "none"}.get(values[0], "insufficient_data")
+    with_data = [v for v in values if v not in ("no_data", "failed")]
+    if len(with_data) < 2:
+        return "insufficient_data"
+    support = [v for v in with_data if v in ("strong", "moderate", "weak")]
+    against = [v for v in with_data if v in ("against", "mixed")]
+    if against:
+        return "mixed" if support else "against"
+    if with_data.count("strong") >= 2:
+        return "strong"
+    if "strong" in with_data or with_data.count("moderate") >= 2:
+        return "moderate"
+    return "limited" if support else "none"
+
+
+def rate(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """The evidence with each rated line's rating and the verdict added."""
+    question = evidence["question"]
+    ratings = [
+        _rate_called_line(evidence["lines"], line) if question == "target" and line != "survival"
+        else rate_line(evidence["lines"], line, question)
+        for line in RATED_LINES[question]
+    ]
+    return {**evidence, "ratings": ratings, "verdict": verdict(ratings, question)}
+
+
 def extract_evidence(gene: str, cancer: str, question: str, tool_results: Dict[str, Any]) -> Dict[str, Any]:
     """Turn the investigation's tool results ({"tool_id#n": {"_args", "_result"}}) into lines of evidence."""
     tcga, trials_cancer = COHORTS[cancer]
@@ -243,6 +384,8 @@ def extract_evidence(gene: str, cancer: str, question: str, tool_results: Dict[s
     context: Dict[str, Any] = {"trial_studies": len(studies)}
 
     if question == "target":
+        profile = get("get_drug_target_profile")
+        lines += _targets_calls(profile, cancer)
         lines += _cptac_lines("tumor_vs_normal", get("compare_cptac_tumor_normal_expression"), cancer)
         lines += _cptac_copy_number(get("analyze_cptac_cis_associations"), cancer)
         lines.append(_tcga_copy_number(get("analyze_tcga_cis_associations", target_omics="RNAseq"), "RNA"))
@@ -250,7 +393,6 @@ def extract_evidence(gene: str, cancer: str, question: str, tool_results: Dict[s
     lines += _cptac_lines("survival", get("analyze_cptac_gene_survival_associations"), cancer)
     lines += _tcga_survival(get("analyze_tcga_survival_associations"))
     if question == "target":
-        profile = get("get_drug_target_profile")
         lines.append(_dependency(profile, cancer))
         info = (profile or {}).get("result") or profile or {}
         drugs = [d.strip() for d in str(info.get("drugs") or "").split(";") if d.strip()]
