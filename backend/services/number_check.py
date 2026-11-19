@@ -152,6 +152,16 @@ def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, 
     word_counts = Counter(word for v in values for word in v[4])
     distinctive = {word for word, count in word_counts.items() if count < _DISTINCTIVE_SHARE * len(values)}
     clause_distinctive = {word for word, count in word_counts.items() if count < _CLAUSE_SHARE * len(values)}
+    # The same within each tool's results: one large result (a drug target grid naming every
+    # cohort) makes its words common overall, though they still tell another tool's results apart
+    tool_values: Dict[str, List[Value]] = {}
+    for v in values:
+        tool_values.setdefault(v[1], []).append(v)
+    tool_distinctive: Dict[str, Tuple[Set[str], Set[str]]] = {}
+    for tool, own in tool_values.items():
+        counts = Counter(word for v in own for word in v[4])
+        tool_distinctive[tool] = ({w for w, c in counts.items() if c < _DISTINCTIVE_SHARE * len(own)},
+                                  {w for w, c in counts.items() if c < _CLAUSE_SHARE * len(own)})
     skipped = [(m.start(), m.end()) for m in _SKIP_RE.finditer(text)]
 
     numbers: List[Dict[str, Any]] = []
@@ -188,15 +198,20 @@ def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, 
             # The best match shares the most such words, then is closest.
             sentence_start, sentence_end = _sentence_span(text, start, end)
             clause = text[max(previous_end, sentence_start):start]
-            named = (_answer_words(text[sentence_start:sentence_end]) & distinctive) | (_answer_words(clause) & clause_distinctive)
-            if named:
-                candidates = [c for c in candidates if c[4] & named]
+            sentence_words, clause_words = _answer_words(text[sentence_start:sentence_end]), _answer_words(clause)
+            named = (sentence_words & distinctive) | (clause_words & clause_distinctive)
+
+            def named_for(c: Value) -> Set[str]:
+                own, own_clause = tool_distinctive[c[1]]
+                return named | (sentence_words & own) | (clause_words & own_clause)
+
+            candidates = [c for c in candidates if not named_for(c) or c[4] & named_for(c)]
             if candidates:
-                best = min(candidates, key=lambda c: (-len(c[4] & named), abs(c[0] - value)))
+                best = min(candidates, key=lambda c: (-len(c[4] & named_for(c)), abs(c[0] - value)))
                 entry["status"] = "found"
                 entry["source"] = {"tool": best[1], "path": best[2], "value": best[3]}
                 # Without a named gene or term, a match can be chance in large results
-                entry["anchored"] = bool(named)
+                entry["anchored"] = bool(named_for(best))
             elif written in found_before:
                 # A later mention of a value already found ("a borderline p-value of 0.0394") is the
                 # same value, even when its sentence names other things
