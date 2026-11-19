@@ -5158,7 +5158,9 @@ Please provide a clear, informative response about this gene. Include the key de
                 continue
 
             if tool_id.endswith("match_signature_to_treatment_response"):
-                if not isinstance(parsed, dict):
+                # A call the tool server rejected (an argument in the wrong form) has no status; the
+                # model retries it, and the summary explains real failures
+                if not isinstance(parsed, dict) or "status" not in parsed:
                     continue
                 signature = parsed.get("signature") or {}
                 study_rows = parsed.get("results") or []

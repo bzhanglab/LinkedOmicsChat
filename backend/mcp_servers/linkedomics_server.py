@@ -1693,10 +1693,22 @@ def _signature_treatment_classes() -> dict[str, set[str]]:
     return {"Immune checkpoint inhibitors": checkpoint, "Chemotherapy": chemotherapy, "Other targeted therapy": targeted}
 
 
+def _text_list(value: Any) -> list[str]:
+    """A list argument the model sometimes sends as text: "Melanoma", "Melanoma, Lung", or '["Melanoma"]'."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = re.split(r"[,;\s]+", value)  # gene symbols and cancer names are single words
+    if not isinstance(value, list):
+        value = [value]
+    return [str(v).strip() for v in value if str(v).strip()]
+
+
 @mcp.tool()
 def match_signature_to_treatment_response(
-    proteins: list[str],
-    cancers: Optional[list[str]] = None,
+    proteins: list[str] | str,
+    cancers: Optional[list[str] | str] = None,
     treatment: Optional[str] = None,
 ) -> dict[str, Any]:
     """Test the user's own gene signature or gene list against treatment response in every trial-linked study in ClinicalOmicsDB, and rank the treatments where the signature's genes, as a group, are higher in responders or in non-responders.
@@ -1725,7 +1737,8 @@ def match_signature_to_treatment_response(
 
     How to read it: a positive score means the signature's genes rank toward responders. Report the treatment classes where most studies fall on one side, since most single studies are too small to reach FDR < 0.05 alone, and say that these are associations in past studies, not proof that the signature predicts response.
     """
-    genes = list(dict.fromkeys(str(g).strip().upper() for g in proteins or [] if str(g).strip()))
+    cancers = _text_list(cancers) if cancers else None
+    genes = list(dict.fromkeys(g.upper() for g in _text_list(proteins or [])))
     if len(genes) < signature_matching.MIN_SIGNATURE_GENES:
         return {"status": "unavailable",
                 "message": f"A signature needs at least {signature_matching.MIN_SIGNATURE_GENES} genes; {len(genes)} were given."}
