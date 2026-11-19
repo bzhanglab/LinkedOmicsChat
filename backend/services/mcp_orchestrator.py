@@ -5394,6 +5394,11 @@ Please provide a clear, informative response about this gene. Include the key de
                     sec_title = "TCGA Cis Association"
 
                 md = [f"## {sec_title}", ""]
+                if parsed.get("status") == "unavailable" and parsed.get("message"):
+                    # A withheld analysis says why, instead of a section of empty values
+                    sections.append("\n".join([*md, f"_{parsed['message']}_"]) + "\n")
+                    _rendered_tool_ids.add(tool_id)
+                    continue
 
                 # Scope line
                 if mode_val == 1:
@@ -5544,6 +5549,11 @@ Please provide a clear, informative response about this gene. Include the key de
                 _tcga_rendered.add(group_key)
                 parsed_list = _tcga_groups.get(group_key, [])
                 if not parsed_list:
+                    continue
+                withheld = next((p["message"] for p in parsed_list if p.get("status") == "unavailable" and p.get("message")), None)
+                if withheld and not any(p.get("results") for p in parsed_list):
+                    sections.append(f"## TCGA survival analysis{f' - {gene_name_k}' if gene_name_k else ''}\n\n_{withheld}_\n")
+                    _rendered_tool_ids.add(tool_id)
                     continue
                 all_results = []
                 mode = 1

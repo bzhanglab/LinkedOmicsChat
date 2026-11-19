@@ -426,6 +426,8 @@ def _build_no_data_message(raw_results: Dict[str, Any], tool_scope: Optional[str
         data_status = value.get("_data_status") or _classify_tool_result_payload(key, payload)
         if data_status == "error" and isinstance(payload, dict):
             reason = payload.get("error") or payload.get("message") or "tool error"
+        elif isinstance(payload, dict) and payload.get("status") == "unavailable" and payload.get("message"):
+            reason = payload["message"]  # a withheld analysis, such as TCGA protein (RPPA), says why
         else:
             reason = "no usable rows returned"
         suffix = f" for {gene}" if gene else ""
