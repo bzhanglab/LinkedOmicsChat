@@ -1974,6 +1974,29 @@ def run_webgestalt_go_enrichment(proteins: list[str], top_n: int = 5) -> dict[st
     return ret_val
 
 
+
+# On 2026-11-19 the TCGA service returned identical RPPA (protein) values, sample for sample, for unrelated
+# genes (in breast cancer 18 of 48 genes, in 3 groups; ESR1 and ERBB2 among them, in every cohort checked),
+# so protein results are withheld until the service is fixed. RNA showed no such collisions.
+TCGA_RPPA_UNAVAILABLE = (
+    "TCGA protein (RPPA) results are temporarily unavailable: the TCGA service currently returns the same "
+    "protein values for different genes. CPTAC protein data is available through the CPTAC tools."
+)
+
+
+def _tcga_rppa_unavailable(dataset: str, mode: int, params: dict[str, Any]) -> dict[str, Any]:
+    return {"dataset": dataset, "mode": mode, "query": params, "n_results": 0, "results": [],
+            "status": "unavailable", "message": TCGA_RPPA_UNAVAILABLE}
+
+
+def _tcga_without_rppa(payload: dict[str, Any], is_rppa) -> dict[str, Any]:
+    """The payload without protein (RPPA) rows, with a note when any were removed."""
+    kept = [row for row in payload["results"] if not (isinstance(row, dict) and is_rppa(row))]
+    if len(kept) == len(payload["results"]):
+        return payload
+    return {**payload, "n_results": len(kept), "results": kept, "note": TCGA_RPPA_UNAVAILABLE}
+
+
 @mcp.tool()
 def analyze_tcga_survival_associations(
     cohort: Optional[str] = None,
@@ -2054,6 +2077,8 @@ def analyze_tcga_survival_associations(
             params["omics"] = normalize_tcga_omics(omics)
     except ValueError as e:
         return tcga_parameter_error(str(e))
+    if params.get("omics") == "RPPA":
+        return _tcga_rppa_unavailable("TCGA", mode, params)
 
 
     try:
@@ -2082,13 +2107,13 @@ def analyze_tcga_survival_associations(
                 "results": [],
             }
 
-        return {
+        return _tcga_without_rppa({
             "dataset": "TCGA",
             "mode": mode,
             "query": params,
             "n_results": len(results),
             "results": results,
-        }
+        }, lambda row: row.get("omics") == "RPPA")
 
     except requests.exceptions.HTTPError as e:
         detail = None
@@ -2196,6 +2221,8 @@ def analyze_tcga_cis_associations(
             params["st_method"] = normalize_tcga_st_method(st_method)
     except ValueError as e:
         return tcga_cis_parameter_error(str(e))
+    if "RPPA" in (params.get("source_omics"), params.get("target_omics")):
+        return _tcga_rppa_unavailable("TCGA cis association", mode, params)
 
     try:
         r = requests.get(base_url, params=params, timeout=(80, 1200))
@@ -2217,13 +2244,13 @@ def analyze_tcga_cis_associations(
                 "results": [],
             }
 
-        return {
+        return _tcga_without_rppa({
             "dataset": "TCGA cis association",
             "mode": mode,
             "query": params,
             "n_results": len(results),
             "results": results,
-        }
+        }, lambda row: "RPPA" in (row.get("source_omics"), row.get("target_omics")))
     except requests.exceptions.HTTPError as e:
         detail = None
         try:
