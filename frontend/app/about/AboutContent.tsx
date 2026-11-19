@@ -178,6 +178,8 @@ export function AboutContent() {
                         <p className="text-base text-muted-foreground leading-relaxed">
                             It covers 35 TCGA cohorts and 10 CPTAC cohorts through 27 analysis tools. It is free and needs
                             no account; signing in adds saved history, sharing, HTML export, and higher hourly limits.
+                            Other AI assistants, such as Claude and ChatGPT, can use the same analyses through MCP; see{" "}
+                            <Link href="/docs#mcp" className="text-primary hover:underline">Use from your AI assistant</Link>.
                         </p>
                         <div>
                             <h2 className="text-lg font-semibold mb-3">Try an example</h2>

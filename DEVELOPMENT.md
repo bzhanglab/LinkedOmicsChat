@@ -46,6 +46,16 @@ then Benjamini-Hochberg across studies. Refit those two constants if the Clinica
 After every summary, `backend/services/number_check.py` looks for each of its numbers in the tool results and
 returns the summary with the numbers marked for the frontend.
 
+The open MCP service (`backend/services/mcp_service.py`, at `/api/v1/mcp`) gives outside AI assistants the
+same tools over MCP's streamable HTTP transport, without the PubMed server's two tools. It lists the aggregator's
+tools under their bare names, forwards each call to the same tool processes, and returns the result as the chat
+agent sees it (`_compact_tool_message`). Each address gets `MCP_RATE_LIMIT_PER_HOUR` calls (counted in memory, per
+backend process), each tool runs at most a few calls at once across all clients (TCGA 2, others 6), and
+`MCP_BLOCKED_CLIENTS` and `MCP_SERVICE_ENABLED` block an address or switch it all off. Calls are logged in
+`mcp_tool_calls` with a salted hash of the address; `admin/usage_report.py --mcp` sums them. Tool names and
+arguments are now a public interface: changing one breaks assistants that use it, so say so on the Docs page
+first. `backend/main.py` is outside the reloader's watched folders, so changes there need a backend restart.
+
 Each answer sent to the browser, live or from the chat history, includes its tool calls and their inputs
 (`tool_calls`), which the Python script and methods text exports (`frontend/lib/pythonExport.ts` and
 `frontend/lib/methodsExport.ts`) and the repeat are built from. The references the methods text cites are

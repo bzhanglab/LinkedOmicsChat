@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download } from "lucide-react"
+import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download, Plug } from "lucide-react"
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -57,6 +57,7 @@ const SECTIONS = [
     { id: "example-outputs", title: "Example results" },
     { id: "interpret", title: "Reading the results" },
     { id: "export", title: "Exporting a chat" },
+    { id: "mcp", title: "Use from your AI assistant" },
     { id: "data-sources", title: "Data sources" },
     { id: "architecture", title: "How it works" },
     { id: "faq", title: "FAQ" },
@@ -128,6 +129,27 @@ const INTERPRETATION = [
     },
 ]
 
+const MCP_ADDRESS = "https://chat.linkedomics.org/api/v1/mcp"
+
+const MCP_CLIENTS = [
+    {
+        term: "Claude (claude.ai and Claude Desktop)",
+        text: "Customize › Connectors › Add › Add custom connector. Name it LinkedOmics, paste the address, and leave authentication off. Free plans allow one custom connector; on Team and Enterprise plans an owner adds it under Organization settings › Connectors.",
+    },
+    {
+        term: "ChatGPT",
+        text: "In Plugins, select the plus button, then Add custom MCP server. Name it LinkedOmics, paste the address under Connection, and choose no authentication. Workspace settings can block custom servers.",
+    },
+    {
+        term: "Claude Code",
+        text: <code className="text-[13px] break-all">claude mcp add --transport http linkedomics {MCP_ADDRESS}</code>,
+    },
+    {
+        term: "Cursor and other MCP clients",
+        text: <>Add a remote server with this address (streamable HTTP). In Cursor&rsquo;s <code className="text-[13px]">mcp.json</code>: <code className="text-[13px] break-all">{`{"mcpServers": {"linkedomics": {"url": "${MCP_ADDRESS}"}}}`}</code></>,
+    },
+]
+
 const EXPORTS = [
     {
         term: "Web page",
@@ -173,6 +195,10 @@ const FAQS = [
     {
         term: "Can I analyze my own genes?",
         text: "Yes. Type a few genes into your question, or attach a longer list with the paperclip next to the chat box (a text, CSV, or TSV file, or pasted genes, up to 2,000) and then ask about \"my list\".",
+    },
+    {
+        term: "Can I use these analyses from ChatGPT or Claude?",
+        text: "Yes. Add https://chat.linkedomics.org/api/v1/mcp to your assistant as a custom MCP connector; the section on using it from your AI assistant has the steps for Claude, ChatGPT, Claude Code, and Cursor.",
     },
     {
         term: "Can I test my own signature against treatment response?",
@@ -342,6 +368,30 @@ export default function DocsPage() {
                     Signed-in users can export a chat with the Export button at the top right of the chat, in three formats:
                 </P>
                 <DefList items={EXPORTS} />
+
+                <BackToTop />
+
+                <H2 id="mcp" icon={Plug}>Use from your AI assistant</H2>
+                <P>
+                    The analyses are also open to other AI assistants and agents through the Model Context Protocol
+                    (MCP). Add this address to the assistant you already use and ask your questions there; it chooses
+                    the analyses and writes the answer with its own model.
+                </P>
+                <p className="my-3 rounded-md bg-muted px-3 py-2 font-mono text-[13px] break-all">{MCP_ADDRESS}</p>
+                <DefList items={MCP_CLIENTS} />
+                <P>
+                    It offers 25 of the app&rsquo;s 27 tools: all except the two PubMed tools, since assistants have
+                    their own literature search. Results come shortened, as the chat&rsquo;s own agent sees them; the
+                    Tools view shows the full output. The chat&rsquo;s plots and its checks, such as blocking analyses
+                    of genes nobody asked about and the number check, stay in the chat: an outside assistant gets the
+                    results with their sources, and checking its answer is up to it.
+                </P>
+                <P>
+                    Each address can make 100 tool calls an hour, and calls to the slowest services run a few at a
+                    time, so heavy use waits its turn; for more, use the Feedback link. The service records each
+                    call&rsquo;s tool, time, and duration with a coded ID for the address, not the address itself or
+                    what was asked. Please cite LinkedOmicsChat and the resources each result names (About › Cite).
+                </P>
 
                 <BackToTop />
 
