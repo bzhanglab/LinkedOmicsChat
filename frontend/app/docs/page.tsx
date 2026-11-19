@@ -311,11 +311,12 @@ export default function DocsPage() {
                 <P>
                     Under each written summary, the number check shows how its numbers compare with the analysis
                     output. A number with a dotted underline was found there; hold the pointer over it to see which
-                    result it came from. A highlighted number was not found, so check it before you use it. Counts the
-                    summary works out itself, such as &ldquo;9 of 50 genes&rdquo;, and thresholds such as p &lt; 0.05
-                    are not checked. &ldquo;Found&rdquo; means a value that rounds to the number is recorded next to the
-                    gene, cohort, or term the sentence names. It does not confirm that the sentence reads the value
-                    correctly, and when one sentence names several results, swapped values are not caught.
+                    result it came from. A highlighted number is in no tool result, so check it before you use it.
+                    Counts the summary works out itself, such as &ldquo;9 of 50 genes&rdquo;, and thresholds such as
+                    p &lt; 0.05 are not checked. &ldquo;Found&rdquo; means a value that rounds to the number is in the
+                    output. It does not confirm that the sentence ties it to the right gene, cohort, or study, and in
+                    large results a short number can match an unrelated value by chance; the hover shows which result
+                    the value came from.
                 </P>
 
                 <BackToTop />

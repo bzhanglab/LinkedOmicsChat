@@ -543,11 +543,9 @@ function checkedNumberTitle(entry: CheckedNumber): string {
         const tool = bareToolName(entry.source.tool)
         // Labels repeat across data sources ("Survival association" for CPTAC and TCGA), so name the source
         const category = categoryForToolName(tool)
-        const label = `${category ? `${category} ` : ""}${(TOOL_DISPLAY[tool]?.label ?? tool).toLowerCase()}`
-        const where = `${label}${entry.source.path ? ` › ${entry.source.path}` : ""}: ${entry.source.value}`
-        return entry.anchored
-            ? `Found in the tool results. ${where}`
-            : `A value that rounds to this is in the tool results, but the sentence names no gene or term that ties it to one result. ${where}`
+        const label = tool ? `${category ? `${category} ` : ""}${(TOOL_DISPLAY[tool]?.label ?? tool).toLowerCase()}` : ""
+        const where = [label, entry.source.path].filter(Boolean).join(" › ")
+        return `Found in the tool results. ${where}: ${entry.source.value}`
     }
     if (entry.status === "not_found") {
         return "Not found in the tool results. It may be rounded differently, worked out by the model, or wrong, so check it before using it."

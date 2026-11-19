@@ -5,10 +5,11 @@ results), not found, or not checked (counts the model made, percentages it compu
 thresholds such as "p < 0.05", none of which a tool result would contain). The answer is
 returned with every number wrapped as a ``[text](#num:i)`` link so the frontend can show it.
 
-Large results hold thousands of values, so a number matching somewhere means little. When the
-sentence names something that tells results apart (a gene, a cohort, a GO term), only values
-recorded next to it count: each value carries the words of its path, of the short text fields
-in the same record, and of the gene the tool was called for.
+"Not found" therefore means no tool returned the value. Which result a number belongs to is not
+judged: large results hold thousands of values, so "found" says the value exists, not that the
+sentence reads it correctly. The words the sentence names (a gene, a cohort, a GO term) pick
+which matching value the hover shows: each value carries the words of its path, of the short text
+fields in the same record, and of the gene the tool was called for.
 """
 
 import bisect
@@ -106,10 +107,13 @@ def _collect_values(raw_results: Dict[str, Any]) -> List[Value]:
             # A record is named by its short text labels (a GO term's ID and description, an omics
             # layer) and its numeric field names (hr, pvalue, n), which every value in it shares.
             # Text holding numbers ("No significant association with survival (p=0.77)") is a
-            # result, not a label.
+            # result, not a label; an identifier with digits in it (GSE25066, Liu_NatMed_2019_nivo)
+            # is still a label.
             record = set(record_words)
             for key, child in node.items():
-                if isinstance(child, str) and len(child) <= 80 and next(_numbers_in(child), None) is None:
+                if isinstance(child, str) and len(child) <= 80 and (
+                    not any(ch.isspace() for ch in child.strip()) or next(_numbers_in(child), None) is None
+                ):
                     record |= _words(child)
                 elif isinstance(child, (int, float)) and not isinstance(child, bool):
                     record |= _words(str(key))
@@ -141,14 +145,20 @@ def _sentence_span(text: str, start: int, end: int) -> Tuple[int, int]:
     return (lefts[-1] if lefts else 0), (right.start() if right else len(text))
 
 
-def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Check each number in ``text`` against ``raw_results``; None if there is nothing to check."""
+def check_numbers(text: str, raw_results: Dict[str, Any], model_input: str = "") -> Optional[Dict[str, Any]]:
+    """Check each number in ``text`` against ``raw_results``; None if there is nothing to check.
+
+    ``model_input`` is the text the summary was written from. It is the tool results, but prepared:
+    some values differ from the raw ones (an FDR of 0 shown as 1e-300), so its numbers count too,
+    when no raw value matches.
+    """
     if not text or not raw_results:
         return None
     values = _collect_values(raw_results)
     if not values:
         return None
     keys = [v[0] for v in values]
+    prepared = sorted(set(_numbers_in(model_input))) if model_input else []
     word_counts = Counter(word for v in values for word in v[4])
     distinctive = {word for word, count in word_counts.items() if count < _DISTINCTIVE_SHARE * len(values)}
     clause_distinctive = {word for word, count in word_counts.items() if count < _CLAUSE_SHARE * len(values)}
@@ -168,7 +178,7 @@ def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, 
     pieces: List[str] = []
     cursor = 0
     previous_end = 0
-    found_before: Dict[str, Dict[str, Any]] = {}  # written number -> its earlier found entry
+    number_ends: List[int] = []
     for match in _NUMBER_RE.finditer(text):
         start, end = match.span()
         if any(s <= start < e for s, e in skipped):
@@ -192,12 +202,20 @@ def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, 
                 lo = bisect.bisect_left(keys, target - margin)
                 hi = bisect.bisect_right(keys, target + margin)
                 candidates.extend(values[lo:hi])
-            # When the sentence, or the words just before the number, name something that tells
-            # results apart, only values recorded next to it count. Names can come before the number
-            # ("mitotic cell cycle phase transition (FDR 7.03e-14)") or after it ("r = 0.91 in UCEC").
-            # The best match shares the most such words, then is closest.
+            # The words of the sentence, and those just before the number, that tell results apart
+            # pick the value the hover shows: the one recorded next to most of them, then the closest.
+            # Names can come before the number ("mitotic cell cycle phase transition (FDR 7.03e-14)")
+            # or after it ("r = 0.91 in UCEC").
             sentence_start, sentence_end = _sentence_span(text, start, end)
-            clause = text[max(previous_end, sentence_start):start]
+            clause_start = max(previous_end, sentence_start)
+            # Numbers in parentheses describe what is named just before them, so their clause reaches
+            # back there: "Liu_NatMed_2019_nivo (score 0.741, FDR 0.19)" for 0.19 as well as for 0.741
+            open_paren = text.rfind("(", sentence_start, start)
+            if open_paren > text.rfind(")", sentence_start, start):
+                before = [e for e in number_ends if e <= open_paren]
+                owner_start = max(sentence_start, text.rfind(")", sentence_start, open_paren) + 1, before[-1] if before else 0)
+                clause_start = min(clause_start, owner_start)
+            clause = text[clause_start:start]
             sentence_words, clause_words = _answer_words(text[sentence_start:sentence_end]), _answer_words(clause)
             named = (sentence_words & distinctive) | (clause_words & clause_distinctive)
 
@@ -205,17 +223,18 @@ def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, 
                 own, own_clause = tool_distinctive[c[1]]
                 return named | (sentence_words & own) | (clause_words & own_clause)
 
-            candidates = [c for c in candidates if not named_for(c) or c[4] & named_for(c)]
+            # Any value that rounds to the number counts as found. Reading which gene, cohort, or study
+            # a sentence means from its words misfired again and again (2026-11-19), so the names only
+            # choose which value the hover shows.
+            prepared_match = next((v for target, tol in targets for v in prepared[bisect.bisect_left(prepared, target - tol * 1.000001):]
+                                   if v <= target + tol * 1.000001), None)
             if candidates:
                 best = min(candidates, key=lambda c: (-len(c[4] & named_for(c)), abs(c[0] - value)))
                 entry["status"] = "found"
                 entry["source"] = {"tool": best[1], "path": best[2], "value": best[3]}
-                # Without a named gene or term, a match can be chance in large results
-                entry["anchored"] = bool(named_for(best))
-            elif written in found_before:
-                # A later mention of a value already found ("a borderline p-value of 0.0394") is the
-                # same value, even when its sentence names other things
-                entry.update({k: found_before[written][k] for k in ("status", "source", "anchored")})
+            elif prepared_match is not None:
+                entry["status"] = "found"
+                entry["source"] = {"tool": "", "path": "the results as prepared for the summary", "value": f"{prepared_match:g}"}
             elif match.group("pct") or not (("." in match.group("mantissa")) or match.group("exp") or match.group("exp10")):
                 # Whole numbers and percentages that no tool returned are counts or shares the
                 # model worked out ("9 of 50 genes", "18%")
@@ -223,12 +242,11 @@ def check_numbers(text: str, raw_results: Dict[str, Any]) -> Optional[Dict[str, 
             else:
                 entry["status"] = "not_found"
 
-        if entry["status"] == "found":
-            found_before.setdefault(written, entry)
         pieces.append(text[cursor:start])
         pieces.append(f"[{written}](#num:{len(numbers)})")
         cursor = end
         previous_end = end
+        number_ends.append(end)
         numbers.append(entry)
 
     if not numbers:

@@ -4829,8 +4829,12 @@ DIRECT RESPONSE RULES:
             else:
                 rich_message = f"{cap_note}\n\n{rich_message}"
 
-        # The summary is the model's own wording; the rest of the message is built from tool output
-        number_check = check_numbers(display_summary, raw_results_final) if show_summary else None
+        # The summary is the model's own wording; the rest of the message is built from tool output.
+        # It was written from the results as prepared for it, whose values can differ from the raw ones.
+        number_check = check_numbers(
+            display_summary, raw_results_final,
+            model_input=self._parent._compact_results_for_llm(raw_results_final) if self._parent is not None else "",
+        ) if show_summary else None
 
         input_tokens = usage_tracker.get("input_tokens", 0)
         output_tokens = usage_tracker.get("output_tokens", 0)

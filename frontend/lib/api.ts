@@ -495,7 +495,6 @@ export interface CheckedNumber {
     text: string
     status: "found" | "not_found" | "not_checked"
     kind?: "count" | "threshold"
-    anchored?: boolean  // matched next to a gene or term the sentence names
     source?: { tool: string; path: string; value: string }
 }
 
