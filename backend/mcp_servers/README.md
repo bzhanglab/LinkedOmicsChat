@@ -56,6 +56,9 @@ means, and how to read the result. Then:
    Tools view shows the function name). Add a data-source entry in `frontend/lib/toolCategories.ts`.
 5. Add a sentence for it to `SENTENCES` in `frontend/lib/methodsExport.ts`, naming the resource it cites; without
    one, the methods text export describes it only as "also used".
+6. If it analyzes one gene, it can be repeated for other genes: add it to `_GENE_ARG` in
+   `services/repeat_workflow.py` (and its batch tool to `_BATCH_OF`), give it a column name in `_LABELS` and a
+   cell summary in `_HEADLINES`, and add it to `GENE_ARG` (or `BATCH_TOOLS`) in `frontend/lib/repeat.ts`.
 
 Each server also runs on its own (`venv/bin/python mcp_servers/literature_server.py`), but it then just waits
 for an MCP client on stdin. In practice it is easier to try a tool through the app's Tools view or

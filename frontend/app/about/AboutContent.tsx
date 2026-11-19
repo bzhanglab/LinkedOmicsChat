@@ -43,6 +43,12 @@ const ANALYSES = [
         example: "",
     },
     {
+        name: "Repeat for other genes",
+        desc: "Run an answer's analyses of a single gene again for up to 10 other genes, without the language model: hold the pointer over the answer and click \"Repeat for other genes\". The result is one table with a row per gene, followed by the plots.",
+        // No example link: a repeat starts from an earlier answer
+        example: "",
+    },
+    {
         name: "Survival",
         desc: "CPTAC survival by RNA or protein in 10 cohorts, and TCGA survival by RNA, methylation, RPPA, copy number, or miRNA in 35 cohorts. TCGA also supports pan-cancer comparisons and genome-wide scans within a cohort. TCGA results include Kaplan-Meier plots with at-risk tables; in pan-cancer comparisons, for up to five cohorts with p < 0.05.",
         example: "Show TP53 overall survival in BRCA.",

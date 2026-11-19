@@ -175,6 +175,10 @@ const FAQS = [
         text: "Yes. Type a few genes into your question, or attach a longer list with the paperclip next to the chat box (a text, CSV, or TSV file, or pasted genes, up to 2,000) and then ask about \"my list\".",
     },
     {
+        term: "Can I run the same analyses for other genes?",
+        text: "Yes. Hold the pointer over an answer and click \"Repeat for other genes\" to run its analyses of a single gene again for up to 10 genes, without the language model. The results come back as one table with a row per gene, followed by the plots.",
+    },
+    {
         term: "Can I repeat an analysis outside the chat?",
         text: "Yes. Signed-in users can export a chat as a Python script that runs the same analyses with the same inputs through the LinkedOmicsChat tool API. The Tools view also runs any single analysis with your own inputs.",
     },
@@ -245,6 +249,16 @@ export default function DocsPage() {
                     trials, FunMap neighbors, and recent PubMed articles) and shows them all with a written overview. A
                     link such as <code className="text-[13px]">chat.linkedomics.org/?q=Report%20on%20ERBB2</code> opens
                     the chat with the request filled in.
+                </P>
+                <P>
+                    To run an answer&rsquo;s analyses again for other genes, hold the pointer over the answer and click
+                    &ldquo;Repeat for other genes&rdquo;. Type up to 10 genes, or use an attached list (its first 10
+                    genes if it is longer). The analyses of a single gene run again with the new genes, without the
+                    language model, so there is no written summary: the answer opens with one table, a row per gene,
+                    followed by the usual plots. It takes a few seconds, or up to about half a minute for all of a gene
+                    report&rsquo;s analyses. Steps that are not about one gene, such as pathway enrichment or a
+                    literature search, are not repeated, and the button appears only on answers that analyzed a single
+                    gene.
                 </P>
                 <P>
                     If a question is too vague to act on, such as a gene with no cancer type or analysis, the app asks
@@ -345,7 +359,9 @@ export default function DocsPage() {
                     from the model, working from the same results. After the summary is written, the server looks for each
                     of its numbers in the tool output, allowing for rounding, which is what the number check shows. A gene
                     report skips the model&rsquo;s choice of tools: its seven analyses run at once, and the model writes
-                    only the summary. The backend is FastAPI with LangGraph and FastMCP, and the
+                    only the summary. A repeat for other genes skips the model altogether: it reruns an earlier
+                    answer&rsquo;s analyses with the new genes and builds the table from the results. The backend is
+                    FastAPI with LangGraph and FastMCP, and the
                     frontend is Next.js; the source is on{" "}
                     <ExtLink href="https://github.com/bzhanglab/LinkedOmicsChat">GitHub</ExtLink>.
                 </P>

@@ -25,14 +25,19 @@ and old names in one batched MyGene.info request, and keeps at most 2,000 genes)
 The model passes the placeholder `MY_LIST`, and the tool step swaps in the whole list for WebGestalt and the first
 50 genes for the per-gene batch tools; long batches get one combined heatmap or plots for their first 10 genes. A
 gene report ("Report on <gene>", matched by `_parse_gene_report_request` in `langgraph_orchestrator.py`) runs the
-seven calls in `_gene_report_calls` at once and builds the answer from them without the agent. After every
-summary, `backend/services/number_check.py` looks for each of its numbers in the tool results and returns the
-summary with the numbers marked for the frontend.
+seven calls in `_gene_report_calls` at once and builds the answer from them without the agent. A repeat
+("Repeat for other genes" on an answer) sends `repeat` with the request: the answer's tool calls and up to 10
+genes. `plan_repeat` in `backend/services/repeat_workflow.py` keeps the calls about one gene, using the batch
+tool where there is one, and `_run_direct_tool_calls` runs them without the model (at most two TCGA calls at
+once, since the TCGA service fails under more, and failed calls get one retry). The answer has no summary;
+`combined_table` puts a table with one row per gene above the usual plots. After every summary,
+`backend/services/number_check.py` looks for each of its numbers in the tool results and returns the summary
+with the numbers marked for the frontend.
 
-The chat history sent to the browser includes each answer's tool calls and their inputs (`tool_calls`), which
-the Python script and methods text exports are built from (`frontend/lib/pythonExport.ts` and
-`frontend/lib/methodsExport.ts`). The references the methods text cites are `REFERENCES` in `methodsExport.ts`;
-the About page keeps its own copy.
+Each answer sent to the browser, live or from the chat history, includes its tool calls and their inputs
+(`tool_calls`), which the Python script and methods text exports (`frontend/lib/pythonExport.ts` and
+`frontend/lib/methodsExport.ts`) and the repeat are built from. The references the methods text cites are
+`REFERENCES` in `methodsExport.ts`; the About page keeps its own copy.
 
 The LLM is chosen from `DEFAULT_LLM_MODEL` in `backend/core/llm_factory.py`: a name containing `claude` uses
 Anthropic and one containing `gemini` uses Google; anything else goes to OpenAI. `USE_OLLAMA=true` switches to a
