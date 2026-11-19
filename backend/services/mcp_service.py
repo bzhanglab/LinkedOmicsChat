@@ -68,7 +68,9 @@ class McpService:
         self._calls: Dict[str, Deque[float]] = defaultdict(deque)
         self._running: Dict[str, asyncio.Semaphore] = {}
         self.server.list_tools()(self._list_tools)
-        self.server.call_tool()(self._call_tool)
+        # No schema check here: the aggregator first wraps a single value sent for a list argument,
+        # then the tool server checks the arguments and reports what is wrong
+        self.server.call_tool(validate_input=False)(self._call_tool)
         # Stateless: every request stands alone, so it works behind any number of backend workers
         self.manager = StreamableHTTPSessionManager(app=self.server, stateless=True)
 
