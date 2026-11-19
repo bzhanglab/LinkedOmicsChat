@@ -6,7 +6,7 @@ is a guide to the code and our own deployment, not a self-hosting guide.
 ## How it is put together
 
 The frontend (`frontend/`) is Next.js 14. The backend (`backend/`) is FastAPI, with a LangGraph agent that
-answers questions by calling 26 tools from three MCP servers in `backend/mcp_servers/`: 23 analyses on the
+answers questions by calling 27 tools from three MCP servers in `backend/mcp_servers/`: 24 analyses on the
 LinkedOmics family of APIs, FunMap, and WebGestalt, one gene ID converter, and two PubMed tools. The
 aggregator (`backend/services/mcp_aggregator.py`) starts the relevant server as a short-lived stdio process
 for every tool call, so edits to a server file take effect on the next call. See
@@ -30,9 +30,21 @@ seven calls in `_gene_report_calls` at once and builds the answer from them with
 genes. `plan_repeat` in `backend/services/repeat_workflow.py` keeps the calls about one gene, using the batch
 tool where there is one, and `_run_direct_tool_calls` runs them without the model (at most two TCGA calls at
 once, since the TCGA service fails under more, and failed calls get one retry). The answer has no summary;
-`combined_table` puts a table with one row per gene above the usual plots. After every summary,
-`backend/services/number_check.py` looks for each of its numbers in the tool results and returns the summary
-with the numbers marked for the frontend.
+`combined_table` puts a table with one row per gene above the usual plots.
+
+Treatment response matching (`match_signature_to_treatment_response`) tests a list against every
+ClinicalOmicsDB study. `backend/mcp_servers/signature_matching.py` keeps each study's full gene ranking (AUROC per
+gene) as one matrix in `backend/data/cache/clinicalomicsdb/`, with old gene names mapped to current symbols. The
+backend refreshes it in the background at startup when it is missing or a week old (about 1.5 minutes;
+`python mcp_servers/signature_matching.py --refresh` does it by hand), and tool calls return "unavailable" until
+the first copy exists. In each study the list's genes are compared with all other measured genes (Mann-Whitney;
+the score is the rank-biserial correlation). That gene-level p alone overstates co-expressed signatures, so the
+p used is the larger of it and a patient-level p from the AUROC the score implies (`_AUC_SCALE`,
+`_AUC_STEEPNESS`, fitted on the 50 Hallmark sets against ClinicalOmicsDB's own patient-level gene-set results),
+then Benjamini-Hochberg across studies. Refit those two constants if the ClinicalOmicsDB studies change much.
+
+After every summary, `backend/services/number_check.py` looks for each of its numbers in the tool results and
+returns the summary with the numbers marked for the frontend.
 
 Each answer sent to the browser, live or from the chat history, includes its tool calls and their inputs
 (`tool_calls`), which the Python script and methods text exports (`frontend/lib/pythonExport.ts` and
@@ -64,7 +76,7 @@ USE_MCP=true
 MCP_LINKEDOMICS_SERVER_ENABLED=true
 ```
 
-Without the last two lines only the gene ID and PubMed servers load (3 of the 26 tools). Keep `MAX_TOKENS`
+Without the last two lines only the gene ID and PubMed servers load (3 of the 27 tools). Keep `MAX_TOKENS`
 well above the 4000 default: for models that think before answering, the thinking counts against the limit,
 and a low limit cuts answers short without an error.
 
@@ -85,7 +97,7 @@ There is no unit-test suite; two scripts in `backend/admin/` cover what matters:
 
 ```bash
 cd backend
-venv/bin/python admin/check_tools.py                    # runs all 26 tools once against http://localhost:8000
+venv/bin/python admin/check_tools.py                    # runs all 27 tools once against http://localhost:8000
 venv/bin/python admin/check_tools.py --base-url https://chat.linkedomics.org
 venv/bin/python admin/langgraph_eval.py                 # 50 golden questions
 venv/bin/python admin/langgraph_eval.py --case cis_and_enrichment --verbose

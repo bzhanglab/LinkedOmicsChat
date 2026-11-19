@@ -146,7 +146,7 @@ const DATA_SOURCES = [
     { name: "LinkedOmics", url: "https://www.linkedomics.org", text: "TCGA analyses across 35 cohorts: survival by RNA, methylation, RPPA protein, copy number, or miRNA, and same-gene correlations between methylation, RNA, RPPA, and copy number." },
     { name: "LinkedOmicsKB", url: "https://kb.linkedomics.org", text: "CPTAC proteogenomics for 10 cohorts: tumor-vs-normal RNA and protein, survival, and same-gene correlations." },
     { name: "LinkedOmics Targets", url: "https://targets.linkedomics.org", text: "Drug-target annotations per gene: tier, drugs, cell-line dependency, tumor overexpression, phosphosite activation, driver and antigen evidence." },
-    { name: "ClinicalOmicsDB", url: "https://trials.linkedomics.org", text: "Public expression studies from clinical trials with treatment-response labels; used for per-study associations and cross-study meta-analysis." },
+    { name: "ClinicalOmicsDB", url: "https://trials.linkedomics.org", text: "Public expression studies from clinical trials with treatment-response labels; used for per-study associations, cross-study meta-analysis, and matching your own gene lists to treatment response." },
     { name: "FunMap", url: "https://funmap.linkedomics.org", text: "Functional network; the app retrieves a gene's top-50 neighborhood." },
     { name: "WebGestalt", url: "https://www.webgestalt.org", text: "Gene Ontology over-representation analysis for gene lists." },
     { name: "PubMed", url: "https://pubmed.ncbi.nlm.nih.gov", text: "Article search and article details." },
@@ -173,6 +173,10 @@ const FAQS = [
     {
         term: "Can I analyze my own genes?",
         text: "Yes. Type a few genes into your question, or attach a longer list with the paperclip next to the chat box (a text, CSV, or TSV file, or pasted genes, up to 2,000) and then ask about \"my list\".",
+    },
+    {
+        term: "Can I test my own signature against treatment response?",
+        text: "Yes. Attach the list and ask which treatments it predicts response to, or click \"Match to treatments\" next to the list. It is tested against all 67 trial-linked studies in ClinicalOmicsDB, and you can limit it to a cancer type or a treatment, for example immunotherapy in melanoma.",
     },
     {
         term: "Can I run the same analyses for other genes?",
@@ -243,6 +247,18 @@ export default function DocsPage() {
                     for a sample gene list&rdquo; on the welcome page.
                 </P>
                 <P>
+                    With a list attached, you can also ask which treatments it predicts response to, or click &ldquo;Match
+                    to treatments&rdquo; next to the list; a signature of 5 or more genes typed into the question works
+                    too. The app tests the genes against treatment response in every trial-linked study in
+                    ClinicalOmicsDB (67 studies across 11 cancer types). In each study it checks whether the genes, as a
+                    group, rank toward responders or non-responders, and it sums up how consistently they fall on one
+                    side for immune checkpoint inhibitors, chemotherapy, and other targeted therapy. A signature&rsquo;s
+                    genes are usually expressed together, which makes a gene-by-gene test look stronger than the
+                    patients support, so significance is judged on each study&rsquo;s patients as well as its genes. Many
+                    studies are small, so a consistent direction across studies often says more than any single study.
+                    These are associations in past studies, not proof that the list predicts response.
+                </P>
+                <P>
                     For an overview of one gene, ask for a gene report, such as &ldquo;Report on ERBB2&rdquo;, or click
                     the report button next to the chat box. It runs seven analyses at once (tumor vs. normal expression
                     and survival in CPTAC, survival across TCGA cohorts, the drug-target profile, treatment response in
@@ -269,7 +285,7 @@ export default function DocsPage() {
                 </P>
                 <P>
                     To run a single analysis without the language model, open <strong className="font-medium text-slate-800">Tools</strong> in
-                    the sidebar. Each of the 26 tools has a form with an example input.
+                    the sidebar. Each of the 27 tools has a form with an example input.
                 </P>
 
                 <BackToTop />
@@ -332,7 +348,8 @@ export default function DocsPage() {
                 <H2 id="data-sources" icon={Database}>Data sources</H2>
                 <P>
                     LinkedOmicsChat keeps no copy of these datasets; each analysis queries the service when you ask. The
-                    one exception is the drug-target index, which is cached for a day.
+                    exceptions are the drug-target index, which is cached for a day, and ClinicalOmicsDB&rsquo;s per-study
+                    gene rankings for treatment response matching, which are refreshed weekly.
                 </P>
                 <DefList items={DATA_SOURCES.map((s) => ({ term: <ExtLink href={s.url}>{s.name}</ExtLink>, text: s.text }))} />
 
@@ -340,7 +357,7 @@ export default function DocsPage() {
 
                 <H2 id="architecture" icon={Cpu}>How it works</H2>
                 <P>
-                    The chat runs a LangGraph agent on Claude Haiku 5.5 (Anthropic API) with 26 tools served by three
+                    The chat runs a LangGraph agent on Claude Haiku 5.5 (Anthropic API) with 27 tools served by three
                     MCP servers: 23 analyses on the LinkedOmics family of resources, FunMap, and WebGestalt; one gene ID
                     converter; and two PubMed tools. Before the model sees a question, a keyword router decides which
                     group of tools is relevant and only those are offered, and any Ensembl or UniProt IDs are converted
@@ -361,7 +378,9 @@ export default function DocsPage() {
                     of its numbers in the tool output, allowing for rounding, which is what the number check shows. A gene
                     report skips the model&rsquo;s choice of tools: its seven analyses run at once, and the model writes
                     only the summary. A repeat for other genes skips the model altogether: it reruns an earlier
-                    answer&rsquo;s analyses with the new genes and builds the table from the results. The backend is
+                    answer&rsquo;s analyses with the new genes and builds the table from the results. Treatment response
+                    matching reads every ClinicalOmicsDB study&rsquo;s full gene ranking from a copy on the server,
+                    refreshed weekly. The backend is
                     FastAPI with LangGraph and FastMCP, and the
                     frontend is Next.js; the source is on{" "}
                     <ExtLink href="https://github.com/bzhanglab/LinkedOmicsChat">GitHub</ExtLink>.

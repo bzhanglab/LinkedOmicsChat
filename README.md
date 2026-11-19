@@ -11,7 +11,7 @@ them.
 
 ## How it works
 
-A LangGraph agent decides which of 26 tools a question needs and calls them. The tools run on three MCP servers
+A LangGraph agent decides which of 27 tools a question needs and calls them. The tools run on three MCP servers
 and query the live services: TCGA and CPTAC data through LinkedOmics and LinkedOmicsKB, ClinicalOmicsDB,
 LinkedOmics Targets, FunMap, WebGestalt, and PubMed. The plots and tables come straight from the tool output;
 the language model writes only the summary. LinkedOmicsChat keeps no copy of the underlying data.

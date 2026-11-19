@@ -29,7 +29,7 @@ const REFERENCES = [
 ]
 
 // Example questions are from the golden test set (backend/examples/langgraph_golden_queries.json),
-// except the gene report and gene list examples.
+// except the gene report, gene list, and treatment response matching examples.
 const ANALYSES = [
     {
         name: "Gene report",
@@ -41,6 +41,11 @@ const ANALYSES = [
         desc: "Attach a list with the paperclip next to the chat box, as a text, CSV, or TSV file or pasted genes. Ensembl and UniProt IDs and old gene names are converted to current symbols. Questions about \"my list\" then run enrichment on the whole list, up to 2,000 genes, and per-gene analyses on its first 50.",
         // No example link: a question about "my list" needs a list attached first
         example: "",
+    },
+    {
+        name: "Treatment response matching",
+        desc: "Your own gene list or signature, tested against treatment response in all 67 trial-linked studies in ClinicalOmicsDB. In each study, the genes as a group rank toward responders or non-responders; the answer sums up how consistently they do so for checkpoint inhibitors, chemotherapy, and other targeted therapy, with a plot and a table of every study. Attach a list and click \"Match to treatments\", or type 5 or more genes.",
+        example: "Does this signature predict response to immunotherapy: CXCL9, CXCL10, IDO1, GZMB, CD8A, STAT1, LAG3, PDCD1LG2?",
     },
     {
         name: "Repeat for other genes",
@@ -70,7 +75,7 @@ const ANALYSES = [
     },
     {
         name: "Treatment response",
-        desc: "Genes and gene sets associated with response or resistance in ClinicalOmicsDB studies, study lookup by drug or cancer type, and cross-study meta-analysis.",
+        desc: "Genes and gene sets associated with response or resistance in ClinicalOmicsDB studies, study lookup by drug or cancer type, cross-study meta-analysis, and matching your own gene list to treatment response.",
         example: "Which genes best predict paclitaxel response in breast cancer?",
     },
     {
@@ -171,7 +176,7 @@ export function AboutContent() {
                             comes back as the plots and tables those analyses produce, with a short written summary.
                         </p>
                         <p className="text-base text-muted-foreground leading-relaxed">
-                            It covers 35 TCGA cohorts and 10 CPTAC cohorts through 26 analysis tools. It is free and needs
+                            It covers 35 TCGA cohorts and 10 CPTAC cohorts through 27 analysis tools. It is free and needs
                             no account; signing in adds saved history, sharing, HTML export, and higher hourly limits.
                         </p>
                         <div>
@@ -211,8 +216,9 @@ export function AboutContent() {
                                 The other resources (ClinicalOmicsDB, LinkedOmics Targets, FunMap, WebGestalt, PubMed, and
                                 MyGene.info) are described under{" "}
                                 <Link href="/docs#data-sources" className="text-primary hover:underline">Data sources</Link>{" "}
-                                in the documentation. LinkedOmicsChat keeps no copy of any of these datasets; each analysis
-                                queries the service when you ask.
+                                in the documentation. Each analysis queries the service when you ask; LinkedOmicsChat keeps
+                                copies only of the drug-target index (for a day) and of ClinicalOmicsDB&rsquo;s per-study gene
+                                rankings for treatment response matching (refreshed weekly).
                             </p>
                         </div>
 

@@ -1,6 +1,6 @@
 # MCP tool servers
 
-These are the three FastMCP servers behind LinkedOmicsChat's 26 tools. The backend never keeps them running:
+These are the three FastMCP servers behind LinkedOmicsChat's 27 tools. The backend never keeps them running:
 `services/mcp_aggregator.py` starts the relevant server as a stdio subprocess for each tool call and lets it
 exit afterwards. Changes to a server file therefore take effect on the next call, without restarting the
 backend; in Docker, `backend/` is bind-mounted, so the same is true there. The cost is about 0.6–0.8 s of
