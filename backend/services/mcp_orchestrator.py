@@ -4177,6 +4177,16 @@ Please provide a clear, informative response about this gene. Include the key de
             parsed = _maybe_json(raw)
             _sections_before = len(sections)  # track whether this tool produces output
 
+            # A failed call arrives as {"error": ...}; say so, instead of a section that reads as "no data"
+            if isinstance(parsed, dict) and set(parsed) == {"error"}:
+                title = _placeholder_title_for_tool(tool_id) or tool_id.split("::", 1)[-1].replace("_", " ").capitalize()
+                sections.append(
+                    f"## {title}{f' - {gene_name}' if gene_name else ''}\n\n"
+                    "_This analysis failed, so its results are missing from this answer._\n"
+                )
+                _rendered_tool_ids.add(tool_id)
+                continue
+
             # Structured payload from MCPAggregator (images etc.)
             if isinstance(parsed, dict) and "mcp" in parsed and "parts" in parsed:
                 parts = parsed.get("parts") or []
