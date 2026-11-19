@@ -22,6 +22,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
     "meta_analyze_response_gene_sets":   "Running pathway meta-analysis...",
     "rank_study_response_genes":           "Fetching study gene rankings...",
     "rank_study_response_gene_sets":       "Fetching study pathway rankings...",
+    "match_signature_to_treatment_response": "Matching your genes to treatment response...",
     // FunMap / network
     "get_funmap_functional_neighborhood":            "Exploring functional network...",
     "get_drug_target_profile":                     "Checking drug targets...",

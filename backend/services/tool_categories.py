@@ -20,6 +20,7 @@ TOOL_CATEGORY: dict[str, str] = {
     "get_trial_study_details": "ClinicalOmicsDB",
     "rank_study_response_genes": "ClinicalOmicsDB",
     "rank_study_response_gene_sets": "ClinicalOmicsDB",
+    "match_signature_to_treatment_response": "ClinicalOmicsDB",
     # LinkedOmics Targets — drug target index
     "get_drug_target_profile": "LinkedOmics Targets",
     "batch_get_drug_target_profiles": "LinkedOmics Targets",

@@ -22,6 +22,7 @@ from core.config import settings
 from core.llm_factory import LLMFactory
 from core.database import SessionLocal
 from models.database import ChatSession, ChatMessage as DBChatMessage, TokenUsage, GuestTokenUsage
+from mcp_servers.signature_matching import compact_for_model as signature_compact_for_model
 from services.mcp_aggregator import MCPAggregator
 
 logger = logging.getLogger(__name__)
@@ -797,6 +798,80 @@ def _generate_gene_list_tile_static(batch_data: dict, is_survival: bool = False)
         }
     except Exception as e:
         logger.warning(f"[Gene list tile] Failed to generate: {e}")
+        return None
+
+
+_SIGNATURE_PLOT_STUDIES = 20
+
+
+def _generate_signature_dot_plot(results: list, n_genes: int) -> Optional[dict]:
+    """One dot per study for the top studies of a signature match: the score on the x-axis,
+    dark dots for FDR < 0.05, and dot size by number of patients. The CSV has every study."""
+    try:
+        import io, base64, csv as _csv, math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
+
+        rows = [r for r in results if isinstance(r, dict)][:_SIGNATURE_PLOT_STUDIES]
+        if not rows:
+            return None
+
+        def label(r: dict) -> str:
+            # The study ID tells trial arms apart (GSE194040_Paclitaxel_AMG386); the shared start of
+            # their treatment lists does not. The table has the full treatment.
+            study = str(r.get("study_id", ""))
+            study = study if len(study) <= 40 else study[:39] + "…"
+            return f"{study} · {r.get('cancer', '')}" + (" †" if r.get("small_study") else "")
+
+        fig, ax = plt.subplots(figsize=(8, 1.2 + 0.32 * len(rows)))
+        fig.patch.set_facecolor("white")
+        for i, r in enumerate(rows):
+            patients = (r.get("responders") or 0) + (r.get("non_responders") or 0)
+            significant = (r.get("fdr") if r.get("fdr") is not None else 1.0) < 0.05
+            ax.scatter(r.get("score", 0), i, s=20 + 6 * math.sqrt(max(patients, 0)),
+                       color="#0f766e" if significant else "#c9ced6", edgecolor="#334155", linewidth=0.5, zorder=3)
+        ax.axvline(0, color="#94a3b8", linewidth=0.8, zorder=1)
+        ax.set_xlim(-1.05, 1.05)
+        ax.set_ylim(len(rows) - 0.5, -0.5)
+        ax.set_yticks(range(len(rows)))
+        ax.set_yticklabels([label(r) for r in rows], fontsize=8)
+        ax.set_xlabel("← higher in non-responders      Score      higher in responders →", fontsize=9)
+        ax.grid(axis="x", color="#e2e8f0", linewidth=0.6, zorder=0)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        ax.legend(handles=[
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="#0f766e", markeredgecolor="#334155", markersize=7, label="FDR < 0.05"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="#c9ced6", markeredgecolor="#334155", markersize=7, label="FDR ≥ 0.05"),
+        ], loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8, frameon=False)
+        title = f"{n_genes}-gene signature vs. treatment response — ClinicalOmicsDB"
+        ax.set_title(title + (f" (top {len(rows)} of {len(results)} studies)" if len(results) > len(rows) else ""), fontsize=10)
+        fig.tight_layout()
+
+        png_buf = io.BytesIO()
+        fig.savefig(png_buf, format="png", dpi=150, bbox_inches="tight")
+        svg_buf = io.BytesIO()
+        fig.savefig(svg_buf, format="svg", bbox_inches="tight")
+        plt.close(fig)
+
+        csv_buf = io.StringIO()
+        writer = _csv.writer(csv_buf)
+        writer.writerow(["study_id", "cancer", "treatment", "responders", "non_responders", "small_study",
+                         "genes_measured", "higher_in", "score", "p_value", "fdr", "driving_genes"])
+        for r in results:
+            writer.writerow([r.get("study_id"), r.get("cancer"), r.get("treatment"), r.get("responders"),
+                             r.get("non_responders"), r.get("small_study"), r.get("genes_measured"), r.get("higher_in"),
+                             r.get("score"), r.get("p_value"), r.get("fdr"),
+                             ";".join(g.get("gene", "") for g in r.get("driving_genes") or [])])
+        return {
+            "png_b64": base64.b64encode(png_buf.getvalue()).decode(),
+            "svg": svg_buf.getvalue().decode(),
+            "csv": csv_buf.getvalue(),
+            "title": title,
+        }
+    except Exception as e:
+        logger.warning(f"[Signature plot] Failed to generate: {e}")
         return None
 
 
@@ -3190,6 +3265,9 @@ Classify this query. Return JSON only."""
                 return _compact_meta_analysis_tool_payload(value, item_key="top_gene_sets", label_key="gene_set")
             if bare_tool_id.endswith("get_funmap_functional_neighborhood"):
                 return _compact_funmap_payload(value)
+            if bare_tool_id.endswith("match_signature_to_treatment_response"):
+                _, payload = _parsed_payload(value)
+                return _rewrap_payload(value, signature_compact_for_model(payload)) if isinstance(payload, dict) else value
             return value
 
         compact: Dict[str, Any] = {}
@@ -5074,6 +5152,66 @@ Please provide a clear, informative response about this gene. Include the key de
                         md.append(f"[TABLE:{table_viz_id}]")
                     else:
                         md.append("_No significant predictive pathways found._")
+                md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
+                sections.append("\n".join(md) + "\n")
+                _rendered_tool_ids.add(tool_id)
+                continue
+
+            if tool_id.endswith("match_signature_to_treatment_response"):
+                if not isinstance(parsed, dict):
+                    continue
+                signature = parsed.get("signature") or {}
+                study_rows = parsed.get("results") or []
+                n_genes = signature.get("genes_used")
+                md = [f"## Treatment response matching — {n_genes} genes" if n_genes else "## Treatment response matching"]
+                if parsed.get("status") != "available" or not study_rows:
+                    md.append(f"_{parsed.get('message') or 'No study could be tested.'}_")
+                else:
+                    filters = parsed.get("filters") or {}
+                    scope = ", ".join(x for x in [", ".join(filters.get("cancers") or []), filters.get("treatment") or ""] if x)
+                    md.append(
+                        f"Tested in **{parsed.get('studies_tested')}** trial-linked studies{f' ({scope})' if scope else ''}; "
+                        f"{signature.get('genes_found')} of {signature.get('genes_used')} genes are measured in at least one study."
+                    )
+                    md.append("")
+                    for c in parsed.get("by_treatment_class") or []:
+                        up, down = c.get("higher_in_responders", 0), c.get("higher_in_non_responders", 0)
+                        side, count = ("responders", up) if up >= down else ("non-responders", down)
+                        md.append(f"- **{c.get('treatment_class')}:** higher in {side} in {count} of {c.get('studies')} "
+                                  f"studies ({c.get('fdr_below_0_05')} with FDR < 0.05)")
+                    md.append("")
+                    plot = _generate_signature_dot_plot(study_rows, n_genes)
+                    if plot:
+                        viz_id = _uuid.uuid4().hex
+                        _visualizations.append({"type": "static_plot", "id": viz_id, "title": plot["title"],
+                                                **{k: plot[k] for k in ("png_b64", "svg", "csv")}})
+                        md.extend([f"[PLOT:{viz_id}]", ""])
+                    # Arms of one trial stay next to each other, ordered by the trial's best FDR
+                    best = {}
+                    for r in study_rows:
+                        best[r.get("series")] = min(best.get(r.get("series"), 1.0), r.get("fdr", 1.0))
+                    ordered = sorted(study_rows, key=lambda r: (best[r.get("series")], str(r.get("series")), r.get("fdr", 1.0)))
+
+                    def _fmt_fdr(q: float) -> str:
+                        return f"{q:.1e}" if q < 0.001 else f"{q:.3f}"
+
+                    md.append("| Study | Cancer | Treatment | R / NR | Higher in | Score | FDR | Driving genes |")
+                    md.append("|---|---|---|---|---|---|---|---|")
+                    for r in ordered:
+                        treatment = ", ".join(t.strip() for t in str(r.get("treatment", "")).split(",") if t.strip())
+                        md.append(
+                            f"| {r.get('study_id', '')} | {r.get('cancer', '')} | {treatment} "
+                            f"| {r.get('responders')} / {r.get('non_responders')}{' †' if r.get('small_study') else ''} "
+                            f"| {r.get('higher_in')} | {r.get('score', 0):+.2f} | {_fmt_fdr(r.get('fdr', 1.0))} "
+                            f"| {', '.join(g.get('gene', '') for g in (r.get('driving_genes') or [])[:3])} |"
+                        )
+                    md.append("")
+                    md.append(
+                        "_R / NR: responders / non-responders; † marks studies with fewer than 10 in either group. Score "
+                        "runs from −1 (the signature's genes rank toward non-responders) to +1 (toward responders). "
+                        "Significance is judged on each study's patients as well as its genes. These are associations in "
+                        "past studies, not proof that the signature predicts response._"
+                    )
                 md.append("\n> **Source:** [LinkedOmics Trials](#source:trials)")
                 sections.append("\n".join(md) + "\n")
                 _rendered_tool_ids.add(tool_id)

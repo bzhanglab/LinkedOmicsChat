@@ -208,9 +208,10 @@ def match_signature(
     genes: list[str],
     rankings: Rankings,
     cancers: Optional[list[str]] = None,
-    treatment: Optional[str] = None,
+    treatments: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    """Test a gene signature against treatment response in every cached study.
+    """Test a gene signature against treatment response in every cached study, or in the
+    studies of the given cancers and treatments (drug names; a study matches any of them).
 
     In each study, the signature genes' AUROCs are compared with those of all other measured
     genes (two-sided Mann-Whitney). The score is the rank-biserial correlation, from -1 (every
@@ -230,7 +231,7 @@ def match_signature(
     wanted = list(dict.fromkeys(str(g).strip().upper() for g in genes if str(g).strip()))
     rows = rankings.gene_rows(wanted)
     cancer_filter = {c.strip().lower() for c in cancers or [] if c.strip()}
-    treatment_filter = (treatment or "").strip().lower()
+    treatment_filter = [t.strip().lower() for t in treatments or [] if t.strip()]
 
     tested: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -238,7 +239,7 @@ def match_signature(
     for column, study in enumerate(rankings.studies):
         if cancer_filter and study["disease"].lower() not in cancer_filter:
             continue
-        if treatment_filter and treatment_filter not in study["treatment"].lower():
+        if treatment_filter and not any(t in study["treatment"].lower() for t in treatment_filter):
             continue
         auc = rankings.auc[:, column]
         measured = ~np.isnan(auc)
@@ -295,6 +296,48 @@ def match_signature(
         "studies_tested": len(tested),
         "studies_skipped": skipped,
         "results": tested,
+    }
+
+
+def by_treatment_class(results: list[dict[str, Any]], classes: dict[str, set[str]]) -> list[dict[str, Any]]:
+    """How consistently the signature falls on one side within each treatment class.
+
+    Most single studies are too small to reach significance, so the count of studies on each
+    side is often the clearest result. A combination counts in each class it belongs to.
+    """
+    summary = []
+    for name, drugs in classes.items():
+        members = [r for r in results if any(d in r["treatment"].lower() for d in drugs)]
+        if members:
+            summary.append({
+                "treatment_class": name,
+                "studies": len(members),
+                "higher_in_responders": sum(r["higher_in"] == "responders" for r in members),
+                "higher_in_non_responders": sum(r["higher_in"] == "non-responders" for r in members),
+                "fdr_below_0_05": sum(r["fdr"] < 0.05 for r in members),
+            })
+    return summary
+
+
+MODEL_ROWS = 15
+
+
+def compact_for_model(payload: dict[str, Any], rows: int = MODEL_ROWS) -> dict[str, Any]:
+    """The tool result as the chat model and the summary step see it: every study row is about
+    700 characters, so they get the overview fields and the top rows with their key fields."""
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return payload
+    keep = ("study_id", "cancer", "treatment", "responders", "non_responders", "small_study",
+            "genes_measured", "higher_in", "score", "fdr")
+    return {
+        **{k: v for k, v in payload.items() if k != "results"},
+        "results_shown": f"top {min(rows, len(results))} of {len(results)} studies by FDR",
+        "results": [
+            {**{k: r.get(k) for k in keep}, "fdr": float(f"{r.get('fdr', 1.0):.2g}"),
+             "driving_genes": [g["gene"] for g in r.get("driving_genes") or []]}
+            for r in results[:rows]
+        ],
     }
 
 

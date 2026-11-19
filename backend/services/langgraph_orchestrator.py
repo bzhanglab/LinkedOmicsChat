@@ -35,6 +35,7 @@ from core.config import settings
 from core.llm_factory import LLMFactory
 from services.mcp_aggregator import MCPAggregator
 from services.number_check import check_numbers
+from mcp_servers.signature_matching import compact_for_model as signature_compact_for_model
 from services.repeat_workflow import (
     MAX_REPEAT_GENES,
     combined_table as repeat_combined_table,
@@ -714,6 +715,7 @@ _TOOL_SCOPE_MAP: Dict[str, tuple[str, ...]] = {
         "linkedomics::meta_analyze_response_gene_sets",
         "linkedomics::rank_study_response_genes",
         "linkedomics::rank_study_response_gene_sets",
+        "linkedomics::match_signature_to_treatment_response",
     ),
     "trials_genes": (
         "linkedomics::meta_analyze_response_genes",
@@ -853,6 +855,11 @@ _TRIAL_META_GENE_KEYWORDS = (
 _TRIAL_META_PATHWAY_KEYWORDS = (
     "pathway", "pathways", "gene set", "gene sets", "geneset", "genesets",
     "signature", "signatures",
+)
+
+_OWN_LIST_PHRASES = (
+    "my list", "my gene list", "my genes", "my signature", "my gene set", "my geneset",
+    "our signature", "our genes", "this list", "this signature", "these genes", "attached list",
 )
 
 _TRIAL_META_INTENT_KEYWORDS = (
@@ -1517,8 +1524,12 @@ def _infer_trials_route_decision(query: str) -> RouteDecision:
     normalized = re.sub(r"\s+", " ", (query or "").strip().lower())
     padded = f" {normalized} "
 
-    # Keep study-specific and study-discovery requests on the broader trials workflow.
+    # Keep study-specific and study-discovery requests on the broader trials workflow, and
+    # questions about the user's own list or signature, which the broader workflow matches
+    # against treatment response ("does my signature predict ..." is not a pathway meta-analysis).
     if "study" in normalized or "studies" in normalized or re.search(r"\bgse\d+\b", normalized, re.IGNORECASE):
+        return RouteDecision(tool_scope="trials", workflow="clinical_trials")
+    if any(phrase in normalized for phrase in _OWN_LIST_PHRASES):
         return RouteDecision(tool_scope="trials", workflow="clinical_trials")
 
     has_meta_intent = any(keyword in normalized for keyword in _TRIAL_META_INTENT_KEYWORDS)
@@ -1919,6 +1930,15 @@ def _compact_drug_target(content: str) -> str:
     return json.dumps(data)
 
 
+def _compact_signature_matching(content: str) -> str:
+    """Overview fields and the top studies; all rows stay in the raw results for the table."""
+    try:
+        payload = json.loads(content)
+    except Exception:
+        return content
+    return json.dumps(signature_compact_for_model(payload)) if isinstance(payload, dict) else content
+
+
 def _compact_tool_message(tool_name: str, content: str) -> str:
     """Shrink tool outputs for the LLM while keeping raw payloads elsewhere.
 
@@ -1936,6 +1956,8 @@ def _compact_tool_message(tool_name: str, content: str) -> str:
         compacted = _compact_funmap(content)
     elif bare in ("get_drug_target_profile", "batch_get_drug_target_profiles"):
         compacted = _compact_drug_target(content)
+    elif bare == "match_signature_to_treatment_response":
+        compacted = _compact_signature_matching(content)
     else:
         compacted = content
     compacted = _strip_internal_fields(compacted)
@@ -2073,8 +2095,11 @@ def _make_tool_node(tools: List[BaseTool]):
 
             filled_from_list = bool(gene_list) and _is_gene_list_placeholder(args.get("proteins"))
             if filled_from_list:
-                is_enrichment = _bare_tool_name(original_tool_name) == "run_webgestalt_go_enrichment"
-                args["proteins"] = list(gene_list) if is_enrichment else gene_list[:_GENE_LIST_PER_GENE_LIMIT]
+                # Enrichment and signature matching take the whole list (they cap it themselves)
+                whole_list = _bare_tool_name(original_tool_name) in {
+                    "run_webgestalt_go_enrichment", "match_signature_to_treatment_response",
+                }
+                args["proteins"] = list(gene_list) if whole_list else gene_list[:_GENE_LIST_PER_GENE_LIMIT]
 
             # The guard stops genes the model invented; genes from the user's own list skip it
             validation_error = None if filled_from_list else _validate_tool_identifier_integrity(
@@ -2243,6 +2268,7 @@ def _build_tool_source_url(bare_tool_name: str, args: dict) -> Optional[str]:
         "search_gene_set_response_trials":       lambda a: f"{trials_home}/treatment_gene_set/",
         "rank_study_response_genes":       lambda a: f"{trials_home}/treatment_gene/",
         "rank_study_response_gene_sets":   lambda a: f"{trials_home}/treatment_gene_set/",
+        "match_signature_to_treatment_response": lambda a: f"{trials_home}/",
     }
     if bare_tool_name in _ARGS_TEMPLATES:
         try:
@@ -3427,7 +3453,8 @@ PLANNING RULES:
 - Clinical trial tools are only relevant when the user asks about drugs, treatments, or clinical trials — never call them for survival or expression queries. Use the right tool for the question:
   - Single gene → which drugs/studies predict response: `search_gene_response_trials`
   - Multiple genes → use `batch_search_gene_response_trials` instead of calling `search_gene_response_trials` repeatedly
-  - Pathway/gene set → drug sensitivity/resistance: `search_gene_set_response_trials`
+  - Pathway/gene set → drug sensitivity/resistance: `search_gene_set_response_trials` (named MSigDB sets only)
+  - The user's own gene list or signature (an attached list, or 5 or more genes they typed) → which treatments it predicts response or resistance to: `match_signature_to_treatment_response`. Report the treatment classes where most studies fall on one side (`by_treatment_class`), not only single studies, and say these are associations in past studies.
   - Study details/abstract: `get_trial_study_details`
   - Which studies exist for a drug/cancer: `search_trial_studies`
   - Top gene biomarkers across studies (treatment-centric): `meta_analyze_response_genes`
@@ -3437,7 +3464,7 @@ PLANNING RULES:
   - Workflow — study-specific analysis: call `search_trial_studies` first to find matching studies, then `rank_study_response_genes` or `rank_study_response_gene_sets` on a specific study ID, then optionally `get_trial_study_details` for context
 - For cross-study biomarker discovery, match the modality exactly:
   - If the user asks for genes / biomarkers / markers, call only `meta_analyze_response_genes`.
-  - If the user asks for pathways / gene sets / signatures, call only `meta_analyze_response_gene_sets`.
+  - If the user asks for pathways / gene sets / signatures, call only `meta_analyze_response_gene_sets` — except for the user's own list or signature, which goes to `match_signature_to_treatment_response`.
   - Do NOT call both unless the user explicitly asks for both genes and pathways/signatures.
 - IMPORTANT — drug name resolution: when the user specifies a broad or nested treatment class, use the `treatment_category` parameter (not `drugs`) in `search_trial_studies`, `meta_analyze_response_genes`, and `meta_analyze_response_gene_sets`. The tool accepts convenience aliases and ClinicalOmicsDB treatment-tree labels, then expands them to the correct treatment labels automatically.
   - "chemotherapy" / "chemo" / "cytotoxic" → treatment_category="Chemotherapy"
@@ -3806,10 +3833,11 @@ DIRECT RESPONSE RULES:
                 f"\nUPLOADED GENE LIST: The user attached a gene list, \"{gene_list_name}\", with {len(gene_list)} "
                 f"genes; it starts {', '.join(gene_list[:10])}. When the question is about their list "
                 "(\"my list\", \"my genes\", \"these genes\", \"the uploaded genes\"), pass the single value "
-                f"\"{_GENE_LIST_PLACEHOLDER}\" as the `proteins` argument of a batch tool or of "
-                "`run_webgestalt_go_enrichment`, and never type out genes from the list yourself. "
-                f"The app fills in the genes: all {len(gene_list)} for enrichment and the first {per_gene} "
-                "for the per-gene batch tools."
+                f"\"{_GENE_LIST_PLACEHOLDER}\" as the `proteins` argument of a batch tool, of "
+                "`run_webgestalt_go_enrichment`, or of `match_signature_to_treatment_response` (for which "
+                "treatments the list predicts response or resistance to), and never type out genes from the "
+                f"list yourself. The app fills in the genes: all {len(gene_list)} for enrichment and treatment "
+                f"response matching (up to 500), and the first {per_gene} for the per-gene batch tools."
             )
             if len(gene_list) > per_gene:
                 prompt += f" When you report per-gene results, say they cover the first {per_gene} genes of the list."

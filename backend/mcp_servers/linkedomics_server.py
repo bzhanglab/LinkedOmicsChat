@@ -24,6 +24,7 @@ import sys
 import requests
 from mcp.server.fastmcp import FastMCP, Image
 from PIL import Image as PILImage
+import signature_matching
 from linkedomics_tcga_params import (
     detect_tcga_survival_mode,
     normalize_tcga_cohort,
@@ -1667,6 +1668,98 @@ def rank_study_response_gene_sets(study_id: str, top_n: int = 20) -> dict[str, A
             "total_gene_sets": len(rows),
             "top_gene_sets": _rank_study_analytes(rows, top_n),
         },
+    }
+
+
+_SIGNATURE_MAX_GENES = 500
+# Some studies list drug classes instead of drugs ("taxane,platinum")
+_CHEMOTHERAPY_CLASS_WORDS = {"taxane", "platinum", "anthracycline"}
+_SIGNATURE_METHOD = (
+    "In each study, the signature's genes are compared with all other measured genes by how well each "
+    "separates responders from non-responders (AUROC). The score runs from -1 (the signature's genes rank "
+    "toward non-responders) to +1 (toward responders). A signature's genes are usually expressed together, "
+    "which makes a gene-level test look stronger than the patients support, so significance is judged on the "
+    "study's patients as well as its genes; FDR is across the studies tested. Studies with fewer than 10 "
+    "responders or non-responders are marked small. These are associations in past studies, not proof that "
+    "the signature predicts response."
+)
+
+
+def _signature_treatment_classes() -> dict[str, set[str]]:
+    checkpoint = {d.lower() for d in expand_treatment_category("Immune Checkpoint Inhibitor") or []}
+    chemotherapy = {d.lower() for d in expand_treatment_category("Chemotherapy") or []} | _CHEMOTHERAPY_CLASS_WORDS
+    # The treatment tree files checkpoint inhibitors under targeted therapy too
+    targeted = {d.lower() for d in expand_treatment_category("Targeted Therapy") or []} - checkpoint
+    return {"Immune checkpoint inhibitors": checkpoint, "Chemotherapy": chemotherapy, "Other targeted therapy": targeted}
+
+
+@mcp.tool()
+def match_signature_to_treatment_response(
+    proteins: list[str],
+    cancers: Optional[list[str]] = None,
+    treatment: Optional[str] = None,
+) -> dict[str, Any]:
+    """Test the user's own gene signature or gene list against treatment response in every trial-linked study in ClinicalOmicsDB, and rank the treatments where the signature's genes, as a group, are higher in responders or in non-responders.
+
+    Use this tool when:
+    - The user has their own gene list or signature (an attached list, passed as "MY_LIST", or 5 or more genes typed in the question) and asks which treatments, drugs, or trials it predicts response or resistance to
+    - "Which treatments does my list predict response to?", "Is my signature linked to immunotherapy response?", "Does this gene set predict resistance to chemotherapy in breast cancer?"
+    Do not use it for one gene (use `search_gene_response_trials`) or for a named MSigDB gene set such as HALLMARK_HYPOXIA (use `search_gene_set_response_trials`).
+
+    Args:
+        proteins (list[str]): Gene symbols of the signature, 5 to 500 genes; pass "MY_LIST" for the user's attached list.
+        cancers (list[str]): Optional; only studies of these cancers. Available: Breast, Ovarian, Lung, Leukemia,
+            Myeloma, Melanoma, Esophageal, Kidney, Bladder, Gastric, Glioblastoma.
+        treatment (str): Optional; a drug (e.g., "nivolumab") or a treatment class ("Immune Checkpoint Inhibitor",
+            "Chemotherapy", "Targeted Therapy") to limit the studies.
+
+    Returns:
+        status (str): `"available"`, or `"unavailable"` with a `message`.
+        signature (dict): Genes given, genes found in the studies, and genes in no study.
+        studies_tested (int): Studies with at least 5 of the signature's genes measured.
+        by_treatment_class (list[dict]): Per treatment class, the number of studies on each side and with FDR < 0.05.
+        results (list[dict]): One row per study, sorted by FDR: `study_id`, `cancer`, `treatment`, `responders`,
+            `non_responders`, `small_study`, `genes_measured`, `higher_in` ("responders" or "non-responders"),
+            `score` (-1 to +1), `p_value`, `fdr`, `driving_genes`, `clinical_trial_id`, `pubmed_id`.
+        method (str): How the test works and how to read it.
+
+    How to read it: a positive score means the signature's genes rank toward responders. Report the treatment classes where most studies fall on one side, since most single studies are too small to reach FDR < 0.05 alone, and say that these are associations in past studies, not proof that the signature predicts response.
+    """
+    genes = list(dict.fromkeys(str(g).strip().upper() for g in proteins or [] if str(g).strip()))
+    if len(genes) < signature_matching.MIN_SIGNATURE_GENES:
+        return {"status": "unavailable",
+                "message": f"A signature needs at least {signature_matching.MIN_SIGNATURE_GENES} genes; {len(genes)} were given."}
+    beyond_limit = max(0, len(genes) - _SIGNATURE_MAX_GENES)
+    genes = genes[:_SIGNATURE_MAX_GENES]
+    rankings = signature_matching.load_rankings()
+    if rankings is None:
+        return {"status": "unavailable",
+                "message": "The ClinicalOmicsDB study rankings are still being downloaded; try again in a minute or two."}
+    treatments = None
+    if treatment:
+        category = normalize_treatment_category(treatment)
+        treatments = (expand_treatment_category(category) if category else None) or [treatment]
+    result = signature_matching.match_signature(genes, rankings, cancers=cancers, treatments=treatments)
+    if not result["studies_tested"]:
+        return {"status": "unavailable",
+                "message": "No study measured at least 5 of these genes" + (" with the filters given." if cancers or treatment else "."),
+                "signature": {"genes_given": result["genes_given"], "genes_found": result["genes_in_studies"]}}
+    return {
+        "status": "available",
+        "signature": {
+            "genes_given": result["genes_given"] + beyond_limit,
+            "genes_used": len(genes),
+            "genes_found": result["genes_in_studies"],
+            "genes_in_no_study": result["genes_not_in_any_study"][:30],
+            "genes_beyond_limit": beyond_limit,
+        },
+        "filters": {"cancers": cancers or [], "treatment": treatment or ""},
+        "studies_tested": result["studies_tested"],
+        "studies_skipped": len(result["studies_skipped"]),
+        "by_treatment_class": signature_matching.by_treatment_class(result["results"], _signature_treatment_classes()),
+        "results": result["results"],
+        "method": _SIGNATURE_METHOD,
+        "data_date": time.strftime("%Y-%m-%d", time.localtime(rankings.built_at)),
     }
 
 

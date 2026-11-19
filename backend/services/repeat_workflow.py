@@ -55,6 +55,7 @@ _LABELS = {
     "linkedomics::meta_analyze_response_gene_sets": "gene set meta-analysis",
     "linkedomics::rank_study_response_genes": "study gene ranking",
     "linkedomics::rank_study_response_gene_sets": "study gene set ranking",
+    "linkedomics::match_signature_to_treatment_response": "treatment response matching",
     "linkedomics::search_gene_set_response_trials": "gene set response search",
     "linkedomics::rank_drug_targets": "target ranking",
     "linkedomics::search_drug_target_index": "target index search",
