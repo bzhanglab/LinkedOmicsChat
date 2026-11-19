@@ -178,6 +178,12 @@ class Settings(BaseSettings):
     TOOL_RATE_LIMIT_ENABLED: bool = True
     TOOL_GUEST_RATE_LIMIT_PER_HOUR: int = 30
     TOOL_USER_RATE_LIMIT_PER_HOUR: int = 120
+
+    # Open MCP service (/api/v1/mcp): the tools for outside AI assistants, limited per client address.
+    # MCP_BLOCKED_CLIENTS takes comma-separated addresses, or client IDs as the usage log records them.
+    MCP_SERVICE_ENABLED: bool = True
+    MCP_RATE_LIMIT_PER_HOUR: int = 100
+    MCP_BLOCKED_CLIENTS: str = ""
     
     model_config = SettingsConfigDict(
         env_file=".env",

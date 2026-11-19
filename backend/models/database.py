@@ -91,6 +91,19 @@ class GuestTokenUsage(Base):
     timestamp = Column(Float, nullable=False)
 
 
+class McpToolCall(Base):
+    """One tool call through the open MCP service, for usage numbers. The client is a salted hash of
+    its address, never the address."""
+    __tablename__ = "mcp_tool_calls"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client = Column(String, nullable=False, index=True)
+    tool = Column(String, nullable=False, index=True)
+    ok = Column(Boolean, nullable=False)
+    duration_ms = Column(Integer, nullable=False)
+    timestamp = Column(Float, nullable=False, index=True)
+
+
 class MessageFeedback(Base):
     """Thumbs-up / thumbs-down feedback on individual assistant messages"""
     __tablename__ = "message_feedback"

@@ -5,7 +5,7 @@ Main application entry point with API routes and MCP orchestration.
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import asyncio
 import logging
 from typing import AsyncGenerator
@@ -14,6 +14,7 @@ from api import admin, chat, auth, tools
 from core.config import settings
 from core.database import init_db
 from services.mcp_orchestrator import MCPOrchestrator
+from services.mcp_service import McpService, endpoint as mcp_endpoint
 from services.websocket_manager import ConnectionManager
 
 logging.basicConfig(level=logging.INFO)
@@ -56,7 +57,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
                 logger.warning("ClinicalOmicsDB rankings refresh failed: %s", exc)
         app.state.signature_cache_refresh = asyncio.create_task(asyncio.to_thread(_refresh))
 
-    yield
+    # The open MCP service at /api/v1/mcp serves the same tools to outside AI assistants
+    async with AsyncExitStack() as stack:
+        if settings.MCP_SERVICE_ENABLED:
+            mcp_endpoint.service = McpService(mcp_orchestrator.mcp_aggregator)
+            await stack.enter_async_context(mcp_endpoint.service.manager.run())
+            logger.info("MCP service at /api/v1/mcp")
+        yield
 
     logger.info("Shutting down LinkedOmicsChat backend...")
     await mcp_orchestrator.cleanup()
@@ -151,6 +158,8 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["Tools"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+# An ASGI route rather than a mount, so /api/v1/mcp answers without a redirect to /api/v1/mcp/
+app.add_route("/api/v1/mcp", mcp_endpoint, methods=["GET", "POST", "DELETE"])
 
 
 @app.exception_handler(Exception)

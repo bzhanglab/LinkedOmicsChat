@@ -5,6 +5,7 @@ Run from the backend/ directory:
     python admin/usage_report.py              # all users
     python admin/usage_report.py --days 30   # last N days
     python admin/usage_report.py --user bob  # specific user
+    python admin/usage_report.py --mcp        # tool calls through the open MCP service
 """
 import sys
 import argparse
@@ -22,7 +23,7 @@ import logging
 logging.disable(logging.CRITICAL)  # suppress all library noise
 
 from core.database import SessionLocal
-from models.database import TokenUsage, User, GuestTokenUsage
+from models.database import McpToolCall, TokenUsage, User, GuestTokenUsage
 
 
 def report(days: int | None = None, username: str | None = None):
@@ -146,9 +147,49 @@ def report(days: int | None = None, username: str | None = None):
         db.close()
 
 
+def mcp_report(days: int | None = None):
+    """Tool calls through the open MCP service: per month, per tool, and distinct clients (coded IDs)."""
+    from collections import defaultdict
+    import datetime
+    db = SessionLocal()
+    try:
+        since = time.time() - days * 86400 if days else 0
+        rows = db.query(McpToolCall).filter(McpToolCall.timestamp >= since).order_by(McpToolCall.timestamp).all()
+        if not rows:
+            print("\n  No MCP tool calls recorded.\n")
+            return
+        print(f"\n{'─'*72}")
+        print(f"  {'MCP SERVICE BY MONTH':<24} {'CALLS':>8}  {'CLIENTS':>8}  {'FAILED':>8}  {'MEDIAN MS':>10}")
+        print(f"{'─'*72}")
+        monthly: dict = defaultdict(list)
+        for r in rows:
+            monthly[datetime.datetime.fromtimestamp(r.timestamp).strftime("%Y-%m")].append(r)
+        for month in sorted(monthly):
+            calls = monthly[month]
+            durations = sorted(r.duration_ms for r in calls)
+            print(f"  {month:<24} {len(calls):>8}  {len({r.client for r in calls}):>8}  "
+                  f"{sum(not r.ok for r in calls):>8}  {durations[len(durations) // 2]:>10,}")
+        print(f"{'─'*72}")
+        print(f"  {'TOTAL':<24} {len(rows):>8}  {len({r.client for r in rows}):>8}  {sum(not r.ok for r in rows):>8}")
+        print(f"{'─'*72}")
+        by_tool: dict = defaultdict(int)
+        for r in rows:
+            by_tool[r.tool] += 1
+        print("  Calls per tool:")
+        for tool, n in sorted(by_tool.items(), key=lambda item: -item[1]):
+            print(f"    {tool:<52} {n:>8}")
+        print()
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LinkedOmicsChat usage report")
     parser.add_argument("--days", type=int, default=None, help="Limit to last N days")
     parser.add_argument("--user", type=str, default=None, help="Filter to a specific username")
+    parser.add_argument("--mcp", action="store_true", help="Show tool calls through the open MCP service instead")
     args = parser.parse_args()
-    report(days=args.days, username=args.user)
+    if args.mcp:
+        mcp_report(days=args.days)
+    else:
+        report(days=args.days, username=args.user)
