@@ -1939,6 +1939,15 @@ def _compact_signature_matching(content: str) -> str:
     return json.dumps(signature_compact_for_model(payload)) if isinstance(payload, dict) else content
 
 
+def agent_view_of_results(raw_results: Dict[str, Any]) -> str:
+    """The tool results as the agent read them (its compacted tool messages), for checking the
+    numbers in text the agent wrote itself."""
+    return "\n".join(
+        _compact_tool_message(key.rsplit("#", 1)[0], json.dumps(wrapped.get("_result"), default=str))
+        for key, wrapped in (raw_results or {}).items() if isinstance(wrapped, dict)
+    )
+
+
 def _compact_tool_message(tool_name: str, content: str) -> str:
     """Shrink tool outputs for the LLM while keeping raw payloads elsewhere.
 
@@ -4831,10 +4840,18 @@ DIRECT RESPONSE RULES:
 
         # The summary is the model's own wording; the rest of the message is built from tool output.
         # It was written from the results as prepared for it, whose values can differ from the raw ones.
-        number_check = check_numbers(
-            display_summary, raw_results_final,
-            model_input=self._parent._compact_results_for_llm(raw_results_final) if self._parent is not None else "",
-        ) if show_summary else None
+        prepared = self._parent._compact_results_for_llm(raw_results_final) if self._parent is not None else ""
+        number_check = None
+        if show_summary:
+            number_check = check_numbers(display_summary, raw_results_final, model_input=prepared)
+        elif raw_results_final and not repeat_plan and not no_data_only and rich_message.strip():
+            # Answers with literature have no separate summary: the agent wrote the message itself,
+            # from the tool results as compacted for it, so its numbers are checked there
+            number_check = check_numbers(
+                rich_message, raw_results_final, model_input=f"{prepared}\n{agent_view_of_results(raw_results_final)}",
+            )
+            if number_check:
+                number_check["target"] = "message"
 
         input_tokens = usage_tracker.get("input_tokens", 0)
         output_tokens = usage_tracker.get("output_tokens", 0)

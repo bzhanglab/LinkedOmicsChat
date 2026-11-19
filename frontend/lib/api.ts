@@ -499,9 +499,12 @@ export interface CheckedNumber {
 }
 
 export interface NumberCheck {
-    marked: string  // the summary with each number written as [text](#num:index)
+    marked: string  // the checked text with each number written as [text](#num:index)
     numbers: CheckedNumber[]
     counts: { found: number; not_found: number; not_checked: number }
+    // "message" when the checked text is the message itself (answers with literature have no
+    // separate summary); otherwise it is the summary
+    target?: "message"
 }
 
 export interface AdminOverview {

@@ -571,7 +571,7 @@ function NumberCheckLine({ check }: { check: NumberCheck }) {
     return (
         <div
             className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground"
-            title="Each number in the summary was looked up in this answer's tool results. Hover over a number to see where it came from."
+            title={`Each number in the ${check.target === "message" ? "answer" : "summary"} was looked up in this answer's tool results. Hover over a number to see where it came from.`}
         >
             <span className="font-medium">Number check</span>
             <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 border-b border-dotted border-teal-500" />{found} found in the tool results</span>
@@ -973,9 +973,12 @@ const MessagesPane = memo(function MessagesPane({
                                             {message.role === "assistant" && message.summary && message.summary.trim().length > 0 && message.summary !== message.content && (
                                                 <div className="mb-4 pb-4 border-b border-border">
                                                     <div className="rounded-md border border-border bg-muted/40 p-3">
-                                                        <AssistantMarkdown content={message.numberCheck?.marked ?? message.summary} numberCheck={message.numberCheck} />
+                                                        <AssistantMarkdown
+                                                            content={(message.numberCheck?.target !== "message" && message.numberCheck?.marked) || message.summary}
+                                                            numberCheck={message.numberCheck?.target !== "message" ? message.numberCheck : undefined}
+                                                        />
                                                     </div>
-                                                    {message.numberCheck && <NumberCheckLine check={message.numberCheck} />}
+                                                    {message.numberCheck && message.numberCheck.target !== "message" && <NumberCheckLine check={message.numberCheck} />}
                                                 </div>
                                             )}
 
@@ -1023,6 +1026,12 @@ const MessagesPane = memo(function MessagesPane({
                                                             }
                                                         }
 
+                                                        // Answers with literature have no separate summary, so their number check
+                                                        // marks the message itself; not for a preview, or when a data block was taken out
+                                                        const messageCheck =
+                                                            message.numberCheck?.target === "message" && !hasSeparateSummary && !isPreviewOnly && sanitizedContent === content
+                                                                ? message.numberCheck
+                                                                : undefined
                                                         const { remainingVisualizations, counts } = getSupportingDataArtifacts(
                                                             content,
                                                             message.visualizations
@@ -1107,7 +1116,8 @@ const MessagesPane = memo(function MessagesPane({
                                                                         </div>
                                                                     )}
                                                                     {/* Render markdown content (JSON block stripped when shown via EnrichmentRenderer) */}
-                                                                    <AssistantMarkdown content={sanitizedContent} toolSources={message.toolSources} visualizations={message.visualizations} />
+                                                                    <AssistantMarkdown content={messageCheck?.marked ?? sanitizedContent} toolSources={message.toolSources} visualizations={message.visualizations} numberCheck={messageCheck} />
+                                                                    {messageCheck && <NumberCheckLine check={messageCheck} />}
                                                                     {renderAdditionalVisualizations()}
                                                                 </div>
                                                             )
