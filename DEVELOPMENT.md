@@ -93,7 +93,7 @@ removed). After changing `requirements.txt`, regenerate the lock with the comman
 
 ## Checking changes
 
-There is no unit-test suite; two scripts in `backend/admin/` cover what matters:
+There is no unit-test suite; three scripts in `backend/admin/` cover what matters:
 
 ```bash
 cd backend
@@ -101,6 +101,8 @@ venv/bin/python admin/check_tools.py                    # runs all 27 tools once
 venv/bin/python admin/check_tools.py --base-url https://chat.linkedomics.org
 venv/bin/python admin/langgraph_eval.py                 # 50 golden questions
 venv/bin/python admin/langgraph_eval.py --case cis_and_enrichment --verbose
+venv/bin/python admin/check_numbers.py                  # the number check, on 60 saved answers
+venv/bin/python admin/check_numbers.py --collect        # ask those 60 questions again and save the answers
 ```
 
 `check_tools.py` uses the same example inputs as the app's Tools view (`TOOL_EXAMPLE_ARGS` in
@@ -109,6 +111,13 @@ venv/bin/python admin/langgraph_eval.py --case cis_and_enrichment --verbose
 calls, not the wording of the answer. A full run takes about 14 minutes and costs about $0.40 with Claude Haiku;
 prefix it with `DEFAULT_LLM_MODEL=...` to compare models. `usage_report.py` prints per-user token use, and
 `check_prepopulated_genes.py` validates the gene symbols in the frontend's example questions.
+
+Run `check_numbers.py` before changing `backend/services/number_check.py`. It fails if any number in the saved
+answers comes out "not found" (they were reviewed and have none) or if too few made-up numbers planted in them
+are flagged (80% in summaries; 45% in answers with literature, whose text the agent writes and whose many results
+let more made-up numbers match some value by chance), and it checks 20 number formats. The answers live in `backend/data/number_check_cases/`,
+which git ignores (about 36 MB); `--collect` rebuilds them for about $0.40, after which any new "not found"
+needs a look by hand.
 
 ## Deployment
 
