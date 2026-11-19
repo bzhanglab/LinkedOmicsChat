@@ -1267,11 +1267,13 @@ def _gene_report_summary_query(gene: str) -> str:
     Avoids "versus", "vs", "compare", and "rank": the summary step reads those as a multi-gene
     comparison and then demands a longer summary naming each gene it found in this text. Avoids
     words that are also gene symbols ("an" is AN), which would get empty "Data unavailable" sections.
+    Leaves out the literature: the report lists it in its own section, and the summary step does not
+    see it, so asking for it gets "literature results were not included".
     """
     return (
         f"Gene report for {gene}: summarize what these analyses show about {gene}: expression in "
         "tumors and adjacent normal tissue and survival in CPTAC cohorts, survival across TCGA cohorts, its "
-        "drug-target profile, treatment response in clinical trial cohorts, its FunMap functional neighbors, and recent literature."
+        "drug-target profile, treatment response in clinical trial cohorts, and its FunMap functional neighbors."
     )
 _RESULT_EMPTY_STATUS = {"error", "unavailable", "missing", "not_found", "no_studies", "no_data"}
 _EMPTY_TEXT_MARKERS = (
