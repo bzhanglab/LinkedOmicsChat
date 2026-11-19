@@ -127,8 +127,6 @@ class McpService:
             async with self._running.setdefault(name, asyncio.Semaphore(_CONCURRENCY.get(name, _DEFAULT_CONCURRENCY))):
                 raw = await self.aggregator.call_tool(tool_id, arguments or {})
             text = raw if isinstance(raw, str) else json.dumps(raw, default=str)
-            if text.startswith("Error executing tool"):
-                return _error(text)
             ok = True
             return types.CallToolResult(content=[types.TextContent(type="text", text=_compact_tool_message(tool_id, text))])
         except Exception as exc:
