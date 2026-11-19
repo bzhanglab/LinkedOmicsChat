@@ -26,6 +26,29 @@ except ImportError:
     class StdioServerParameters:
         pass
 
+# The slowest normal call, a 50-gene batch, takes about 40 s; a call past this limit fails
+# instead of waiting on a stuck outside service (some requests allow up to 5,000 s).
+TOOL_CALL_TIMEOUT_SECONDS = 180
+
+
+def _is_array(schema: Dict[str, Any]) -> bool:
+    if schema.get("type") == "array":
+        return True
+    return any(_is_array(option) for option in schema.get("anyOf", []))
+
+
+def _coerce_list_arguments(arguments: Dict[str, Any], schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A single value sent for a list argument (cancers="Ovarian") becomes a one-item list.
+
+    Text that is a JSON list is left for the tool server, which parses it.
+    """
+    properties = (schema or {}).get("properties", {})
+    coerced = dict(arguments)
+    for key, value in arguments.items():
+        if isinstance(value, str) and not value.strip().startswith("[") and _is_array(properties.get(key, {})):
+            coerced[key] = [value]
+    return coerced
+
 
 class MCPAggregator:
     """Aggregates tools from multiple MCP servers"""
@@ -192,17 +215,28 @@ class MCPAggregator:
         # Create connection on-demand for this tool call
         server_params = server_info["params"]
         logger.debug(f"Creating on-demand connection to {server_name} for tool {tool_name}")
+        arguments = _coerce_list_arguments(arguments, self.tools.get(tool_id, {}).get("inputSchema"))
         
+        # A failed call is raised after the connection closes; raised inside it, the error
+        # would arrive wrapped in a task-group error with an unhelpful message
+        tool_error: Optional[str] = None
         try:
             async with stdio_client(server_params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     
                     # Call the tool
-                    result = await session.call_tool(tool_name, arguments)
+                    try:
+                        result = await asyncio.wait_for(session.call_tool(tool_name, arguments), TOOL_CALL_TIMEOUT_SECONDS)
+                    except asyncio.TimeoutError:
+                        result = None
+                        tool_error = f"Error executing tool {tool_name}: no response within {TOOL_CALL_TIMEOUT_SECONDS} seconds"
+                    if getattr(result, "isError", False):
+                        # The tool raised (bad input or a failed outside service): report it as a failure, not as data
+                        tool_error = "\n".join(c.text for c in result.content if hasattr(c, "text")) or f"Error executing tool {tool_name}"
                     
                     # Extract text content from result
-                    if hasattr(result, 'content') and result.content:
+                    if tool_error is None and hasattr(result, 'content') and result.content:
                         # MCP returns content objects (text/image/etc)
                         text_parts: List[str] = []
                         non_text_parts: List[Dict[str, Any]] = []
@@ -255,12 +289,14 @@ class MCPAggregator:
                             "parts": non_text_parts,
                         }
                         return json.dumps(payload)
-                    else:
+                    elif tool_error is None:
                         return result
                     
         except Exception as e:
             logger.error(f"Error calling tool {tool_id}: {e}", exc_info=True)
             raise
+        logger.warning(f"Tool {tool_id} failed: {tool_error[:300]}")
+        raise RuntimeError(tool_error)
     
     def list_tools(self) -> Dict[str, Dict[str, Any]]:
         """List all available tools from all servers

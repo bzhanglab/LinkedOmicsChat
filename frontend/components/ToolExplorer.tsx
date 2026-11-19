@@ -1419,6 +1419,10 @@ export default function ToolExplorer({ className = "", resetKey }: ToolExplorerP
                 )
             )
             const res = await toolsAPI.execute(selectedToolId, cleanArgs)
+            if (res.success === false) {
+                setError(res.error || "Execution failed")
+                return
+            }
 
             // Extract the actual data payload
             let cleanResult = res.result
