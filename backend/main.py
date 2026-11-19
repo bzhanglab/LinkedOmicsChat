@@ -6,6 +6,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 from typing import AsyncGenerator
 
@@ -43,6 +44,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
     logger.info("LinkedOmicsChat backend started successfully")
     logger.info(f"Available MCP tools: {list(mcp_orchestrator.mcp_aggregator.list_tools().keys())}")
+
+    # Signature matching reads ClinicalOmicsDB rankings from a disk cache; refresh it in the
+    # background when it is missing or a week old, so no chat waits for the 1.5-minute download
+    from mcp_servers import signature_matching
+    if signature_matching.cache_is_stale():
+        def _refresh() -> None:
+            try:
+                signature_matching.refresh_cache(log=logger.info)
+            except Exception as exc:
+                logger.warning("ClinicalOmicsDB rankings refresh failed: %s", exc)
+        app.state.signature_cache_refresh = asyncio.create_task(asyncio.to_thread(_refresh))
 
     yield
 
