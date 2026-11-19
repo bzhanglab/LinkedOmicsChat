@@ -47,8 +47,9 @@ KNOWN_PROGNOSTIC = [  # gene, cancer, expected direction (+1: higher level, poor
     ("SPP1", "LUAD", 1, "osteopontin, reported as a poor-prognosis marker"),
 ]
 RANDOM_GENES, SEED = 20, 11
-# Limits the current rules meet (2026-11-19: 4 of 4 known targets with data rated moderate, 1 of 20
-# random genes; the draft rules, on significance alone, rated 5 of 20 random genes moderate or strong)
+# Limits the current rules meet (2026-11-19: the 3 known targets with enough data rated moderate, ERBB2
+# and CDK4 in breast cancer have too little; 1 of 20 random genes rated moderate, where the draft rules,
+# on significance alone, rated 5 of 20 moderate or strong)
 MIN_KNOWN_TARGETS_SUPPORTED = 3
 MAX_RANDOM_TARGETS_SUPPORTED = 2
 TARGETS_INDEX = "https://targets.linkedomics.org/index.json"
