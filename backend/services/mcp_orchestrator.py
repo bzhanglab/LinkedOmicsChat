@@ -3139,9 +3139,49 @@ Classify this query. Return JSON only."""
                 compact_data[gene] = {"result": compact}
             return _rewrap_payload(v, {**payload, "data": compact_data})
 
+        def _compact_target_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+            # The display fields (_table_map, _plot_map, _drug_details: tables, plot data, database
+            # links) and the full neoepitope list can be tens of KB (KRAS: ~60 KB), which would push
+            # the other results past the size cap below. The summary needs the evidence fields, the
+            # drugs and tiers (also in "drugs" and "drug_tiers"), and each cohort's protein changes
+            # and neoepitope count.
+            compact = {k: v for k, v in profile.items() if not str(k).startswith("_")}
+            neo = profile.get("neoantigen_mutations")
+            if isinstance(neo, list):
+                compact["neoantigen_mutations"] = [
+                    {
+                        "cohort": c.get("cohort"),
+                        "protein_changes": sorted({
+                            str(e["Protein Change"]) for e in c.get("neoepitopes") or []
+                            if isinstance(e, dict) and e.get("Protein Change")
+                        }),
+                        "neoepitope_count": len(c.get("neoepitopes") or []),
+                    } if isinstance(c, dict) else c
+                    for c in neo
+                ]
+            return compact
+
+        def _compact_target_payload(v: Any) -> Any:
+            _, payload = _parsed_payload(v)
+            if not isinstance(payload, dict):
+                return v
+            if isinstance(payload.get("result"), dict):  # one gene
+                return _rewrap_payload(v, {**payload, "result": _compact_target_profile(payload["result"])})
+            if isinstance(payload.get("data"), dict):  # a batch: {gene: {"result": profile}}
+                data = {
+                    gene: {**entry, "result": _compact_target_profile(entry["result"])}
+                    if isinstance(entry, dict) and isinstance(entry.get("result"), dict) else entry
+                    for gene, entry in payload["data"].items()
+                }
+                return _rewrap_payload(v, {**payload, "data": data})
+            return v
+
         def _apply_tool_specific_compaction(bare_tool_id: str, value: Any) -> Any:
             if bare_tool_id.endswith("analyze_tcga_cis_associations"):
                 return _compact_tcga_cis_mode4_payload(value)
+            if bare_tool_id.endswith("get_drug_target_profile") or bare_tool_id.endswith("batch_get_drug_target_profiles"):
+                # Long batches keep only their summary fields; shorter ones and single genes drop display fields
+                return _compact_target_payload(_compact_large_target_batch_payload(value))
             if bare_tool_id.endswith("search_gene_response_trials") or bare_tool_id.endswith("search_gene_set_response_trials"):
                 return _compact_trial_tool_payload(value)
             if bare_tool_id.endswith("meta_analyze_response_genes"):
@@ -3150,8 +3190,6 @@ Classify this query. Return JSON only."""
                 return _compact_meta_analysis_tool_payload(value, item_key="top_gene_sets", label_key="gene_set")
             if bare_tool_id.endswith("get_funmap_functional_neighborhood"):
                 return _compact_funmap_payload(value)
-            if bare_tool_id.endswith("batch_get_drug_target_profiles"):
-                return _compact_large_target_batch_payload(value)
             return value
 
         compact: Dict[str, Any] = {}
