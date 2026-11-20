@@ -29,12 +29,17 @@ const REFERENCES = [
 ]
 
 // Example questions are from the golden test set (backend/examples/langgraph_golden_queries.json),
-// except the gene report, gene list, and treatment response matching examples.
+// except the gene report, investigation, gene list, and treatment response matching examples.
 const ANALYSES = [
     {
         name: "Gene report",
         desc: "Seven analyses of one gene at once: tumor vs. normal and survival in CPTAC, survival across TCGA cohorts, the drug-target profile, treatment response in trials, FunMap neighbors, and recent PubMed articles, with a written overview. Ask for one or use the report button next to the chat box.",
         example: "Report on ERBB2",
+    },
+    {
+        name: "Investigation mode",
+        desc: "A decision question about one gene in one cancer (is it a drug target, is it a prognostic marker), answered with a fixed set of analyses and a report that rates each line of evidence by written rules, lists the gaps, and gives a verdict. Click the Investigate button next to the chat box or ask for one.",
+        example: "Investigate CDK4 as a drug target in breast cancer",
     },
     {
         name: "Your own gene list",

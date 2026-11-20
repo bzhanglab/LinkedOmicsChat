@@ -25,7 +25,13 @@ and old names in one batched MyGene.info request, and keeps at most 2,000 genes)
 The model passes the placeholder `MY_LIST`, and the tool step swaps in the whole list for WebGestalt and the first
 50 genes for the per-gene batch tools; long batches get one combined heatmap or plots for their first 10 genes. A
 gene report ("Report on <gene>", matched by `_parse_gene_report_request` in `langgraph_orchestrator.py`) runs the
-seven calls in `_gene_report_calls` at once and builds the answer from them without the agent. A repeat
+seven calls in `_gene_report_calls` at once and builds the answer from them without the agent. An
+investigation ("Investigate <gene> as a drug target|prognostic marker in <cancer>", `parse_request` in
+`backend/services/investigation.py`) runs that module's fixed calls the same way, reads each result into
+evidence lines (`extract_evidence`), rates them (`rate`), and puts `report_markdown` above the analyses' sections;
+the summary is a separate model call on `summary_prompt`, which may not change a rating. Ordinary answers about
+one gene, one of its 10 cancers, and a target or survival question carry `investigation_offer`, the request the
+app's "Investigate fully" sends. A repeat
 ("Repeat for other genes" on an answer) sends `repeat` with the request: the answer's tool calls and up to 10
 genes. `plan_repeat` in `backend/services/repeat_workflow.py` keeps the calls about one gene, using the batch
 tool where there is one, and `_run_direct_tool_calls` runs them without the model (at most two TCGA calls at
@@ -113,6 +119,8 @@ venv/bin/python admin/langgraph_eval.py                 # 50 golden questions
 venv/bin/python admin/langgraph_eval.py --case cis_and_enrichment --verbose
 venv/bin/python admin/check_numbers.py                  # the number check, on 60 saved answers
 venv/bin/python admin/check_numbers.py --collect        # ask those 60 questions again and save the answers
+venv/bin/python admin/check_investigation.py            # investigation ratings on saved known-answer cases
+venv/bin/python admin/check_investigation.py --collect  # run those analyses again (about 5 minutes, no model)
 ```
 
 `check_tools.py` uses the same example inputs as the app's Tools view (`TOOL_EXAMPLE_ARGS` in
@@ -128,6 +136,14 @@ are flagged (80% in summaries; 45% in answers with literature, whose text the ag
 let more made-up numbers match some value by chance), and it checks 20 number formats. The answers live in `backend/data/number_check_cases/`,
 which git ignores (about 36 MB); `--collect` rebuilds them for about $0.40, after which any new "not found"
 needs a look by hand.
+
+Run `check_investigation.py` before changing the rating rules in `backend/services/investigation.py`. It rates
+5 known drug targets, 5 known prognostic markers, and 20 random genes from saved results in
+`backend/data/investigation_cases/` (git-ignored), and fails if fewer than 3 known targets or more than 2 random
+genes rate moderate or strong, or if a known marker comes out in the wrong direction. Rules on significance alone
+rated random genes as often as known targets, because these cohorts are large; that is why tumor overexpression
+and copy number lean on LinkedOmics Targets' own calls. TCGA protein (RPPA) is left out while the TCGA service
+returns the same values for different genes (see `TCGA_RPPA_UNAVAILABLE` in `linkedomics_server.py`).
 
 ## Deployment
 

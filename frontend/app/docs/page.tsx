@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download, Plug } from "lucide-react"
+import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download, Plug, Microscope } from "lucide-react"
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -54,6 +54,7 @@ function ExtLink({ href, children }: { href: string; children: React.ReactNode }
 
 const SECTIONS = [
     { id: "examples", title: "Asking questions" },
+    { id: "investigate", title: "Investigation mode" },
     { id: "example-outputs", title: "Example results" },
     { id: "interpret", title: "Reading the results" },
     { id: "export", title: "Exporting a chat" },
@@ -150,6 +151,31 @@ const MCP_CLIENTS = [
     },
 ]
 
+const INVESTIGATION_LINES = [
+    {
+        term: "Drug target",
+        text: "Higher in tumor than normal (the LinkedOmics Targets overexpression call, with CPTAC protein and RNA); driven by its own copy number (the LinkedOmics Targets copy-number driver call, with CPTAC and TCGA correlations); and higher levels with poorer survival (CPTAC protein and RNA, TCGA RNA). Cell-line dependency, treatment response in trials, existing drugs, and FunMap neighbors are shown as context and not rated.",
+    },
+    {
+        term: "Prognostic marker",
+        text: "RNA and protein levels against overall survival in CPTAC and TCGA. Survival by methylation or copy number and treatment response in trials are shown as context and not rated.",
+    },
+]
+
+const INVESTIGATION_RATINGS = [
+    {
+        term: "Strong",
+        text: "For survival, significant (p < 0.05) in the same direction in both CPTAC and TCGA. For tumor overexpression and copy number, the LinkedOmics Targets call confirmed by an independent test: CPTAC RNA higher in tumor, or TCGA copy number correlating with RNA.",
+    },
+    { term: "Moderate", text: "p < 0.01 in one source only, or a LinkedOmics Targets call without the confirming test." },
+    { term: "Weak", text: "p < 0.05 in one source only, or higher in tumor than normal without the overexpression call." },
+    {
+        term: "Against or mixed",
+        text: "For a target, protein significantly lower in tumor than normal. For a prognostic marker, CPTAC and TCGA significant in opposite directions. Better survival with higher levels does not count against a target, because patients whose tumors carry an established target are often treated for it.",
+    },
+    { term: "No data", text: "The source has nothing for this cancer or gene; kept apart from a tested result with no association, so missing data never reads as a negative result." },
+]
+
 const EXPORTS = [
     {
         term: "Web page",
@@ -161,7 +187,7 @@ const EXPORTS = [
     },
     {
         term: "Methods text",
-        text: "A paragraph describing each analysis in the chat (data source, cohort, what was analyzed, and the date it ran) with numbered references to the resources behind it, to adapt for a paper. Check it against the chat before using it.",
+        text: "A paragraph describing each analysis in the chat (data source, cohort, what was analyzed, and the date it ran), and for an investigation its rating rules, with numbered references to the resources behind it, to adapt for a paper. Check it against the chat before using it.",
     },
 ]
 const DATA_SOURCES = [
@@ -207,6 +233,10 @@ const FAQS = [
     {
         term: "Can I run the same analyses for other genes?",
         text: "Yes. Hold the pointer over an answer and click \"Repeat for other genes\" to run its analyses of a single gene again for up to 10 genes, without the language model. The results come back as one table with a row per gene, followed by the plots.",
+    },
+    {
+        term: "Can the app weigh the evidence for a target or a marker?",
+        text: "Yes, for one gene in one of the 10 cancers that CPTAC and TCGA both cover. Click the Investigate button next to the chat box, or ask, for example, \"Investigate CDK4 as a drug target in breast cancer\". The report rates each line of evidence by fixed rules and lists the gaps; the investigation mode section explains the rules.",
     },
     {
         term: "Can I repeat an analysis outside the chat?",
@@ -312,6 +342,46 @@ export default function DocsPage() {
                 <P>
                     To run a single analysis without the language model, open <strong className="font-medium text-slate-800">Tools</strong> in
                     the sidebar. Each of the 27 tools has a form with an example input.
+                </P>
+
+                <BackToTop />
+
+                <H2 id="investigate" icon={Microscope}>Investigation mode</H2>
+                <P>
+                    For a decision about one gene in one cancer, such as whether it is a good drug target or a useful
+                    prognostic marker, click the Investigate button next to the chat box, or ask, for example,
+                    &ldquo;Investigate CDK4 as a drug target in breast cancer&rdquo; or &ldquo;Investigate SPP1 as a
+                    prognostic marker in lung adenocarcinoma&rdquo;. Answers about one gene, a covered cancer, and a
+                    target or survival question also offer &ldquo;Investigate fully&rdquo; when you hold the pointer
+                    over them. It covers the 10 cancers that CPTAC and TCGA both have.
+                </P>
+                <P>
+                    An investigation runs a fixed set of analyses for the question in that cancer, every time, without
+                    the language model choosing them, and takes about 20 seconds. The report opens with a verdict
+                    (&ldquo;Support in these data&rdquo;: strong, moderate, limited, mixed, against, none found, or
+                    insufficient data), then a table with one rated line per piece of evidence, the gaps in the data,
+                    and, for a target, its existing drugs; the analyses&rsquo; plots follow. The written summary is
+                    generated from the ratings and is not allowed to change them.
+                </P>
+                <DefList items={INVESTIGATION_LINES} />
+                <div className="mt-5" />
+                <DefList items={INVESTIGATION_RATINGS} />
+                <div className="mt-5" />
+                <P>
+                    Tumor overexpression and copy number are led by LinkedOmics Targets&rsquo; own calls because, in
+                    cohorts of hundreds of patients, most genes show some significant difference between tumor and
+                    normal tissue and some correlation with their own copy number. On significance alone, random genes
+                    rated as often as known targets; a copy-number driver call also requires the gene to be recurrently
+                    amplified. The rules were checked against known targets, known prognostic markers, and 20 random
+                    genes.
+                </P>
+                <P>
+                    The verdict covers only what these resources show: a strong rating means consistent signals across
+                    sources, not proof that a drug would work. Subtypes such as ER-positive breast cancer are not
+                    separated. Breast cancer has gaps: CPTAC has no normal breast tissue or breast survival data, and
+                    LinkedOmics Targets has no breast cell lines, so even established targets such as ERBB2 and CDK4
+                    can come back as insufficient data there. TCGA protein (RPPA) data is left out while the TCGA
+                    service returns the same protein values for different genes.
                 </P>
 
                 <BackToTop />
