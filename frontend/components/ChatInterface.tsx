@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat, Pill } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat, Pill, Microscope } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -17,6 +17,7 @@ import {
 import { chatAPI, toolsAPI, type ChatMessage, type ChatRequest, type CheckedNumber, type GeneListCheck, type NumberCheck, type ToolCallRecord, type Paper, type AnalysisResult, type AnyVisualization, API_URL, resolveDataSources, INLINE_SOURCE_MAP } from "@/lib/api"
 import { GeneListDialog } from "@/components/GeneListDialog"
 import { GeneReportDialog } from "@/components/GeneReportDialog"
+import { InvestigateDialog } from "@/components/InvestigateDialog"
 import { RepeatDialog } from "@/components/RepeatDialog"
 import { repeatableCalls } from "@/lib/repeat"
 import { StaticPlot } from "@/components/StaticPlot"
@@ -1348,7 +1349,7 @@ const MessagesPane = memo(function MessagesPane({
                                                     <Copy className="w-3.5 h-3.5" />
                                                 )}
                                             </button>
-                                            {onRepeat && !isLoading && repeatableCalls(message.toolCalls).length > 0 && (
+                                            {onRepeat && !isLoading && !message.investigation && repeatableCalls(message.toolCalls).length > 0 && (
                                                 <button
                                                     type="button"
                                                     onClick={() => onRepeat(message)}
@@ -1357,6 +1358,17 @@ const MessagesPane = memo(function MessagesPane({
                                                 >
                                                     <Repeat className="w-3.5 h-3.5" />
                                                     Repeat for other genes
+                                                </button>
+                                            )}
+                                            {message.investigationOffer && !isLoading && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onSend(message.investigationOffer!)}
+                                                    className="flex items-center gap-1 px-1.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                                                    title={`${message.investigationOffer}: every analysis for this question, with the evidence rated`}
+                                                >
+                                                    <Microscope className="w-3.5 h-3.5" />
+                                                    Investigate fully
                                                 </button>
                                             )}
                                         </div>
@@ -1538,6 +1550,8 @@ function mapHistoryItemToMessages(item: { id: number; query: string; response: a
             executionTrace: typeof resp === "string" ? undefined : (resp?.execution_trace?.length ? resp.execution_trace : undefined),
             toolCalls: typeof resp === "string" ? undefined : (resp?.tool_calls?.length ? resp.tool_calls : undefined),
             numberCheck: typeof resp === "string" ? undefined : (resp?.number_check || undefined),
+            investigation: typeof resp === "string" ? undefined : (resp?.investigation || undefined),
+            investigationOffer: typeof resp === "string" ? undefined : (resp?.investigation_offer || undefined),
         },
     ]
 }
@@ -2399,6 +2413,7 @@ export const ChatInterface = memo(function ChatInterface({
     const [geneList, setGeneList] = useState<GeneListCheck | null>(null)
     const [geneListDialogOpen, setGeneListDialogOpen] = useState(false)
     const [geneReportDialogOpen, setGeneReportDialogOpen] = useState(false)
+    const [investigateDialogOpen, setInvestigateDialogOpen] = useState(false)
     // The tool calls of the answer being repeated for other genes; the dialog is open while set
     const [repeatCalls, setRepeatCalls] = useState<ToolCallRecord[] | null>(null)
     const handleRepeat = useCallback((message: ChatMessage) => setRepeatCalls(message.toolCalls ?? null), [])
@@ -3151,6 +3166,8 @@ export const ChatInterface = memo(function ChatInterface({
                 executionTrace: response.execution_trace?.length ? response.execution_trace : undefined,
                 numberCheck: response.number_check || undefined,
                 toolCalls: response.tool_calls?.length ? response.tool_calls : undefined,
+                investigation: response.investigation || undefined,
+                investigationOffer: response.investigation_offer || undefined,
             }
 
             setMessages((prev) => {
@@ -3509,6 +3526,22 @@ export const ChatInterface = memo(function ChatInterface({
                         open={geneReportDialogOpen}
                         onOpenChange={setGeneReportDialogOpen}
                         onRun={(gene) => void sendMessageText(`Report on ${gene}`)}
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setInvestigateDialogOpen(true)}
+                        disabled={isLoading || isTruncating}
+                        title="Investigate"
+                        aria-label="Investigate"
+                    >
+                        <Microscope className="w-4 h-4" />
+                    </Button>
+                    <InvestigateDialog
+                        open={investigateDialogOpen}
+                        onOpenChange={setInvestigateDialogOpen}
+                        onRun={(request) => void sendMessageText(request)}
                     />
                     <RepeatDialog
                         calls={repeatCalls}

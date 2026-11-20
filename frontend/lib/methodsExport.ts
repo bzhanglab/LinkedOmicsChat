@@ -1,4 +1,5 @@
-import type { ChatMessage } from "./api"
+import type { ChatMessage, InvestigationInfo } from "./api"
+import { INVESTIGATION_CANCERS } from "./investigation"
 
 type SourceKey = "linkedomics" | "linkedomicskb" | "cptac" | "tcga" | "clinicalomicsdb" | "targets" | "funmap" | "webgestalt" | "mygene"
 
@@ -141,6 +142,21 @@ function cptacCis(a: Args): Sentence {
     }
 }
 
+/** How an investigation rated its evidence (backend services/investigation.py, rate_line and _rate_called_line). */
+function investigationRules(info: InvestigationInfo): Sentence {
+    const cancer = INVESTIGATION_CANCERS.find(([code]) => code === info.cancer)?.[1] ?? info.cancer
+    if (info.question === "prognostic") {
+        return {
+            text: `The survival evidence for ${info.gene} as a prognostic marker in ${cancer} was rated with fixed rules: strong when RNA or protein levels were associated with survival (p < 0.05) in the same direction in both CPTAC and TCGA, moderate when p < 0.01 in one source only, and weak when p < 0.05 in one source only`,
+            sources: [],
+        }
+    }
+    return {
+        text: `The evidence for ${info.gene} as a drug target in ${cancer} was rated with fixed rules: tumor overexpression and copy-number driving were rated from the LinkedOmics Targets calls for that cancer, strong when an independent CPTAC or TCGA test agreed, and higher levels with poorer survival were rated strong when significant (p < 0.05) in both CPTAC and TCGA`,
+        sources: ["targets"],
+    }
+}
+
 function formatDate(date: Date): string {
     return date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
 }
@@ -171,6 +187,14 @@ export function buildMethodsText(messages: ChatMessage[], appUrl: string): strin
             const numbers = sentence.sources.map((source) => cited.indexOf(source) + 1)
             const text = `${sentence.text[0].toUpperCase()}${sentence.text.slice(1)}${numbers.length ? ` [${numbers.join(", ")}]` : ""}.`
             if (!sentences.includes(text)) sentences.push(text)
+        }
+        if (described && msg.investigation) {
+            const sentence = investigationRules(msg.investigation)
+            for (const source of sentence.sources) {
+                if (!cited.includes(source)) cited.push(source)
+            }
+            const numbers = sentence.sources.map((source) => cited.indexOf(source) + 1)
+            sentences.push(`${sentence.text}${numbers.length ? ` [${numbers.join(", ")}]` : ""}.`)
         }
         if (described && msg.timestamp) dates.push(msg.timestamp)
     }

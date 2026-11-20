@@ -459,6 +459,37 @@ def parse_request(query: str) -> Optional[Dict[str, Any]]:
     return {"gene": match.group("gene").upper(), "question": question, "cancer": cancer}
 
 
+_CANCER_MENTIONS = sorted(
+    ((alias.lower(), code) for code, aliases in _CANCER_ALIASES.items() for alias in (code, *aliases)),
+    key=lambda item: -len(item[0]),
+)
+_TARGET_WORDS = re.compile(r"\b(?:target\w*|druggable|inhibitors?|drugs?|therap(?:y|ies|eutic))\b", re.IGNORECASE)
+_PROGNOSTIC_WORDS = re.compile(r"\b(?:surviv\w*|prognos\w*|outcomes?|hazard)\b", re.IGNORECASE)
+
+
+def _mentioned_cancer(text: str) -> Optional[str]:
+    """The one covered cancer a question names, or None when it names none or several."""
+    lowered = (text or "").lower()
+    codes = {code for alias, code in _CANCER_MENTIONS
+             if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", lowered)}
+    return codes.pop() if len(codes) == 1 else None
+
+
+def offer_request(query: str, genes: List[str]) -> Optional[str]:
+    """The investigation to offer under an ordinary answer: one gene, one covered cancer, and a target
+    or survival question. Returns the request text, which parse_request reads back."""
+    cancer = _mentioned_cancer(query)
+    if len(genes) != 1 or cancer is None:
+        return None
+    if _TARGET_WORDS.search(query or ""):
+        asked = "a drug target"
+    elif _PROGNOSTIC_WORDS.search(query or ""):
+        asked = "a prognostic marker"
+    else:
+        return None
+    return f"Investigate {genes[0]} as {asked} in {CANCER_NAMES[cancer]}"
+
+
 def unsupported_cancer_message(gene: str, question: str) -> str:
     covered = ", ".join(f"{name} ({code})" for code, name in CANCER_NAMES.items())
     example = f"Investigate {gene} as {'a prognostic marker' if question == 'prognostic' else 'a drug target'} in breast cancer"

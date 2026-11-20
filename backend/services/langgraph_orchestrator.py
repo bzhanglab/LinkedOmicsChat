@@ -4908,6 +4908,13 @@ DIRECT RESPONSE RULES:
         if include_stream_metadata:
             formatted_response["clarification_options"] = clarification_options
             formatted_response["tool_sources"] = tool_sources
+        if investigated:
+            # Lets the app describe the rating rules in exports and leave out "Repeat for other genes"
+            formatted_response["investigation"] = {k: investigated[k] for k in ("gene", "cancer", "question", "verdict")}
+        elif results_with_data and not repeat_plan and not is_report and not asks_clarification:
+            offer = investigation.offer_request(query, [g for g in _extract_query_genes(query) if g in _VALID_GENES])
+            if offer:
+                formatted_response["investigation_offer"] = offer
 
         pending_offer = _extract_pending_offer_from_response(formatted_response)
         if pending_offer:

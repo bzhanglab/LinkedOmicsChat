@@ -366,6 +366,16 @@ export interface ChatMessage {
     toolCalls?: ToolCallRecord[]  // used by the exports and by "Repeat for other genes"
     attachedGeneList?: string  // user messages sent with a gene list, e.g. "genes.csv (74 genes)"; not saved
     numberCheck?: NumberCheck
+    investigation?: InvestigationInfo  // set on investigation answers
+    investigationOffer?: string  // the investigation offered under an ordinary answer, as request text
+}
+
+/** What an investigation answer covered (backend services/investigation.py). */
+export interface InvestigationInfo {
+    gene: string
+    cancer: string  // CPTAC cohort code, e.g. "BRCA"
+    question: "target" | "prognostic"
+    verdict: string  // strong, moderate, limited, mixed, against, none, or insufficient_data
 }
 
 /** Map a tool name to its human-readable data source with a URL. */
@@ -487,6 +497,8 @@ export interface ChatResponse {
     execution_trace?: ExecutionTraceStep[]
     number_check?: NumberCheck | null
     tool_calls?: ToolCallRecord[]
+    investigation?: InvestigationInfo
+    investigation_offer?: string
     metadata?: Record<string, unknown>
 }
 
