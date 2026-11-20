@@ -128,7 +128,7 @@ const INTERPRETATION = [
 ]
 
 const DATA_SOURCES = [
-    { name: "LinkedOmics", url: "https://www.linkedomics.org", text: "TCGA analyses across 35 cohorts: survival by RNA, methylation, RPPA protein, copy number, or miRNA, and same-gene correlations between methylation, RNA, RPPA, and copy number." },
+    { name: "LinkedOmics", url: "https://www.linkedomics.org", text: "TCGA analyses across 35 cohorts: survival by RNA, methylation, copy number, or miRNA, and same-gene correlations between methylation, RNA, and copy number. TCGA protein (RPPA) results are temporarily unavailable while the TCGA service returns the same values for different genes." },
     { name: "LinkedOmicsKB", url: "https://kb.linkedomics.org", text: "CPTAC proteogenomics for 10 cohorts: tumor-vs-normal RNA and protein, survival, and same-gene correlations." },
     { name: "LinkedOmics Targets", url: "https://targets.linkedomics.org", text: "Drug-target annotations per gene: tier, drugs, cell-line dependency, tumor overexpression, phosphosite activation, driver and antigen evidence." },
     { name: "ClinicalOmicsDB", url: "https://trials.linkedomics.org", text: "Public expression studies from clinical trials with treatment-response labels; used for per-study associations and cross-study meta-analysis." },
