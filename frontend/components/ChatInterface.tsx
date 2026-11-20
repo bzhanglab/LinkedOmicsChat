@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, memo, useMemo, startTransition } from "react"
-import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat, Pill, Microscope } from "lucide-react"
+import { Send, Loader2, Sparkles, Copy, Check, User, Download, Search, X, ChevronUp, ChevronDown, Share2, Pencil, ThumbsUp, ThumbsDown, AlertCircle, RefreshCw, HelpCircle, Paperclip, FileText, FileBarChart, Repeat, Pill, Microscope, BookOpenCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -1349,7 +1349,7 @@ const MessagesPane = memo(function MessagesPane({
                                                     <Copy className="w-3.5 h-3.5" />
                                                 )}
                                             </button>
-                                            {onRepeat && !isLoading && !message.investigation && repeatableCalls(message.toolCalls).length > 0 && (
+                                            {onRepeat && !isLoading && !message.investigation && !message.literatureCheck && repeatableCalls(message.toolCalls).length > 0 && (
                                                 <button
                                                     type="button"
                                                     onClick={() => onRepeat(message)}
@@ -1369,6 +1369,17 @@ const MessagesPane = memo(function MessagesPane({
                                                 >
                                                     <Microscope className="w-3.5 h-3.5" />
                                                     Investigate fully
+                                                </button>
+                                            )}
+                                            {message.literatureOffer && !isLoading && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onSend(message.literatureOffer!)}
+                                                    className="flex items-center gap-1 px-1.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                                                    title={`${message.literatureOffer}: published findings set beside CPTAC and TCGA`}
+                                                >
+                                                    <BookOpenCheck className="w-3.5 h-3.5" />
+                                                    Check the literature
                                                 </button>
                                             )}
                                         </div>
@@ -1552,6 +1563,8 @@ function mapHistoryItemToMessages(item: { id: number; query: string; response: a
             numberCheck: typeof resp === "string" ? undefined : (resp?.number_check || undefined),
             investigation: typeof resp === "string" ? undefined : (resp?.investigation || undefined),
             investigationOffer: typeof resp === "string" ? undefined : (resp?.investigation_offer || undefined),
+            literatureCheck: typeof resp === "string" ? undefined : (resp?.literature_check || undefined),
+            literatureOffer: typeof resp === "string" ? undefined : (resp?.literature_offer || undefined),
         },
     ]
 }
@@ -3169,6 +3182,8 @@ export const ChatInterface = memo(function ChatInterface({
                 toolCalls: response.tool_calls?.length ? response.tool_calls : undefined,
                 investigation: response.investigation || undefined,
                 investigationOffer: response.investigation_offer || undefined,
+                literatureCheck: response.literature_check || undefined,
+                literatureOffer: response.literature_offer || undefined,
             }
 
             setMessages((prev) => {

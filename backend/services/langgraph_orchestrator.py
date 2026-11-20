@@ -4719,11 +4719,12 @@ DIRECT RESPONSE RULES:
                         formatted["message"] = _order_gene_report_sections(
                             formatted.get("message") or "", _INVESTIGATION_SECTION_ORDER,
                         )
+                        # A literature check with no findings has nothing to summarize; its report says so
                         formatted["summary"] = await self._written_summary(
                             investigation.summary_prompt(investigated) if investigated
                             else literature_check.summary_prompt(checked["result"], checked["papers"]),
                             usage_tracker, log_prefix,
-                        )
+                        ) if investigated or checked["result"]["claims"] else ""
                     if repeat_plan:
                         # Keep every call in the saved answer; the combined table is added after the
                         # source lines are placed, so none of them attaches to its notes. Details
@@ -4924,15 +4925,20 @@ DIRECT RESPONSE RULES:
         if investigated:
             # Lets the app describe the rating rules in exports and leave out "Repeat for other genes"
             formatted_response["investigation"] = {k: investigated[k] for k in ("gene", "cancer", "question", "verdict")}
+            formatted_response["literature_offer"] = literature_check.request_text(investigated["gene"], investigated["cancer"])
         elif checked:
             formatted_response["literature_check"] = {
                 "gene": checked["result"]["gene"], "cancer": checked["result"]["cancer"],
                 "papers": checked["papers"], "counts": checked["result"]["counts"],
             }
         elif results_with_data and not repeat_plan and not is_report and not asks_clarification:
-            offer = investigation.offer_request(query, [g for g in _extract_query_genes(query) if g in _VALID_GENES])
+            genes = [g for g in _extract_query_genes(query) if g in _VALID_GENES]
+            offer = investigation.offer_request(query, genes)
             if offer:
                 formatted_response["investigation_offer"] = offer
+            literature_offer = literature_check.offer_request(query, genes)
+            if literature_offer:
+                formatted_response["literature_offer"] = literature_offer
 
         pending_offer = _extract_pending_offer_from_response(formatted_response)
         if pending_offer:

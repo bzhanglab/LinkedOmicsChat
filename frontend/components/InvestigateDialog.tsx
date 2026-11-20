@@ -18,6 +18,7 @@ import { INVESTIGATION_CANCERS as CANCERS } from "@/lib/investigation"
 const QUESTIONS: [string, string][] = [
     ["a drug target", "Drug target"],
     ["a prognostic marker", "Prognostic marker"],
+    ["literature", "Published findings"],  // a literature check, not an investigation
 ]
 
 const selectClass =
@@ -57,7 +58,9 @@ export function InvestigateDialog({
         try {
             const result = await chatAPI.checkGeneList(text)
             if (result.genes.length === 1) {
-                onRun(`Investigate ${result.genes[0]} as ${question} in ${cancer}`)
+                onRun(question === "literature"
+                    ? `Check the literature on ${result.genes[0]} in ${cancer}`
+                    : `Investigate ${result.genes[0]} as ${question} in ${cancer}`)
                 onOpenChange(false)
             } else if (result.genes.length > 1) {
                 setError("Enter one gene; an investigation covers a single gene.")
@@ -80,7 +83,8 @@ export function InvestigateDialog({
                     <AlertDialogTitle>Investigate</AlertDialogTitle>
                     <AlertDialogDescription>
                         Runs every analysis that bears on the question in one cancer and rates the evidence by fixed
-                        rules: a verdict, one rated line per piece of evidence, and the gaps in the data.
+                        rules: a verdict, one rated line per piece of evidence, and the gaps in the data. Published
+                        findings instead sets what papers report about the gene beside CPTAC and TCGA.
                     </AlertDialogDescription>
                 </AlertDialogHeader>
                 <div className="space-y-3">

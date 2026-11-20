@@ -368,6 +368,16 @@ export interface ChatMessage {
     numberCheck?: NumberCheck
     investigation?: InvestigationInfo  // set on investigation answers
     investigationOffer?: string  // the investigation offered under an ordinary answer, as request text
+    literatureCheck?: LiteratureCheckInfo  // set on literature check answers
+    literatureOffer?: string  // the literature check offered under an answer, as request text
+}
+
+/** What a literature check answer covered (backend services/literature_check.py). */
+export interface LiteratureCheckInfo {
+    gene: string
+    cancer: string  // CPTAC cohort code, e.g. "LUAD"
+    papers: number
+    counts: Record<string, number>  // findings per verdict: supported, opposite, mixed, not_seen, cant_test
 }
 
 /** What an investigation answer covered (backend services/investigation.py). */
@@ -499,6 +509,8 @@ export interface ChatResponse {
     tool_calls?: ToolCallRecord[]
     investigation?: InvestigationInfo
     investigation_offer?: string
+    literature_check?: LiteratureCheckInfo
+    literature_offer?: string
     metadata?: Record<string, unknown>
 }
 

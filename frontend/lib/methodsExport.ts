@@ -1,4 +1,4 @@
-import type { ChatMessage, InvestigationInfo } from "./api"
+import type { ChatMessage, InvestigationInfo, LiteratureCheckInfo } from "./api"
 import { INVESTIGATION_CANCERS } from "./investigation"
 
 type SourceKey = "linkedomics" | "linkedomicskb" | "cptac" | "tcga" | "clinicalomicsdb" | "targets" | "funmap" | "webgestalt" | "mygene"
@@ -157,6 +157,15 @@ function investigationRules(info: InvestigationInfo): Sentence {
     }
 }
 
+/** How a literature check read and compared its papers (backend services/literature_check.py). */
+function literatureMethods(info: LiteratureCheckInfo): Sentence {
+    const cancer = INVESTIGATION_CANCERS.find(([code]) => code === info.cancer)?.[1] ?? info.cancer
+    return {
+        text: `Published findings about ${info.gene} in ${cancer} were taken from ${info.papers} PubMed abstracts (${info.gene} in the title, ordered by PubMed's Best Match). Findings about the level of ${info.gene} in tumor tissue were extracted with a language model, kept only when a second model call confirmed them against a verbatim quote from the abstract, and compared with the CPTAC and TCGA analyses, a finding counting as supported when a result was significant (p < 0.05) in its direction`,
+        sources: [],
+    }
+}
+
 function formatDate(date: Date): string {
     return date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
 }
@@ -195,6 +204,9 @@ export function buildMethodsText(messages: ChatMessage[], appUrl: string): strin
             }
             const numbers = sentence.sources.map((source) => cited.indexOf(source) + 1)
             sentences.push(`${sentence.text}${numbers.length ? ` [${numbers.join(", ")}]` : ""}.`)
+        }
+        if (described && msg.literatureCheck) {
+            sentences.push(`${literatureMethods(msg.literatureCheck).text}.`)
         }
         if (described && msg.timestamp) dates.push(msg.timestamp)
     }

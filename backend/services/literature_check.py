@@ -283,6 +283,22 @@ def parse_request(query: str) -> Optional[Dict[str, Any]]:
     return {"gene": match.group("gene").upper(), "cancer": cancer}
 
 
+_LITERATURE_WORDS = re.compile(r"\b(?:literature|papers?|publications?|published|studies|reported)\b", re.IGNORECASE)
+
+
+def request_text(gene: str, cancer: str) -> str:
+    return f"Check the literature on {gene} in {investigation.CANCER_NAMES[cancer]}"
+
+
+def offer_request(query: str, genes: List[str]) -> Optional[str]:
+    """The literature check to offer under an ordinary answer: one gene, one covered cancer, and a question
+    about papers or published findings. Returns the request text, which parse_request reads back."""
+    cancer = investigation._mentioned_cancer(query)
+    if len(genes) != 1 or cancer is None or not _LITERATURE_WORDS.search(query or ""):
+        return None
+    return request_text(genes[0], cancer)
+
+
 def unsupported_cancer_message(gene: str) -> str:
     covered = ", ".join(f"{name} ({code})" for code, name in investigation.CANCER_NAMES.items())
     return (f"The literature check covers 10 cancers, each in both CPTAC and TCGA: {covered}. "
@@ -331,7 +347,9 @@ def report_markdown(result: Dict[str, Any], papers: int) -> str:
             out.append(f"| {_FINDING_LABELS[c['direction']]} | {_paper(c)}: \"{_cell(c['quote'])}\" | "
                        f"{_cell('; '.join(c['results']))} | {label} |")
     else:
-        out.append("No finding in these papers could be compared with the data.")
+        out.append("No finding in these papers could be compared with the data." if result["claims"] else
+                   f"These abstracts state no finding about the level of {gene} in tumor tissue that these data can "
+                   "test: higher or lower than in normal tissue, linked to survival, or amplified.")
     # The chat's table cells show text only, so the links are listed under the table
     papers_with_findings = {}
     for c in [*compared, *(c for c in result["claims"] if c["verdict"] == "cant_test")]:

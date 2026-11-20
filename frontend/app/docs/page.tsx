@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download, Plug, Microscope } from "lucide-react"
+import { ArrowUp, ArrowUpRight, MessageSquare, Eye, BarChart3, Database, Cpu, HelpCircle, Download, Plug, Microscope, BookOpenCheck } from "lucide-react"
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -55,6 +55,7 @@ function ExtLink({ href, children }: { href: string; children: React.ReactNode }
 const SECTIONS = [
     { id: "examples", title: "Asking questions" },
     { id: "investigate", title: "Investigation mode" },
+    { id: "literature", title: "Literature check" },
     { id: "example-outputs", title: "Example results" },
     { id: "interpret", title: "Reading the results" },
     { id: "export", title: "Exporting a chat" },
@@ -176,6 +177,14 @@ const INVESTIGATION_RATINGS = [
     { term: "No data", text: "The source has nothing for this cancer or gene; kept apart from a tested result with no association, so missing data never reads as a negative result." },
 ]
 
+const LITERATURE_VERDICTS = [
+    { term: "Supported", text: "A CPTAC or TCGA result (protein or RNA) is significant (p < 0.05) in the paper's direction and none in the other; the verdict says how many of the tests agree, such as \"1 of 3 tests\". A finding of no association counts as supported when nothing is significant." },
+    { term: "Opposite in these data", text: "Results are significant only in the other direction." },
+    { term: "Mixed in these data", text: "Results are significant in both directions." },
+    { term: "Not seen in these data", text: "Tested, with nothing significant." },
+    { term: "Can't test", text: "The finding is about another cancer, a mixed cohort such as non-small cell lung cancer, a sample outside tumor tissue (serum, plasma, fat), or treatment response, or these data have nothing for the gene in this cancer." },
+]
+
 const EXPORTS = [
     {
         term: "Web page",
@@ -187,7 +196,7 @@ const EXPORTS = [
     },
     {
         term: "Methods text",
-        text: "A paragraph describing each analysis in the chat (data source, cohort, what was analyzed, and the date it ran), and for an investigation its rating rules, with numbered references to the resources behind it, to adapt for a paper. Check it against the chat before using it.",
+        text: "A paragraph describing each analysis in the chat (data source, cohort, what was analyzed, and the date it ran), and for an investigation or literature check how it rated or compared the evidence, with numbered references to the resources behind it, to adapt for a paper. Check it against the chat before using it.",
     },
 ]
 const DATA_SOURCES = [
@@ -237,6 +246,10 @@ const FAQS = [
     {
         term: "Can the app weigh the evidence for a target or a marker?",
         text: "Yes, for one gene in one of the 10 cancers that CPTAC and TCGA both cover. Click the Investigate button next to the chat box, or ask, for example, \"Investigate CDK4 as a drug target in breast cancer\". The report rates each line of evidence by fixed rules and lists the gaps; the investigation mode section explains the rules.",
+    },
+    {
+        term: "Do published findings about my gene hold up in these data?",
+        text: "Ask, for example, \"Check the literature on SPP1 in lung adenocarcinoma\", or choose Published findings in the Investigate form. It reads about 20 PubMed abstracts and sets each testable finding beside CPTAC and TCGA; the literature check section explains the verdicts and their limits.",
     },
     {
         term: "Can I repeat an analysis outside the chat?",
@@ -382,6 +395,37 @@ export default function DocsPage() {
                     LinkedOmics Targets has no breast cell lines, so even established targets such as ERBB2 and CDK4
                     can come back as insufficient data there. TCGA protein (RPPA) data is left out while the TCGA
                     service returns the same protein values for different genes.
+                </P>
+
+                <BackToTop />
+
+                <H2 id="literature" icon={BookOpenCheck}>Literature check</H2>
+                <P>
+                    To see whether published findings about a gene hold up in large independent cohorts, ask, for
+                    example, &ldquo;Check the literature on SPP1 in lung adenocarcinoma&rdquo;, or choose Published
+                    findings in the Investigate form. Investigation reports, and answers about one gene and a covered
+                    cancer that mention papers or published findings, also offer &ldquo;Check the literature&rdquo;
+                    when you hold the pointer over them. It covers the same 10 cancers as investigation mode.
+                </P>
+                <P>
+                    It searches PubMed for about 20 papers with the gene in the title and the cancer in the abstract,
+                    ordered by PubMed&rsquo;s Best Match, and reads each abstract for findings about the gene&rsquo;s own
+                    level in tumor tissue: higher or lower than in normal tissue, linked to survival (or not), or
+                    amplified. A second model call checks each finding against a quote that must appear word for word
+                    in the abstract, and findings it cannot confirm are left out, so some correct ones are dropped rather
+                    than risk a wrong verdict. Each finding is then set beside the same CPTAC and TCGA analyses as a drug
+                    target investigation. It takes about half a minute.
+                </P>
+                <DefList items={LITERATURE_VERDICTS} />
+                <div className="mt-5" />
+                <P>
+                    The report lists each finding with its paper, quote, the data results, and the verdict, followed by
+                    the papers and the findings it could not test. A verdict compares a paper with these data only.
+                    Cohorts, assays, and cutoffs differ, so &ldquo;not seen in these data&rdquo; does not mean a finding is
+                    wrong, and papers that used TCGA themselves agree partly by design. For genes studied mostly as
+                    treatment targets, such as ERBB2 in breast cancer, most papers found are about treatment, and the
+                    check may find nothing to test. Abstracts can be misread; check the quote and the paper before you
+                    rely on a verdict.
                 </P>
 
                 <BackToTop />

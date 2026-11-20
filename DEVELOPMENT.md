@@ -31,7 +31,11 @@ investigation ("Investigate <gene> as a drug target|prognostic marker in <cancer
 evidence lines (`extract_evidence`), rates them (`rate`), and puts `report_markdown` above the analyses' sections;
 the summary is a separate model call on `summary_prompt`, which may not change a rating. Ordinary answers about
 one gene, one of its 10 cancers, and a target or survival question carry `investigation_offer`, the request the
-app's "Investigate fully" sends. A repeat
+app's "Investigate fully" sends. A literature check ("Check the literature on <gene> in <cancer>",
+`backend/services/literature_check.py`) runs a PubMed search (gene in the title, relevance order, about 20 papers)
+with an investigation's drug-target calls, extracts claims with a verbatim quote per abstract (`extract_claims`),
+keeps only those a second model call confirms (`verify_claims`), and compares them with the evidence lines
+(`compare_claims`); investigation reports and answers that mention papers offer it (`literature_offer`). A repeat
 ("Repeat for other genes" on an answer) sends `repeat` with the request: the answer's tool calls and up to 10
 genes. `plan_repeat` in `backend/services/repeat_workflow.py` keeps the calls about one gene, using the batch
 tool where there is one, and `_run_direct_tool_calls` runs them without the model (at most two TCGA calls at
@@ -121,6 +125,8 @@ venv/bin/python admin/check_numbers.py                  # the number check, on 6
 venv/bin/python admin/check_numbers.py --collect        # ask those 60 questions again and save the answers
 venv/bin/python admin/check_investigation.py            # investigation ratings on saved known-answer cases
 venv/bin/python admin/check_investigation.py --collect  # run those analyses again (about 5 minutes, no model)
+venv/bin/python admin/check_literature.py               # literature claim extraction and verdicts on saved abstracts
+venv/bin/python admin/check_literature.py --collect     # search PubMed and run the analyses again
 ```
 
 `check_tools.py` uses the same example inputs as the app's Tools view (`TOOL_EXAMPLE_ARGS` in
@@ -144,6 +150,13 @@ genes rate moderate or strong, or if a known marker comes out in the wrong direc
 rated random genes as often as known targets, because these cohorts are large; that is why tumor overexpression
 and copy number lean on LinkedOmics Targets' own calls. TCGA protein (RPPA) is left out while the TCGA service
 returns the same values for different genes (see `TCGA_RPPA_UNAVAILABLE` in `linkedomics_server.py`).
+
+Run `check_literature.py` before changing the prompts or the comparison in `backend/services/literature_check.py`.
+It extracts claims again from about 110 saved abstracts (`backend/data/literature_cases/`, git-ignored) and checks
+them against hand-reviewed labels: at least 60% of the expected findings found, none of the known misreadings (a
+difference between tumor regions read as tumor vs normal, SPP1 on macrophages, Ki-67 predicted from imaging, a
+pan-cancer statement mapped to one cancer), the expected verdicts on saved data, and planted wrong claims coming out
+"opposite". It costs about half a cent. The labels name PubMed IDs, so after `--collect` some may drop out.
 
 ## Deployment
 
