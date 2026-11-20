@@ -90,6 +90,7 @@ def claim_cancer(cancer_text: str, abstract: str, requested: str) -> Optional[st
     """The covered cancer a claim is about. A claim naming only the histology ("adenocarcinoma") takes the
     organ from its paper; a mixed lung cohort ("non-small cell lung cancer") matches no single cancer."""
     text = re.sub(r"\bpulmonary\b", "lung", cancer_text.lower()).replace("renal clear cell", "clear cell renal cell")
+    text = re.sub(r"\brcc\b", "renal cell carcinoma", text)
     if re.search(r"\bmost\b|pan-?cancer|tumou?r types|cancer types", text):
         return None  # a statement about many cancers, even if the list names this one
     code = investigation._mentioned_cancer(text)
@@ -191,3 +192,67 @@ async def extract_claims(gene: str, cancer: str, articles: List[Dict[str, Any]],
 
     found = await asyncio.gather(*(one(a) for a in articles))
     return await verify_claims(gene, merge_duplicates([c for claims in found for c in claims]), ask, parallel)
+
+
+# ── Comparing claims with the data ───────────────────────────────────────────
+
+VERDICT_LABELS = {"supported": "Supported", "opposite": "Opposite in these data", "mixed": "Mixed in these data",
+                  "not_seen": "Not seen in these data", "cant_test": "Can't test"}
+_CLAIM_LINES = {"tumor_vs_normal": "tumor_vs_normal", "survival": "survival"}
+# The data direction a claim expects on its line (+1: higher in tumor, or higher level with poorer survival)
+_EXPECTED = {"higher_in_tumor": 1, "lower_in_tumor": -1, "no_difference": 0, "higher_level_poorer_survival": 1,
+             "higher_level_better_survival": -1, "no_association": 0}
+
+
+def data_calls(gene: str, cancer: str) -> List[Tuple[str, Dict[str, Any]]]:
+    """The analyses a literature check compares claims with: the same as a drug-target investigation."""
+    return investigation.investigation_calls(gene, cancer, "target")
+
+
+def compare_claim(claim: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """The verdict for one claim against the evidence lines for the checked cancer: supported, opposite,
+    mixed, not_seen, or cant_test, with the reason and the data results it rests on."""
+    cancer = evidence["cancer"]
+
+    def verdict(value: str, reason: str = "", results: Optional[List[str]] = None) -> Dict[str, Any]:
+        return {**claim, "verdict": value, "reason": reason, "results": results or []}
+
+    if claim["cancer"] != cancer:
+        return verdict("cant_test", f"about {claim['cancer_text'] or 'another cancer'}" if claim["cancer"]
+                       else f"names no single cancer covered here ({claim['cancer_text'] or 'unstated'})")
+    if claim["sample"] != "tumor tissue":
+        return verdict("cant_test", "measured outside tumor tissue")
+    if claim["claim_type"] == "treatment_response":
+        return verdict("cant_test", "treatment response is not compared")
+    lines = evidence["lines"]
+    if claim["claim_type"] == "copy_number":
+        call = next((l for l in lines if l["line"] == "copy_number" and l["source"] == "LinkedOmics Targets"), None)
+        if claim["direction"] != "amplified" or call is None or call["status"] != "tested":
+            return verdict("cant_test", "only amplification is compared, with LinkedOmics Targets' driver call")
+        return verdict("supported" if call["direction"] == 1 else "not_seen", "", [investigation._result_text(call)])
+
+    group = [l for l in lines if l["line"] == _CLAIM_LINES[claim["claim_type"]] and l["source"] in ("CPTAC", "TCGA")
+             and l["layer"] in ("protein", "RNA")]
+    tested = [l for l in group if l["status"] == "tested"]
+    if not tested:
+        gaps = sorted({l["note"].replace("this cancer", investigation.CANCER_NAMES[cancer]) for l in group
+                       if l["status"] == "no_data" and "this cancer" in l["note"]})
+        return verdict("cant_test", "; ".join(gaps) or "no data for this gene", [investigation._result_text(l) for l in group])
+    results = [investigation._result_text(l) for l in tested]
+    want = _EXPECTED[claim["direction"]]
+    significant = [l for l in tested if l["significant"] and l["direction"]]
+    if want == 0:
+        return verdict("supported" if not significant else "opposite", "", results)
+    agree = [l for l in significant if l["direction"] == want]
+    against = [l for l in significant if l["direction"] == -want]
+    if agree and against:
+        return verdict("mixed", "", results)
+    return verdict("supported" if agree else "opposite" if against else "not_seen", "", results)
+
+
+def compare_claims(claims: List[Dict[str, Any]], gene: str, cancer: str, tool_results: Dict[str, Any]) -> Dict[str, Any]:
+    """Every claim with its verdict, from the data analyses' results ({"tool_id#n": {"_args", "_result"}})."""
+    evidence = investigation.extract_evidence(gene, cancer, "target", tool_results)
+    compared = [compare_claim(c, evidence) for c in claims]
+    counts = {v: sum(c["verdict"] == v for c in compared) for v in VERDICT_LABELS}
+    return {"gene": gene, "cancer": cancer, "claims": compared, "counts": counts, "evidence": evidence}
