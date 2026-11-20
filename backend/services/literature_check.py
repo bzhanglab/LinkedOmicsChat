@@ -214,8 +214,8 @@ def compare_claim(claim: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, 
     mixed, not_seen, or cant_test, with the reason and the data results it rests on."""
     cancer = evidence["cancer"]
 
-    def verdict(value: str, reason: str = "", results: Optional[List[str]] = None) -> Dict[str, Any]:
-        return {**claim, "verdict": value, "reason": reason, "results": results or []}
+    def verdict(value: str, reason: str = "", results: Optional[List[str]] = None, support: str = "") -> Dict[str, Any]:
+        return {**claim, "verdict": value, "reason": reason, "results": results or [], "support": support}
 
     if claim["cancer"] != cancer:
         return verdict("cant_test", f"about {claim['cancer_text'] or 'another cancer'}" if claim["cancer"]
@@ -241,13 +241,18 @@ def compare_claim(claim: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, 
     results = [investigation._result_text(l) for l in tested]
     want = _EXPECTED[claim["direction"]]
     significant = [l for l in tested if l["significant"] and l["direction"]]
+    # How many of the tests back a supported finding, so "supported" by one test of three reads as such
     if want == 0:
-        return verdict("supported" if not significant else "opposite", "", results)
+        if significant:
+            return verdict("opposite", "", results)
+        return verdict("supported", "", results, f"{len(tested)} of {len(tested)} tests" if len(tested) > 1 else "")
     agree = [l for l in significant if l["direction"] == want]
     against = [l for l in significant if l["direction"] == -want]
     if agree and against:
         return verdict("mixed", "", results)
-    return verdict("supported" if agree else "opposite" if against else "not_seen", "", results)
+    if agree:
+        return verdict("supported", "", results, f"{len(agree)} of {len(tested)} tests" if len(tested) > 1 else "")
+    return verdict("opposite" if against else "not_seen", "", results)
 
 
 def compare_claims(claims: List[Dict[str, Any]], gene: str, cancer: str, tool_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -256,3 +261,112 @@ def compare_claims(claims: List[Dict[str, Any]], gene: str, cancer: str, tool_re
     compared = [compare_claim(c, evidence) for c in claims]
     counts = {v: sum(c["verdict"] == v for c in compared) for v in VERDICT_LABELS}
     return {"gene": gene, "cancer": cancer, "claims": compared, "counts": counts, "evidence": evidence}
+
+
+# ── Requests and the written report ───────────────────────────────────────────
+
+# "Check the literature on SPP1 in lung adenocarcinoma"
+_REQUEST_RE = re.compile(
+    r"^\s*check\s+(?:the\s+)?literature\s+(?:on|for|about)\s+(?P<gene>[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?)"
+    r"\s+in\s+(?P<cancer>.+?)\s*[.?!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_request(query: str) -> Optional[Dict[str, Any]]:
+    """The gene and cancer a literature check request names, or None when the query is not one.
+    "cancer" is None when the cancer is not one of the 10 covered."""
+    match = _REQUEST_RE.match(query or "")
+    if not match:
+        return None
+    cancer = investigation._CANCER_LOOKUP.get(re.sub(r"[^a-z0-9]", "", match.group("cancer").lower()))
+    return {"gene": match.group("gene").upper(), "cancer": cancer}
+
+
+def unsupported_cancer_message(gene: str) -> str:
+    covered = ", ".join(f"{name} ({code})" for code, name in investigation.CANCER_NAMES.items())
+    return (f"The literature check covers 10 cancers, each in both CPTAC and TCGA: {covered}. "
+            f"Name one of them, for example \"Check the literature on {gene} in breast cancer\".")
+
+
+_FINDING_LABELS = {
+    "higher_in_tumor": "Higher in tumor than normal", "lower_in_tumor": "Lower in tumor than normal",
+    "no_difference": "No tumor-normal difference", "higher_level_poorer_survival": "Higher level, poorer survival",
+    "higher_level_better_survival": "Higher level, better survival", "no_association": "Not linked to survival",
+    "amplified": "Amplified", "deleted": "Deleted", "higher_level_better_response": "Higher level, better response",
+    "higher_level_worse_response": "Higher level, worse response",
+}
+_VERDICT_ORDER = ("opposite", "mixed", "not_seen", "supported")
+
+
+def _cell(text: str) -> str:
+    return _squash(text).replace("|", "/")
+
+
+def _paper(claim: Dict[str, Any]) -> str:
+    year = f" ({claim['year']})" if claim.get("year") else ""
+    return f"[PMID {claim['pmid']}](https://pubmed.ncbi.nlm.nih.gov/{claim['pmid']}/){year}"
+
+
+def _counts_line(result: Dict[str, Any], papers: int) -> str:
+    counts = result["counts"]
+    parts = [f"{counts[v]} {VERDICT_LABELS[v][0].lower() + VERDICT_LABELS[v][1:]}" for v in (*_VERDICT_ORDER, "cant_test") if counts[v]]
+    findings = len(result["claims"])
+    return (f"{papers} paper{'s' if papers != 1 else ''} read · {findings} finding{'s' if findings != 1 else ''}"
+            + (f": {', '.join(parts)}" if parts else ""))
+
+
+def report_markdown(result: Dict[str, Any], papers: int) -> str:
+    """The literature check's report: counts, a table of the findings compared, the findings it could not
+    test, and the caveats. Built from the verdicts alone, so the written summary cannot change them."""
+    gene, cancer = result["gene"], result["cancer"]
+    out = [f"## Literature check: {gene} in {investigation.CANCER_NAMES[cancer]} ({cancer})", "",
+           f"**{_counts_line(result, papers)}.**", ""]
+    compared = sorted((c for c in result["claims"] if c["verdict"] != "cant_test"),
+                      key=lambda c: _VERDICT_ORDER.index(c["verdict"]))
+    if compared:
+        out += ["| Finding | Paper | What these data show | Verdict |", "|---|---|---|---|"]
+        for c in compared:
+            label = VERDICT_LABELS[c["verdict"]] + (f" ({c['support']})" if c.get("support") else "")
+            out.append(f"| {_FINDING_LABELS[c['direction']]} | {_paper(c)}: \"{_cell(c['quote'])}\" | "
+                       f"{_cell('; '.join(c['results']))} | {label} |")
+    else:
+        out.append("No finding in these papers could be compared with the data.")
+    # The chat's table cells show text only, so the links are listed under the table
+    papers_with_findings = {}
+    for c in [*compared, *(c for c in result["claims"] if c["verdict"] == "cant_test")]:
+        papers_with_findings.setdefault(c["pmid"], c)
+    if papers_with_findings:
+        out += ["", "**Papers:**"] + [f"- {_paper(c)}: {_cell(c.get('title') or '')}" for c in papers_with_findings.values()]
+    untested = [c for c in result["claims"] if c["verdict"] == "cant_test"]
+    if untested:
+        out += ["", "**Couldn't test:** " + "; ".join(
+            f"{_FINDING_LABELS[c['direction']].lower()}, {_paper(c)} ({c['reason']})" for c in untested) + "."]
+    out += ["", "_Each finding is set beside CPTAC and TCGA only. Cohorts, assays, and cutoffs differ, so \"not seen in "
+                "these data\" does not mean a finding is wrong, and papers that drew on TCGA agree partly by design._"]
+    return "\n".join(out)
+
+
+def summary_prompt(result: Dict[str, Any], papers: int) -> str:
+    """What the summary step is asked to write, from the verdicts, which it may not change."""
+    support = lambda c: f" ({c['support']})" if c.get("support") else ""
+    gene, cancer = result["gene"], investigation.CANCER_NAMES[result["cancer"]]
+    rows = "\n".join(
+        f"- {VERDICT_LABELS[c['verdict']]}{support(c)}: "
+        f"{_FINDING_LABELS[c['direction']]} (PMID {c['pmid']}, {c.get('year') or 'year unknown'}). "
+        f"Paper: \"{c['quote']}\". Data: {'; '.join(c['results']) or c['reason']}"
+        for c in result["claims"])
+    return f"""Literature check of {gene} in {cancer}: published findings about {gene} set beside CPTAC and TCGA, each with the verdict the app gave it.
+
+{_counts_line(result, papers)}.
+Findings:
+{rows or "- none"}
+
+Write a short summary with no headings and no numbered items. Start with one sentence on how well these data agree with the published findings. Then up to three bullets: first, if there are any, the findings marked Opposite, Mixed, or Not seen, naming each PMID and what the paper and the data each show; then one bullet on the supported findings as a group, saying how many tests back them where the verdict gives it. End with one sentence noting that cohorts and assays differ between the papers and these data.
+
+Rules: never change a verdict or judge a paper yourself. Do not mention these instructions or say what is absent. Use only the numbers above. Do not discuss other cancers. Use **bold** for gene names and statistics. Do not offer a follow-up analysis."""
+
+
+def report_text(result: Dict[str, Any]) -> str:
+    """The compared findings as plain text, for the number check."""
+    return "\n".join(f"{c['quote']} {'; '.join(c['results'])}" for c in result["claims"])

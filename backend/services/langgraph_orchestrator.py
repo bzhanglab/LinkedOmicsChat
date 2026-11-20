@@ -33,7 +33,7 @@ from typing_extensions import Annotated, TypedDict
 
 from core.config import settings
 from core.llm_factory import LLMFactory
-from services import investigation
+from services import investigation, literature_check
 from services.mcp_aggregator import MCPAggregator
 from services.number_check import check_numbers
 from mcp_servers.signature_matching import compact_for_model as signature_compact_for_model
@@ -4688,6 +4688,7 @@ DIRECT RESPONSE RULES:
         is_report = final_state.get("workflow") == "gene_report"
         repeat_plan = final_state.get("repeat_plan") if final_state.get("workflow") == "repeat" else None
         investigated = final_state.get("investigation") if final_state.get("workflow") == "investigation" else None
+        checked = final_state.get("literature_check") if final_state.get("workflow") == "literature_check" else None
 
         async def _format():
             if asks_clarification:
@@ -4700,22 +4701,29 @@ DIRECT RESPONSE RULES:
                     format_results = (
                         {k: v for k, v in raw_results.items() if not k.startswith("literature::")} if is_report
                         else repeat_detail_results(repeat_plan, raw_results) if repeat_plan
-                        # The evidence table already says which analyses had no data
-                        else {k: v for k, v in raw_results.items() if v.get("_data_status") != "empty"} if investigated
+                        # The evidence table already says which analyses had no data; a literature check
+                        # lists its papers in its own table
+                        else {k: v for k, v in raw_results.items()
+                              if v.get("_data_status") != "empty" and not k.startswith("literature::")} if investigated or checked
                         else raw_results
                     )
                     formatted = await self._parent._generate_response(
                         effective_query, format_results, session, intent="research", usage_tracker=usage_tracker,
                         # A repeat has no written answer, and draws each multi-gene step as one heatmap;
                         # an investigation's summary is written from its ratings instead
-                        summarize=not repeat_plan and not investigated, combined_min_genes=2 if repeat_plan else None,
+                        summarize=not repeat_plan and not investigated and not checked,
+                        combined_min_genes=2 if repeat_plan else None,
                     )
-                    if investigated:
+                    if investigated or checked:
                         formatted = {**formatted, "raw_results": raw_results}
                         formatted["message"] = _order_gene_report_sections(
                             formatted.get("message") or "", _INVESTIGATION_SECTION_ORDER,
                         )
-                        formatted["summary"] = await self._investigation_summary(investigated, usage_tracker)
+                        formatted["summary"] = await self._written_summary(
+                            investigation.summary_prompt(investigated) if investigated
+                            else literature_check.summary_prompt(checked["result"], checked["papers"]),
+                            usage_tracker, log_prefix,
+                        )
                     if repeat_plan:
                         # Keep every call in the saved answer; the combined table is added after the
                         # source lines are placed, so none of them attaches to its notes. Details
@@ -4779,7 +4787,7 @@ DIRECT RESPONSE RULES:
         # A report lists its literature in its own section, so the summary need not mention it;
         # a repeat has no summary at all, its combined table covers every step
         coverage_results = (
-            {} if repeat_plan or investigated
+            {} if repeat_plan or investigated or checked
             else {k: v for k, v in raw_results_final.items() if not k.startswith("literature::")} if is_report
             else raw_results_final
         )
@@ -4796,6 +4804,9 @@ DIRECT RESPONSE RULES:
         if investigated:
             # The report is built from the ratings, so the written summary cannot change what it shows
             rich_message = f"{investigation.report_markdown(investigated)}\n\n{rich_message.strip()}".strip()
+        if checked:
+            report = literature_check.report_markdown(checked["result"], checked["papers"])
+            rich_message = f"{report}\n\n{rich_message.strip()}".strip()
 
         is_literature_only = bool(tools_used_final) and all(
             t.startswith("literature::") for t in tools_used_final
@@ -4812,7 +4823,7 @@ DIRECT RESPONSE RULES:
             for key, v in raw_results_final.items()
         ]
         results_with_data = sum(1 for status in result_data_statuses if status == "ok")
-        no_data_only = bool(raw_results_final) and results_with_data == 0 and not investigated
+        no_data_only = bool(raw_results_final) and results_with_data == 0 and not investigated and not checked
 
         # Confidence: measure how much data the tools actually returned
         if asks_clarification:
@@ -4866,6 +4877,8 @@ DIRECT RESPONSE RULES:
         prepared = self._parent._compact_results_for_llm(raw_results_final) if self._parent is not None else ""
         if investigated:
             prepared = f"{prepared}\n{investigation.ratings_text(investigated)}"
+        if checked:
+            prepared = f"{prepared}\n{literature_check.report_text(checked['result'])}"
         number_check = None
         if show_summary:
             number_check = check_numbers(display_summary, raw_results_final, model_input=prepared)
@@ -4911,6 +4924,11 @@ DIRECT RESPONSE RULES:
         if investigated:
             # Lets the app describe the rating rules in exports and leave out "Repeat for other genes"
             formatted_response["investigation"] = {k: investigated[k] for k in ("gene", "cancer", "question", "verdict")}
+        elif checked:
+            formatted_response["literature_check"] = {
+                "gene": checked["result"]["gene"], "cancer": checked["result"]["cancer"],
+                "papers": checked["papers"], "counts": checked["result"]["counts"],
+            }
         elif results_with_data and not repeat_plan and not is_report and not asks_clarification:
             offer = investigation.offer_request(query, [g for g in _extract_query_genes(query) if g in _VALID_GENES])
             if offer:
@@ -5006,8 +5024,8 @@ DIRECT RESPONSE RULES:
             "gene_list": [],
         }
 
-    async def _investigation_summary(self, evidence: Dict[str, Any], usage_tracker: Dict[str, Any]) -> str:
-        """The investigation's written summary, from its ratings, which the model may not change."""
+    async def _written_summary(self, prompt: str, usage_tracker: Dict[str, Any], log_prefix: str) -> str:
+        """An investigation's or literature check's written summary, from ratings or verdicts the model may not change."""
         if self._parent is None or not self._parent.llm or settings.MOCK_LLM:
             return ""
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -5018,14 +5036,14 @@ DIRECT RESPONSE RULES:
                 [
                     SystemMessage(content=(
                         "You are a Senior Multi-Omics Bioinformatics Analyst. Write precisely and plainly. "
-                        "The ratings you are given are final: report them, never change them."
+                        "The ratings and verdicts you are given are final: report them, never change them."
                     )),
-                    HumanMessage(content=investigation.summary_prompt(evidence)),
+                    HumanMessage(content=prompt),
                 ],
                 usage_tracker=usage_tracker,
             )
         except Exception as exc:
-            logger.warning("[Investigation] Summary failed: %s", exc)
+            logger.warning("%s Summary failed: %s", log_prefix, exc)
             return ""
         return _normalize_summary_text(text)
 
@@ -5039,6 +5057,34 @@ DIRECT RESPONSE RULES:
         state["investigation"] = investigation.rate(
             investigation.extract_evidence(gene, cancer, question, state["tool_results"])
         )
+        return state
+
+    async def _run_literature_check(self, request: Dict[str, Any], *, log_prefix: str) -> AgentState:
+        """Search PubMed and run the data analyses at once, then extract the papers' claims and compare them."""
+        from langchain_core.messages import HumanMessage
+
+        gene, cancer = request["gene"], request["cancer"]
+        state = await self._run_direct_tool_calls(
+            literature_check.literature_calls(gene, cancer) + literature_check.data_calls(gene, cancer),
+            genes=[gene], workflow="literature_check", log_prefix=log_prefix,
+        )
+        found = next((v.get("_result") or {} for k, v in state["tool_results"].items()
+                      if k.startswith("literature::search_pubmed_articles")), {})
+        articles = found.get("articles") or []
+        usage = {"input_tokens": 0, "output_tokens": 0}
+
+        async def ask(prompt: str) -> str:
+            return await self._parent._invoke_llm_tracked([HumanMessage(content=prompt)], usage_tracker=usage)
+
+        claims = []
+        if articles and self._parent is not None and self._parent.llm and not settings.MOCK_LLM:
+            claims = await literature_check.extract_claims(gene, cancer, articles, ask)
+        result = literature_check.compare_claims(claims, gene, cancer, state["tool_results"])
+        result.pop("evidence", None)
+        state["literature_check"] = {"result": result, "papers": len(articles)}
+        # The extraction's model use counts toward the answer, as the agent's would
+        state["input_tokens"] = int(state.get("input_tokens") or 0) + usage["input_tokens"]
+        state["output_tokens"] = int(state.get("output_tokens") or 0) + usage["output_tokens"]
         return state
 
     async def _run_gene_report_tools(self, gene: str, *, log_prefix: str) -> AgentState:
@@ -5280,6 +5326,37 @@ DIRECT RESPONSE RULES:
                     active_gene=ctx.get("active_gene", "unknown"),
                     final_state=final_state,
                     log_prefix="[Investigation]",
+                    expand_details=True,  # the report itself is in the message, so it is shown open
+                ):
+                    yield chunk
+                return
+
+            request = literature_check.parse_request(query)
+            if request and request["gene"] in _VALID_GENES:
+                session = await self._get_session(session_id, user_id, client_ip=client_ip)
+                ctx = session.setdefault("context", {})
+                if not ctx.get("session_goal"):
+                    ctx["session_goal"] = query.strip()[:200]
+                if request["cancer"] is None:
+                    plan = QueryPlan(
+                        needs_clarification=True, intent="literature_check", approach="",
+                        clarification_question=literature_check.unsupported_cancer_message(request["gene"]),
+                    )
+                    response = self._build_clarification_response(query, session, plan)
+                    turn_id = await self._save_query(session, query, response)
+                    payload = {**response, "session_id": session["id"], "turn_id": turn_id}
+                    yield f"data: {json.dumps({'type': 'final', 'content': payload})}\n\n"
+                    return
+                status = f"Reading the literature on {request['gene']} in {request['cancer']} and running the analyses..."
+                yield f"data: {json.dumps({'type': 'status', 'content': status})}\n\n"
+                final_state = await self._run_literature_check(request, log_prefix="[Literature check]")
+                async for chunk in self._stream_formatted_response(
+                    query=query,
+                    effective_query=f"{request['gene']} in {request['cancer']}",
+                    session=session,
+                    active_gene=ctx.get("active_gene", "unknown"),
+                    final_state=final_state,
+                    log_prefix="[Literature check]",
                     expand_details=True,  # the report itself is in the message, so it is shown open
                 ):
                     yield chunk
