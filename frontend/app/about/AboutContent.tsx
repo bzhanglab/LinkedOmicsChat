@@ -60,7 +60,7 @@ const ANALYSES = [
     },
     {
         name: "Survival",
-        desc: "CPTAC survival by RNA or protein in 10 cohorts, and TCGA survival by RNA, methylation, RPPA, copy number, or miRNA in 35 cohorts. TCGA also supports pan-cancer comparisons and genome-wide scans within a cohort. TCGA results include Kaplan-Meier plots with at-risk tables; in pan-cancer comparisons, for up to five cohorts with p < 0.05.",
+        desc: "CPTAC survival by RNA or protein in 10 cohorts, and TCGA survival by RNA, methylation, copy number, or miRNA in 35 cohorts (TCGA protein, RPPA, is temporarily unavailable while the TCGA service returns the same values for different genes). TCGA also supports pan-cancer comparisons and genome-wide scans within a cohort. TCGA results include Kaplan-Meier plots with at-risk tables; in pan-cancer comparisons, for up to five cohorts with p < 0.05.",
         example: "Show TP53 overall survival in BRCA.",
     },
     {
