@@ -1617,8 +1617,9 @@ async function downloadSessionExport(messages: ChatMessage[]) {
     const date = now.toISOString().slice(0, 10)
     const time = now.toTimeString().slice(0, 8).replace(/:/g, "-")
 
-    const escapeHtml = (text: string) =>
-        text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    // Table cells pass numbers too (a trials table's FDR), so anything is turned into text first
+    const escapeHtml = (text: unknown) =>
+        String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 
     const messageParts: string[] = []
 
