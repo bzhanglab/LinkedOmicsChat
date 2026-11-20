@@ -13,7 +13,7 @@ Representative Questions & Use Cases:
 
 import os
 import xml.etree.ElementTree as ET
-from typing import Any
+from typing import Any, Literal
 
 import requests
 from mcp.server.fastmcp import FastMCP
@@ -33,10 +33,12 @@ if _ncbi_api_key:
     _base_params["api_key"] = _ncbi_api_key
 
 
-def _esearch(query: str, max_results: int) -> list[str]:
-    """Return a list of PMIDs matching *query*."""
+def _esearch(query: str, max_results: int, sort: str = "date") -> list[str]:
+    """Return a list of PMIDs matching *query*, newest first or, with sort="relevance", by PubMed's Best Match."""
     params = {**_base_params, "db": "pubmed", "term": query,
               "retmax": str(max_results), "usehistory": "n"}
+    if sort == "relevance":
+        params["sort"] = "relevance"
     r = requests.get(ESEARCH_URL, params=params, timeout=TIMEOUT)
     r.raise_for_status()
     return r.json().get("esearchresult", {}).get("idlist", [])
@@ -113,6 +115,7 @@ def _parse_article(article_node: ET.Element) -> dict[str, Any]:
 def search_pubmed_articles(
     query: str,
     max_results: int = 10,
+    sort: Literal["date", "relevance"] = "date",
 ) -> dict[str, Any]:
     """Searches PubMed for biomedical literature and returns article metadata including title, authors, journal, year, abstract, PMID and DOI.
 
@@ -131,6 +134,8 @@ def search_pubmed_articles(
     Args:
         query (str): PubMed search query using gene names, MeSH terms, or keywords (e.g., "ESR1 breast cancer survival").
         max_results (int): Number of articles to return (default 10, max 20).
+        sort (str): "date" for the newest articles first (default), or "relevance" for PubMed's Best Match order,
+            which also finds older, well-cited articles.
 
     Returns:
         query (str): The query as submitted.
@@ -145,7 +150,7 @@ def search_pubmed_articles(
     """
     max_results = min(max(1, max_results), 20)
     try:
-        pmids = _esearch(query, max_results)
+        pmids = _esearch(query, max_results, sort)
         if not pmids:
             return {"query": query, "total_found": 0, "articles": [],
                     "message": "No articles found for this query. Try broader terms."}
