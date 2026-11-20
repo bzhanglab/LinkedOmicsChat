@@ -5346,7 +5346,7 @@ DIRECT RESPONSE RULES:
                 if request["cancer"] is None:
                     plan = QueryPlan(
                         needs_clarification=True, intent="literature_check", approach="",
-                        clarification_question=literature_check.unsupported_cancer_message(request["gene"]),
+                        clarification_question=literature_check.unsupported_cancer_message(request["gene"], request["mentioned"]),
                     )
                     response = self._build_clarification_response(query, session, plan)
                     turn_id = await self._save_query(session, query, response)

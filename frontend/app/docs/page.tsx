@@ -405,7 +405,8 @@ export default function DocsPage() {
                     example, &ldquo;Check the literature on SPP1 in lung adenocarcinoma&rdquo;, or choose Published
                     findings in the Investigate form. Investigation reports, and answers about one gene and a covered
                     cancer that mention papers or published findings, also offer &ldquo;Check the literature&rdquo;
-                    when you hold the pointer over them. It covers the same 10 cancers as investigation mode.
+                    when you hold the pointer over them. It covers the same 10 cancers as investigation mode, and for
+                    some well-known genes it accepts common names such as HER2, Ki-67, and PD-L1.
                 </P>
                 <P>
                     It searches PubMed for about 20 papers with the gene in the title and the cancer in the abstract,

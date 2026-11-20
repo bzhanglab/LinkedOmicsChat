@@ -265,25 +265,39 @@ def compare_claims(claims: List[Dict[str, Any]], gene: str, cancer: str, tool_re
 
 # ── Requests and the written report ───────────────────────────────────────────
 
-# "Check the literature on SPP1 in lung adenocarcinoma"
+# "Check the literature on SPP1 in lung adenocarcinoma", also after "please" or "can you"
 _REQUEST_RE = re.compile(
-    r"^\s*check\s+(?:the\s+)?literature\s+(?:on|for|about)\s+(?P<gene>[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?)"
-    r"\s+in\s+(?P<cancer>.+?)\s*[.?!]?\s*$",
+    r"^\s*(?:(?:please|can\s+you|could\s+you|would\s+you)[\s,]+){0,2}check\s+(?:the\s+)?literature\s+(?:on|for|about)\s+"
+    r"(?P<gene>.+?)\s+in\s+(?P<cancer>.+?)\s*[.?!]?\s*$",
     re.IGNORECASE,
 )
 
 
+def _key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# "HER2" or "Ki-67" in a request means the gene's symbol
+_GENE_BY_NAME = {_key(name): gene for gene, names in COMMON_NAMES.items() for name in names}
+
+
 def parse_request(query: str) -> Optional[Dict[str, Any]]:
     """The gene and cancer a literature check request names, or None when the query is not one.
-    "cancer" is None when the cancer is not one of the 10 covered."""
+    "cancer" is None when the cancer is not one of the 10 covered; "mentioned" is then a covered cancer
+    named among other words, if any."""
     match = _REQUEST_RE.match(query or "")
     if not match:
         return None
-    cancer = investigation._CANCER_LOOKUP.get(re.sub(r"[^a-z0-9]", "", match.group("cancer").lower()))
-    return {"gene": match.group("gene").upper(), "cancer": cancer}
+    gene = match.group("gene").strip()
+    cancer_text = match.group("cancer")
+    cancer = investigation._CANCER_LOOKUP.get(_key(cancer_text))
+    return {"gene": _GENE_BY_NAME.get(_key(gene), gene.upper()), "cancer": cancer,
+            "mentioned": None if cancer else investigation._mentioned_cancer(cancer_text)}
 
 
-_LITERATURE_WORDS = re.compile(r"\b(?:literature|papers?|publications?|published|studies|reported)\b", re.IGNORECASE)
+_LITERATURE_WORDS = re.compile(
+    r"\b(?:literature|papers?|publications?|published|stud(?:y|ies)|reports|reported)\b", re.IGNORECASE,
+)
 
 
 def request_text(gene: str, cancer: str) -> str:
@@ -299,7 +313,11 @@ def offer_request(query: str, genes: List[str]) -> Optional[str]:
     return request_text(genes[0], cancer)
 
 
-def unsupported_cancer_message(gene: str) -> str:
+def unsupported_cancer_message(gene: str, mentioned: Optional[str] = None) -> str:
+    if mentioned:
+        return (f"Name only the gene and one cancer, with the cancer at the end, for example "
+                f"\"{request_text(gene, mentioned)}\". The check covers tumor vs normal, survival, and copy "
+                "number findings together.")
     covered = ", ".join(f"{name} ({code})" for code, name in investigation.CANCER_NAMES.items())
     return (f"The literature check covers 10 cancers, each in both CPTAC and TCGA: {covered}. "
             f"Name one of them, for example \"Check the literature on {gene} in breast cancer\".")
