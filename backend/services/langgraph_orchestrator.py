@@ -2527,6 +2527,23 @@ def _first_payload_for_tool(raw_results: Dict[str, Any], bare_tool: str) -> tupl
 _RESULT_ID_FIELDS = ("series", "study_id", "pmid", "gene", "protein", "gene_symbol", "symbol", "gene_set")
 
 
+def _trial_studies_in_table_order(data: Dict[str, Any]) -> List[str]:
+    """A gene's trial studies in the order its table shows them: by signed -log10(p), so the most
+    sensitive come first and the most resistant last (the trials renderer in mcp_orchestrator, and
+    PredictiveResultsTable's default sort)."""
+    import math
+
+    def key(row: Dict[str, Any]) -> float:
+        try:
+            p = float(row.get("p_value"))
+        except (TypeError, ValueError):
+            return 0.0
+        return math.copysign(-math.log10(abs(p)), p) if math.isfinite(p) and p != 0 else 0.0
+
+    rows = [row for row in [*(data.get("resistant") or []), *(data.get("sensitive") or [])] if isinstance(row, dict)]
+    return _ordered_unique_strings([row.get("series") for row in sorted(rows, key=key)])
+
+
 def _result_refs(raw_results: Dict[str, Any], per_list: int = 8, max_lists: int = 4) -> List[str]:
     """Leading IDs (studies, genes, PMIDs, ...) each tool returned, in display order.
 
@@ -2552,7 +2569,16 @@ def _result_refs(raw_results: Dict[str, Any], per_list: int = 8, max_lists: int 
                 refs.append(f"{label} [{field}]: {', '.join(values[:per_list])}{more}")
 
     for key, wrapped in (raw_results or {}).items():
-        _walk(_unwrap_tool_payload(wrapped)[2], _bare_tool_name(key))
+        payload = _unwrap_tool_payload(wrapped)[2]
+        if _bare_tool_name(key) == "search_gene_response_trials" and isinstance(payload, dict):
+            # Its table re-sorts the studies, and "the first study" means the first row the user saw
+            studies = _trial_studies_in_table_order(payload.get("data") or {})
+            if studies and len(refs) < max_lists:
+                more = f" (+{len(studies) - per_list} more)" if len(studies) > per_list else ""
+                refs.append(f"search_gene_response_trials studies, in table order [series]: "
+                            f"{', '.join(studies[:per_list])}{more}")
+            continue
+        _walk(payload, _bare_tool_name(key))
     return refs
 
 
@@ -3317,6 +3343,7 @@ PLANNING RULES:
   - "exploratory", "discovery-stage", "frontier", "most novel" → `ranking_mode="exploratory"`
   - "not approved" / "non-approved" usually means restrict eligibility to `tiers=["T3","T4","T5"]`, but if the user does not state a readiness preference then keep `ranking_mode="balanced"`
 - If the user refers to "it", "this", or "the gene", resolve that to the active gene: '{active_gene}'.
+- If the user points at an item from an earlier answer ("the first study", "that gene", "the second paper"), take its ID from that answer's "Results shown" list in the history, which follows the order the user saw, and call the detail tool for it directly; do not run the earlier search again.
 - For platform questions like "what can you analyze?", "what cancer types are available?", or "what data do you have access to?", answer from the AVAILABLE DATA section and do not treat the active gene as the target.
 
 DATA GROUNDING:

@@ -5673,6 +5673,8 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
         """Update session with query and response. Guest sessions skip DB persistence."""
         import asyncio
 
+        # The LangGraph orchestrator passes its own turn summary (gene, cancer, finding, and the IDs of the
+        # results shown, which follow-ups like "the first study" need); this is the fallback
         def _make_turn_summary(resp: dict, max_chars: int = 600) -> str:
             """Extract a compact summary for history context injection."""
             import re as _re
@@ -5695,7 +5697,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
             session.setdefault("history", []).append({
                 "query": query,
                 "response": response,
-                "turn_summary": _make_turn_summary(response),
+                "turn_summary": response.get("turn_summary") or _make_turn_summary(response),
                 "timestamp": time.time(),
             })
             session["last_updated"] = time.time()
@@ -5785,7 +5787,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             "id": turn_id,
                             "query": query,
                             "response": response,
-                            "turn_summary": _make_turn_summary(response),
+                            "turn_summary": response.get("turn_summary") or _make_turn_summary(response),
                             "timestamp": message.timestamp
                         })
 
@@ -5869,7 +5871,7 @@ Respond with ONLY the title, nothing else. Make it specific and informative."""
                             "id": turn_id,
                             "query": query,
                             "response": response,
-                            "turn_summary": _make_turn_summary(response),
+                            "turn_summary": response.get("turn_summary") or _make_turn_summary(response),
                             "timestamp": message.timestamp
                         })
 
