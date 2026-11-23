@@ -220,8 +220,11 @@ async def _run_case_with_trace(
         None,
         log_prefix="[LangGraph Eval]",
     )
-    if len(prepared) == 5:
-        session, effective_query, active_gene, initial_state, query_plan = prepared
+    graph = langgraph_orch._graph
+    if len(prepared) >= 5:
+        # The orchestrator returns the graph built for this request as a sixth value
+        session, effective_query, active_gene, initial_state, query_plan, *built = prepared
+        graph = built[0] if built else graph
         if initial_state is None:
             formatted_response = langgraph_orch._build_clarification_response(
                 case["query"], session, query_plan
@@ -236,7 +239,7 @@ async def _run_case_with_trace(
             }, elapsed_ms
     else:
         session, effective_query, active_gene, initial_state = prepared
-    final_state = await langgraph_orch._graph.ainvoke(initial_state)
+    final_state = await graph.ainvoke(initial_state)
     formatted_response = await langgraph_orch._build_response_from_final_state(
         query=case["query"],
         effective_query=effective_query,

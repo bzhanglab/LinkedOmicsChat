@@ -3678,10 +3678,13 @@ DIRECT RESPONSE RULES:
         force_identifier_resolution: bool = False,
         pre_resolved_identifiers: Optional[Dict[str, str]] = None,
     ):
-        """(Re)build the compiled LangGraph with current MCP tools."""
+        """(Re)build the compiled LangGraph with current MCP tools, and return it.
+
+        Concurrent requests each run the graph returned to them: its prompt carries that request's
+        session goal and active gene, so a request must not run a graph another one built into self._graph."""
         if not self.llm:
             logger.warning("[LangGraph] No LLM available, graph not built.")
-            return
+            return None
         scoped_tool_ids = _TOOL_SCOPE_MAP.get(tool_scope)
         self._tool_scope = tool_scope
         self._workflow = workflow
@@ -3700,6 +3703,7 @@ DIRECT RESPONSE RULES:
             multi_gene,
             [tool.name.replace("__", "::") for tool in self._tools],
         )
+        return self._graph
 
     async def cleanup(self):
         """Cleanup MCP connections (only in standalone mode)."""
@@ -4061,7 +4065,7 @@ DIRECT RESPONSE RULES:
 
         # If the planner wants clarification, bail out before building the graph
         if query_plan and query_plan.needs_clarification:
-            return session, effective_query, active_gene, None, query_plan
+            return session, effective_query, active_gene, None, query_plan, None
 
         # Deterministic routing stays authoritative for explicit scientific queries.
         tool_scope = keyword_scope
@@ -4074,7 +4078,7 @@ DIRECT RESPONSE RULES:
             for token in requested_identifiers
         )
 
-        self._rebuild_graph(
+        graph = self._rebuild_graph(
             active_gene=effective_active_gene, tool_scope=tool_scope, workflow=workflow, multi_gene=multi_gene,
             active_cancer_type=active_cancer_type,
             session_goal=session_goal or None,
@@ -4101,7 +4105,7 @@ DIRECT RESPONSE RULES:
             "workflow": workflow,
             "query_plan": query_plan.model_dump() if query_plan else None,
         }
-        return session, effective_query, active_gene, initial_state, query_plan
+        return session, effective_query, active_gene, initial_state, query_plan, graph
 
     def _extract_final_state_context(
         self,
@@ -4636,7 +4640,7 @@ DIRECT RESPONSE RULES:
         try:
             logger.info(f"[LangGraph] Processing query: {query}")
 
-            session, effective_query, active_gene, initial_state, query_plan = await self._prepare_execution_context(
+            session, effective_query, active_gene, initial_state, query_plan, graph = await self._prepare_execution_context(
                 query,
                 user_id,
                 session_id,
@@ -4650,7 +4654,7 @@ DIRECT RESPONSE RULES:
                 turn_id = await self._save_query(session, query, formatted_response)
                 return {**formatted_response, "session_id": session["id"], "turn_id": turn_id}
 
-            if not self._graph:
+            if not graph:
                 return {
                     "success": False,
                     "message": "LangGraph not available (no LLM configured).",
@@ -4660,7 +4664,7 @@ DIRECT RESPONSE RULES:
 
             # Run the LangGraph agent
             logger.info("[LangGraph] Starting agent graph execution...")
-            final_state = await self._graph.ainvoke(initial_state)
+            final_state = await graph.ainvoke(initial_state)
             formatted_response = await self._build_response_from_final_state(
                 query=query,
                 effective_query=effective_query,
@@ -4706,7 +4710,7 @@ DIRECT RESPONSE RULES:
             logger.info(f"[LangGraph Stream] Processing query: {query}")
             yield f"data: {json.dumps({'type': 'status', 'content': 'Initializing session...'})}\n\n"
 
-            session, effective_query, active_gene, initial_state, query_plan = await self._prepare_execution_context(
+            session, effective_query, active_gene, initial_state, query_plan, graph = await self._prepare_execution_context(
                 query,
                 user_id,
                 session_id,
@@ -4722,7 +4726,7 @@ DIRECT RESPONSE RULES:
                 yield f"data: {json.dumps({'type': 'final', 'content': payload})}\n\n"
                 return
 
-            if not self._graph:
+            if not graph:
                 yield f"data: {json.dumps({'type': 'final', 'content': {'success': False, 'message': 'LangGraph not available.', 'query': query, 'session_id': session['id']}})}\n\n"
                 return
 
@@ -4737,7 +4741,7 @@ DIRECT RESPONSE RULES:
             final_state = None
             _tool_streaming_started = False
 
-            async for stream_mode_key, chunk in self._graph.astream(
+            async for stream_mode_key, chunk in graph.astream(
                 initial_state,
                 stream_mode=["values"],
             ):
