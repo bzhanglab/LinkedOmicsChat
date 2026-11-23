@@ -1979,8 +1979,9 @@ def run_webgestalt_go_enrichment(proteins: list[str], top_n: int = 5) -> dict[st
 # genes (in breast cancer 18 of 48 genes, in 3 groups; ESR1 and ERBB2 among them, in every cohort checked),
 # so protein results are withheld until the service is fixed. RNA showed no such collisions.
 TCGA_RPPA_UNAVAILABLE = (
-    "TCGA protein (RPPA) results are temporarily unavailable: the TCGA service currently returns the same "
-    "protein values for different genes. CPTAC protein data is available through the CPTAC tools."
+    "TCGA protein (RPPA) results are left out: in the TCGA RPPA source files, some genes share identical or "
+    "misaligned protein profiles (ESR1 and ERBB2, for example), so their values can't be trusted. CPTAC protein "
+    "data is available through the CPTAC tools."
 )
 
 
@@ -2049,7 +2050,7 @@ def analyze_tcga_survival_associations(
     """
 
 
-    base_url = "http://aws1.zhang-lab.org:8237/api/survival"
+    base_url = "http://aws1.zhang-lab.org:8236/api/survival"  # the production service (8237 is its development copy)
     cohort = cohort.strip() or None if cohort is not None else None
     gene = gene.strip() or None if gene is not None else None
     omics = omics.strip() or None if omics is not None else None

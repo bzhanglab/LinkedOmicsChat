@@ -5400,6 +5400,11 @@ Please provide a clear, informative response about this gene. Include the key de
                         omics = res.get("omics", "") or omics_query
                         hr = res.get("hr"); pval = res.get("pvalue"); n_tot = res.get("n")
                         omics_label = _OMICS_LABEL_PRE.get(omics, omics) or "expression"
+                        if res.get("error_code") == "insufficient_samples":
+                            # The TCGA service skips a layer with too few complete samples (ovarian methylation)
+                            md.append(f"\n**{omics_label}**: too few samples ({n_tot} with survival data; "
+                                      f"{res.get('minimum_required', 10)} needed)")
+                            continue
                         fig_dict = _generate_km_static(res.get("samples") or [], g, cohort, omics, hr, pval, n_tot)
                         if fig_dict:
                             viz_id = _uuid.uuid4().hex
