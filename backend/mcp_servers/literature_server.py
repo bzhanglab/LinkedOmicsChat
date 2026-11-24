@@ -33,6 +33,12 @@ if _ncbi_api_key:
     _base_params["api_key"] = _ncbi_api_key
 
 
+def _failure(e: requests.RequestException) -> str:
+    """Describe a failed request without the API key, which requests includes in the URL it reports."""
+    text = f"PubMed request failed: {e}"
+    return text.replace(_ncbi_api_key, "<api_key>") if _ncbi_api_key else text
+
+
 def _esearch(query: str, max_results: int) -> list[str]:
     """Return a list of PMIDs matching *query*."""
     params = {**_base_params, "db": "pubmed", "term": query,
@@ -163,7 +169,7 @@ def search_pubmed_articles(
             "articles": articles,
         }
     except requests.RequestException as e:
-        return {"error": f"PubMed request failed: {e}", "query": query, "articles": []}
+        return {"error": _failure(e), "query": query, "articles": []}
 
 
 @mcp.tool()
@@ -199,7 +205,7 @@ def get_pubmed_article_details(pmid: str) -> dict[str, Any]:
             return {"error": f"PMID {pmid} not found.", "pmid": pmid}
         return _parse_article(nodes[0])
     except requests.RequestException as e:
-        return {"error": f"PubMed request failed: {e}", "pmid": pmid}
+        return {"error": _failure(e), "pmid": pmid}
 
 
 if __name__ == "__main__":
