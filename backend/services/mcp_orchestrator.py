@@ -1246,24 +1246,25 @@ def _generate_tcga_omics_heatmap_static(results: list, gene: str, cohort: str) -
                        color=colors, edgecolor=edge_colors, linewidth=1.2,
                        height=0.6)
 
+        # Labels go in a column right of the axes: placed at the bar ends, a long protective
+        # bar pushed its label over the omics names.
         for bar, entry in zip(bars, entries):
             label = f"HR={entry['hr']:.3f}"
             if entry["pval"] is not None:
                 label += f"  p={entry['pval']:.2e}"
             if entry["sig"]:
                 label += " *"
-            x_off = 0.04 if entry["log2hr"] >= 0 else -0.04
-            ha = "left" if entry["log2hr"] >= 0 else "right"
-            ax.text(entry["log2hr"] + x_off, bar.get_y() + bar.get_height() / 2,
-                    label, va="center", ha=ha, fontsize=8, color="#333333")
+            ax.text(1.02, bar.get_y() + bar.get_height() / 2, label,
+                    transform=ax.get_yaxis_transform(), va="center", ha="left",
+                    fontsize=8, color="#333333")
 
         ax.axvline(0, color="#555555", linewidth=0.9, linestyle="-")
         ax.set_yticks(y_pos)
         ax.set_yticklabels([e["omics"] for e in entries], fontsize=9)
         ax.set_xlabel("log₂(Hazard Ratio)\n← Protective  |  Harmful →", fontsize=9)
         ax.set_title(title, fontsize=11, pad=8)
-        ax.text(0.99, 0.01, "* FDR < 0.05", transform=ax.transAxes,
-                fontsize=8, color="#666666", ha="right", va="bottom")
+        ax.text(1.02, -0.02, "* FDR < 0.05", transform=ax.transAxes,
+                fontsize=8, color="#666666", ha="left", va="top")
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="x", color="#eeeeee", linewidth=0.7)
         fig.tight_layout()
