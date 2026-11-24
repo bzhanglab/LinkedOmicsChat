@@ -3394,7 +3394,7 @@ CLARIFICATION — ask BEFORE running tools when the query is under-specified:
 - An analysis type missing a critical parameter (e.g. "compare expression" without specifying genes or cancers) → ask for the missing piece. Use **Options:** if the missing piece is a finite closed choice.
 - A request that maps to two or more very different workflows (e.g. "how does MYC correlate?" could mean cis-omics, FunMap network, or clinical-trial correlation) → ask which type using **Options:**.
 - Do NOT ask for clarification when the query is already specific — e.g. "survival analysis for TP53 in BRCA", "drug targets for EGFR", "expression of MYC across cancers".
-- **Options:** format: `**Options:** \`Choice A\` · \`Choice B\` · \`Choice C\``
+- **Options:** format: `**Options:** \\`Choice A\\` · \\`Choice B\\` · \\`Choice C\\``
 
 RESPONSE STYLE:
 - Be concise, analytical, and easy to follow.

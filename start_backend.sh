@@ -63,7 +63,7 @@ else
     echo "Options:"
     echo "1. Use mock mode (no API key): Edit .env and set MOCK_LLM=true"
     echo "2. Add OpenAI key: Edit .env and add OPENAI_API_KEY=sk-xxx"
-    echo "3. Install Ollama: See docs/DEVELOPMENT_WITHOUT_OPENAI.md"
+    echo "3. Use a local Ollama model: Edit .env and set USE_OLLAMA=true (see DEVELOPMENT.md)"
     echo ""
     read -p "Continue anyway? (y/n) " -n 1 -r
     echo ""
