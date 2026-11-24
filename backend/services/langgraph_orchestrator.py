@@ -1146,14 +1146,6 @@ _CANCER_TYPE_MAP: Dict[str, str] = {
     "CESC": "cervical squamous cell carcinoma (CESC)",
     "LAML": "acute myeloid leukemia (LAML)",
 }
-_AUTO_BATCH_SINGLE_TOOL_MAP: Dict[str, str] = {
-    "linkedomics__cancer_gene_expression": "linkedomics__batch_cancer_gene_expression",
-    "linkedomics__overall_survival_per_cancer": "linkedomics__batch_overall_survival_per_cancer",
-    "linkedomics__get_target": "linkedomics__batch_get_target",
-    "linkedomics__get_cis_correlations": "linkedomics__batch_get_cis_correlations",
-    "linkedomics__clinical_trial_information": "linkedomics__batch_clinical_trial_information",
-}
-_AUTO_BATCH_SCOPES = {"expression", "survival", "targets", "trials", "correlation"}
 _RESULT_EMPTY_STATUS = {"error", "unavailable", "missing", "not_found", "no_studies", "no_data"}
 _EMPTY_TEXT_MARKERS = (
     "data unavailable",
@@ -1900,10 +1892,8 @@ def _make_tool_node(tools: List[BaseTool]):
         tool_messages: List[ToolMessage] = []
         new_results = dict(state.get("tool_results") or {})
         active_gene = state.get("active_gene")
-        requested_genes = list(state.get("requested_genes") or [])
         requested_identifiers = list(state.get("requested_identifiers") or [])
         allow_active_gene_reference = bool(state.get("allow_active_gene_reference"))
-        tool_scope = state.get("tool_scope", "full")
         call_counts: Dict[str, int] = {}
         for existing_key in new_results:
             base_key, sep, suffix = existing_key.rpartition("#")
@@ -1912,42 +1902,11 @@ def _make_tool_node(tools: List[BaseTool]):
             call_counts[normalized_key] = max(call_counts.get(normalized_key, 0), next_count)
         step_tool_metrics: List[Dict[str, Any]] = []
         started = time.perf_counter()
-        single_tool_counts: Dict[str, int] = {}
-
-        for tc in getattr(last_ai, "tool_calls", []) or []:
-            single_name = tc.get("name", "").replace("::", "__").rsplit("#", 1)[0]
-            if single_name in _AUTO_BATCH_SINGLE_TOOL_MAP:
-                single_tool_counts[single_name] = single_tool_counts.get(single_name, 0) + 1
-
-        batch_tools_emitted: set[str] = set()
 
         for tc in last_ai.tool_calls:
             original_tool_name = tc["name"]
-            rewritten_tool_name = original_tool_name.replace("::", "__").rsplit("#", 1)[0]
             args = dict(tc["args"])
             call_id = tc["id"]
-
-            batch_tool_name = _AUTO_BATCH_SINGLE_TOOL_MAP.get(rewritten_tool_name)
-            should_batch = bool(
-                batch_tool_name
-                and len(requested_genes) >= 2
-                and (
-                    single_tool_counts.get(rewritten_tool_name, 0) >= 2
-                    or tool_scope in _AUTO_BATCH_SCOPES
-                )
-            )
-
-            if should_batch:
-                if batch_tool_name in batch_tools_emitted:
-                    logger.info(
-                        "[LangGraph] Skipping duplicate single-gene tool call %r after batch rewrite",
-                        original_tool_name,
-                    )
-                    continue
-                batch_tools_emitted.add(batch_tool_name)
-                original_tool_name = batch_tool_name
-                args = {"proteins": requested_genes}
-                call_id = f"{call_id}-batch"
 
             validation_error = _validate_tool_identifier_integrity(
                 tool_name=original_tool_name,
