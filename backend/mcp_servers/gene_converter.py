@@ -26,7 +26,7 @@ def _get_valid_hgnc() -> FrozenSet[str]:
     """Load valid_genes.txt once and cache as a frozenset for O(1) lookups."""
     global _VALID_HGNC
     if _VALID_HGNC is None:
-        genes_file = Path(__file__).parent.parent.parent / "valid_genes.txt"
+        genes_file = Path(__file__).parent.parent / "valid_genes.txt"
         if genes_file.exists():
             _VALID_HGNC = frozenset(
                 line.strip().upper() for line in genes_file.read_text().splitlines() if line.strip()

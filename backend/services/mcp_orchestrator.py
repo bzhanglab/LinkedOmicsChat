@@ -2776,8 +2776,8 @@ Classify this query. Return JSON only."""
         import re
         
         query_upper = query.upper()
-        # Regex for gene-like tokens (2-10 chars, allowing digits)
-        gene_pattern = r"\b([A-Z]{2,10}(?:\d+)?)\b"
+        # Gene-like tokens: two letters, then letters or digits in any order (TOP2A, PIK3CA, CDKN2A)
+        gene_pattern = r"\b([A-Z]{2}[A-Z0-9]{0,10})\b"
         matches = re.findall(gene_pattern, query_upper)
         
         unique_genes = []
