@@ -325,7 +325,9 @@ async def resend_verification_email(
     )
 
 
+# HEAD too: uptime monitors check this endpoint with HEAD requests.
 @router.get("/public-config", response_model=PublicRuntimeConfig)
+@router.head("/public-config", include_in_schema=False)
 async def get_public_runtime_config():
     """Expose safe runtime configuration needed by the frontend settings UI."""
     model_name = settings.OLLAMA_MODEL if settings.USE_OLLAMA else settings.DEFAULT_LLM_MODEL
