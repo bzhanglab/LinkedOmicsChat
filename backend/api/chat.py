@@ -188,7 +188,9 @@ def _sanitize_response_for_history(resp: Any) -> Any:
         # Determine if we should collapse the message for performance
         msg = new_resp.get("message")
         if isinstance(msg, str) and msg:
-            if len(msg) > 1200 or was_sanitized:
+            # An answer shown open (no_collapse) has no "load details" step to fetch the rest,
+            # so it keeps its full text
+            if (len(msg) > 1200 and not new_resp.get("no_collapse")) or was_sanitized:
                 # Message is large or has heavy attachments, store a preview and mark as partial
                 new_resp["message_preview"] = (msg[:1200] + "\n…") if len(msg) > 1200 else msg
                 new_resp["has_full_content"] = False
