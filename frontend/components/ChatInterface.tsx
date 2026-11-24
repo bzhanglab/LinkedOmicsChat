@@ -829,6 +829,9 @@ const MessagesPane = memo(function MessagesPane({
                             id={messageKey}
                             ref={el => { messageRefs.current[index] = el }}
                             onMouseEnter={() => setHoveredIndex(index)}
+                            // A dialog closing over the message sends no mouseenter, so the actions
+                            // stayed hidden until the pointer left and came back.
+                            onMouseMove={() => { if (hoveredIndex !== index) setHoveredIndex(index) }}
                             onMouseLeave={() => setHoveredIndex(null)}
                             style={{ contentVisibility: "auto", containIntrinsicSize: "0 200px" }}
                             className={cn(
