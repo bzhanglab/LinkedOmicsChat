@@ -113,6 +113,20 @@
       ]
     },
     {
+      "id": "targets_batch_gene_list",
+      "query": "Which of these genes are druggable targets: EGFR, KRAS, TP53, MYC, ERBB2, CDK4?",
+      "expected_tools_all": [
+        "linkedomics::batch_get_drug_target_profiles"
+      ],
+      "forbidden_tools": [
+        "linkedomics::get_drug_target_profile",
+        "linkedomics::search_gene_response_trials",
+        "linkedomics::batch_search_gene_response_trials",
+        "linkedomics::analyze_cptac_gene_survival_associations"
+      ],
+      "notes": "Gene-list drug-target question: one batch call, not a call per gene, and no trial tools ('drug' is also a trial keyword, so this routes to the full tool set)."
+    },
+    {
       "id": "targets_rank_attractive",
       "query": "What are the most attractive therapeutic targets for cancer?",
       "expected_tools_all": [
