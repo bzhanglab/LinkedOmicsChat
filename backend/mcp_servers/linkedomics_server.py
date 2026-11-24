@@ -1169,6 +1169,8 @@ def get_top_n_trials(
     neg = sorted([s for s in filtered if float(s["fdr"]) < 0], key=lambda s: s["sorted_fdr"])
 
     def _fmt(s: dict[str, Any]) -> dict[str, Any]:
+        p_value = s.get("p_value") or s.get("pvalue") or s.get("pVal") or s.get("p_val")
+        # The API signs FDR and p-value by direction; the list a study goes in already says which.
         return {
             "series": s["series"],
             "study_id": s.get("study_id", ""),
@@ -1178,8 +1180,8 @@ def get_top_n_trials(
             "clinical_trial_id": s.get("clinical_trial_id", ""),
             "sample_size": s.get("sample_size", ""),
             "auroc": round(float(s["auroc"]), 3),
-            "fdr": float(s["fdr"]),
-            "p_value": s.get("p_value") or s.get("pvalue") or s.get("pVal") or s.get("p_val"),
+            "fdr": abs(float(s["fdr"])),
+            "p_value": abs(float(p_value)) if p_value is not None else None,
             "response_evaluation": s.get("response_evaluation") or s.get("responseEvaluation") or s.get("response_eval", ""),
         }
 
@@ -1590,7 +1592,7 @@ def _rank_study_analytes(rows: list[dict], top_n: int) -> list[dict]:
         result.append({
             "analyte": r.get("analyte", ""),
             "auc": round(auc, 3),
-            "fdr": float(r.get("fdr", 1)),
+            "fdr": abs(float(r.get("fdr", 1))),  # signed by direction in the API; `direction` carries it
             "direction": "sensitive" if auc < 0.5 else "resistant",
         })
     return result
