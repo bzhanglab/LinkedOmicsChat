@@ -315,6 +315,18 @@
       ]
     },
     {
+      "id": "cis_dual_drive_wording",
+      "query": "What drives CDK4 protein levels in breast cancer: copy number or methylation?",
+      "expected_tools_all": [
+        "linkedomics::analyze_cptac_cis_associations",
+        "linkedomics::analyze_tcga_cis_associations"
+      ],
+      "forbidden_tools": [
+        "linkedomics::compare_cptac_tumor_normal_expression"
+      ],
+      "notes": "Cross-omics question worded with 'drives' instead of 'associated' or 'correlated'; it went to tumor vs normal before."
+    },
+    {
       "id": "pathway_enrichment_genelist",
       "query": "Run pathway enrichment analysis on TP53, MDM2, CDKN1A, ATM, and BRCA1.",
       "expected_tools_all": [

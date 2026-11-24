@@ -872,6 +872,8 @@ _TCGA_CIS_KEYWORDS = (
 
 _TCGA_CIS_ASSOCIATION_WORDS = (
     "associat", "correlat", "relationship", "relation", "cis", " vs ", " versus ",
+    # drive, driven, driving: "What drives CDK4 protein levels: copy number or methylation?"
+    "driv",
 )
 
 _TCGA_SPECIFIC_CIS_TERMS = (
