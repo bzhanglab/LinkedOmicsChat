@@ -141,6 +141,32 @@ def _summary_bullet_count(text: str) -> int:
         if re.match(r"^\s*[-*]\s+", line)
     )
 
+
+# Most characters of tool results the summary model gets. Past this, each result keeps an
+# equal share instead of the last results being dropped.
+_SUMMARY_INPUT_LIMIT = 200_000
+
+
+def _fit_results_to_limit(compact: Dict[str, Any], limit: int) -> str:
+    """Tool results as text within `limit` characters, with every result represented.
+
+    Results smaller than an equal share are kept whole; the rest are cut to the share
+    left over, each marked as cut so the summary does not take it for the full result.
+    """
+    import json
+
+    blocks = [json.dumps({key: value}, indent=2) for key, value in compact.items()]
+    budget = limit - 100 * len(blocks)  # room for the cut markers and line breaks
+    shares = [0] * len(blocks)
+    for done, i in enumerate(sorted(range(len(blocks)), key=lambda i: len(blocks[i]))):
+        shares[i] = min(len(blocks[i]), budget // (len(blocks) - done))
+        budget -= shares[i]
+    return "\n".join(
+        block if share == len(block)
+        else f"{block[:share]}\n...[truncated: first {share:,} of {len(block):,} characters of this result]..."
+        for block, share in zip(blocks, shares)
+    )
+
 # Per-cohort brand colors (CPTAC/LinkedOmics palette)
 _COHORT_COLORS: dict[str, str] = {
     "BRCA":  "#fd8cd5",
@@ -3117,8 +3143,8 @@ Classify this query. Return JSON only."""
             }
 
         text = json.dumps(compact, indent=2)
-        if len(text) > 80_000:
-            text = text[:80_000] + "\n...[truncated]..."
+        if len(text) > _SUMMARY_INPUT_LIMIT:
+            text = _fit_results_to_limit(compact, _SUMMARY_INPUT_LIMIT)
         return text
 
     async def _llm_summarize_tool_results(
