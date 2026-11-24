@@ -113,6 +113,7 @@ class MCPAggregator:
                     "literature",
                     str(sys.executable),
                     [str(server_path)],
+                    env={"NCBI_EMAIL": settings.NCBI_EMAIL, "NCBI_API_KEY": settings.NCBI_API_KEY},
                 )
 
         # Phase 3: Add Files and Compute servers here
@@ -124,7 +125,8 @@ class MCPAggregator:
         self,
         name: str,
         command: str,
-        args: List[str] = None
+        args: List[str] = None,
+        env: Optional[Dict[str, str]] = None
     ):
         """Connect to an MCP server and discover tools
         
@@ -135,6 +137,7 @@ class MCPAggregator:
             name: Server identifier
             command: Command to run the server
             args: Command arguments
+            env: Extra environment variables; the server process otherwise sees only PATH, HOME and a few others
         """
         if not MCP_AVAILABLE:
             logger.warning(f"Cannot connect to MCP server {name}: MCP SDK not available")
@@ -145,7 +148,8 @@ class MCPAggregator:
         try:
             server_params = StdioServerParameters(
                 command=command,
-                args=args or []
+                args=args or [],
+                env=env
             )
             
             # Discover tools by creating a temporary connection
