@@ -757,7 +757,12 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
     if plot_type in ("treatment_gene", "treatment_gene_set"):
         if not re.fullmatch(r"[A-Za-z0-9_\-]+", gene):
             raise HTTPException(status_code=400, detail="Invalid gene")
-        body = await request.json()
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON body with study_list required for treatment_gene plots")
         study_list: list[str] = body.get("study_list", [])
         if not study_list:
             raise HTTPException(status_code=400, detail="study_list required for treatment_gene plots")
@@ -1084,7 +1089,7 @@ async def get_trial_plot(request: Request, gene: str = Query(...), study: str = 
     y_vals = [float(v) for v in auc_data.get("y", []) if v is not None]
 
     if len(x_vals) > 1 and len(y_vals) > 1:
-        auc_score = float(np.trapz(y_vals, x_vals)) if len(x_vals) == len(y_vals) else None
+        auc_score = float(np.trapezoid(y_vals, x_vals)) if len(x_vals) == len(y_vals) else None
         auc_label = f"AUC = {abs(auc_score):.3f}" if auc_score is not None else ""
         fig, ax = plt.subplots(figsize=(5, 5))
         fig.patch.set_facecolor("white")
