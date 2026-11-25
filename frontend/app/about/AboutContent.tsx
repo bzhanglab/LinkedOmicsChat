@@ -32,7 +32,7 @@ const REFERENCES = [
 const ANALYSES = [
     {
         name: "Survival",
-        desc: "CPTAC survival by RNA or protein in 10 cohorts, and TCGA survival by RNA, methylation, copy number, or miRNA in 35 cohorts (TCGA protein, RPPA, is left out because its source files give some genes identical or misaligned values). TCGA also supports pan-cancer comparisons and genome-wide scans within a cohort. TCGA results include Kaplan-Meier plots with at-risk tables; in pan-cancer comparisons, for up to five cohorts with p < 0.05.",
+        desc: "CPTAC survival by RNA or protein in 10 cohorts, and TCGA survival by RNA, methylation, RPPA, copy number, or miRNA in 35 cohorts. TCGA also supports pan-cancer comparisons and genome-wide scans within a cohort. TCGA results include Kaplan-Meier plots with at-risk tables; in pan-cancer comparisons, for up to five cohorts with p < 0.05.",
         example: "Show TP53 overall survival in BRCA.",
     },
     {
@@ -180,8 +180,7 @@ export function AboutContent() {
                                 <a href="https://www.linkedomics.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">LinkedOmics</a>:
                                 more than 11,000 tumors from 32 primary cancer types, organized as 35 cohort codes (four of
                                 them combine related types, such as COADREAD). The app uses RNA-seq, miRNA-seq, methylation,
-                                copy number, and overall survival. It leaves out RPPA protein, whose source files give
-                                some genes identical or misaligned values.
+                                copy number, RPPA protein, and overall survival.
                             </p>
                             <p className="text-base text-muted-foreground leading-relaxed">
                                 <a href="https://proteomics.cancer.gov/programs/cptac" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">CPTAC</a>{" "}
